@@ -1,0 +1,30 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "gfn-android"
+
+include(
+    ":app",
+    ":core-model",
+    ":core-network",
+    ":gfn-auth",
+    ":gfn-cloudmatch",
+    ":gfn-identity",
+    ":gfn-session",
+    ":diagnostics",
+    ":stream-core",
+    ":protocol-cli",
+)
