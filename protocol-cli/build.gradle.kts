@@ -13,9 +13,10 @@ application {
 
 dependencies {
     implementation(project(":core-model"))
+    implementation(project(":core-network"))
+    implementation(project(":gfn-auth"))
     implementation(project(":gfn-identity"))
     implementation(project(":gfn-session"))
     implementation(project(":gfn-cloudmatch"))
-    implementation(project(":core-network"))
     implementation(project(":diagnostics"))
 }

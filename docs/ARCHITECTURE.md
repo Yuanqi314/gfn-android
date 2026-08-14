@@ -1,48 +1,97 @@
-# Architecture
+# 第二版架构说明
 
-The project follows four hard boundaries:
+## 模块边界
 
 ```text
-Compose / MD3E UI
-        ↓
-GFN protocol/session core
-        ↓
-WebRTC transport/signaling
-        ↓
-MediaCodec / SurfaceView output
+app
+├── Compose / Material 3 Expressive UI
+├── AuthController
+└── AndroidKeystoreTokenStore
+
+core-network
+├── HttpTransport
+├── UrlConnectionHttpTransport
+└── NetworkRedaction
+
+gfn-auth
+├── NvidiaAuthApi
+├── AuthSessionService
+├── SimpleJson
+└── OAuth 数据模型
+
+gfn-identity
+└── GFN 协议身份
+
+gfn-cloudmatch
+└── SessionRequest / GFN Header 模型
+
+gfn-session
+└── Session 生命周期状态机
+
+diagnostics
+└── 跨层诊断状态
+
+stream-core
+└── StreamingEngine 抽象
 ```
 
-No layer is allowed to hide another layer's state. In particular, 10-bit is not treated as HDR.
-Diagnostics must keep these dimensions separate:
+## 认证边界
 
-1. user preference;
-2. requested mode;
-3. server-negotiated mode;
-4. decoded format;
-5. final display output mode.
+```text
+Compose
+→ AuthController
+→ AuthSessionService
+→ NvidiaAuthApi
+→ HttpTransport
+→ NVIDIA login endpoints
+```
 
-## Module responsibilities
+`AuthController` 只维护 UI 状态与 generation，不接触 refresh token 内容。`AuthSessionService` 负责登录态生命周期，`NvidiaAuthApi` 负责协议字段，`AndroidKeystoreTokenStore` 负责 Android 加密存储。
 
-- `core-model`: protocol-neutral domain models.
-- `core-network`: transport contract and mandatory secret redaction.
-- `gfn-auth`: OAuth/device-flow contracts and secure-token-store boundary.
-- `gfn-cloudmatch`: centralized GFN headers and typed session request semantics.
-- `gfn-identity`: all server-visible GFN identity values in one place.
-- `gfn-session`: lifecycle state machine and CloudMatch boundary.
-- `diagnostics`: structured diagnostic state.
-- `stream-core`: transport/decoder-independent streaming interfaces.
-- `protocol-cli`: deterministic protocol/session harness.
-- `app`: Android Compose + Material 3 Expressive shell.
+## Device Flow 成功后的凭据链
 
-## Next modules
+```text
+device_code token
+    ↓
+userinfo
+    ↓
+client_token
+    ↓
+client_token grant
+    ↓
+主 GFN client ID token
+    ↓
+再次获取 client_token
+    ↓
+加密保存
+```
 
-The next implementation pass should add:
+这是第二版区别于“只拿到 Device Flow access token 就结束”的关键设计。
 
-- `core-storage`
-- `gfn-catalog`
-- `stream-webrtc`
-- `stream-video-android`
-- `stream-audio-android`
-- `stream-input`
+## 取消与并发
 
-Real NVIDIA requests must be captured as redacted fixtures and covered by golden tests before wiring them into UI.
+认证任务使用 operation generation：
+
+```text
+旧任务 generation N
+用户取消 / 新登录
+→ generation N+1
+→ N 的任何迟到结果都不能覆盖 UI
+→ 如果旧任务已经写入 token，则再次清理
+```
+
+Android 侧轮询等待使用 coroutine `delay`，可立即响应取消；当前 `HttpURLConnection` 本身仍是阻塞 I/O，因此取消发生在 HTTP 请求期间时，最坏要等连接/读取超时返回。后续换 OkHttp 时可以进一步实现 call-level cancellation。
+
+## 后续串流边界
+
+```text
+Stream UI
+→ StreamSession
+→ StreamingEngine
+→ WebRTC signaling / RTP
+→ VideoDecoder
+   ├── 标准 WebRTC SDR path
+   └── Direct MediaCodec → SurfaceView Main10/HDR path
+```
+
+Compose 不持有 WebRTC 或 MediaCodec 实例，避免后续 Main10/HDR decoder 变化迫使 UI 重写。

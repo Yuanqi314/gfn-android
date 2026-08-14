@@ -1,51 +1,90 @@
-# CloudNow reference notes
+# CloudNow 参考记录
 
-Reference repository: `owenselles/CloudNow`
-Reference commit used for this baseline: `f9292868369b0fe41a2d559d0c8f3805193f4389`
+CloudNow 是当前最重要的已实现参考。本项目采用 clean-room 方式：只复现公开可观察的协议行为、状态机与架构边界，不逐行翻译 Swift。
 
-This project uses CloudNow as an architectural and behavioral reference, not as a source file to translate line-by-line.
+## 第二版认证参考
 
-## Auth boundary
-
-CloudNow's `CloudNow/Auth/NVIDIAAuthAPI.swift` separates provider discovery, OAuth/device-flow token work, token refresh, user info, stable device identity, and secure token storage. Android should preserve the same separation, replacing Keychain with Android Keystore-backed storage.
-
-## CloudMatch boundary
-
-CloudNow's `CloudNow/Session/CloudMatchClient.swift` centralizes:
-
-- Windows/GFN-PC request headers;
-- session create/resume request construction;
-- queue/session response parsing;
-- color/HDR/bit-depth request semantics.
-
-Android must not scatter these fields through UI/ViewModels.
-
-## Session lifecycle
-
-CloudNow's `CloudNow/Session/SessionOrchestrator.swift` uses an attempt generation token, cancellation-safe create/poll/teardown behavior, indefinite queue polling, bounded setup timeout after queue exit, and multiple consecutive ready observations before streaming starts.
-
-`gfn-session` starts with the same lifecycle invariants, implemented independently in Kotlin.
-
-## Main10 decoder advertisement
-
-CloudNow's `CloudNow/Streaming/GFNVideoDecoderFactory.swift` explicitly preserves H.265 Main10 (`profile-id=2`) in codec advertisement because losing that payload can silently negotiate an 8-bit stream.
-
-Android's future `GfnVideoDecoderFactory` must verify actual upstream WebRTC behavior before adding Main10 advertisement. No assumption is made in the current baseline.
-
-## HDR output
-
-The planned Android HDR path is intentionally separate from the standard renderer:
+参考：
 
 ```text
-WebRTC RTP / jitter / ordering
-        ↓
-encoded HEVC frame
-        ↓
-MediaCodec Main10
-        ↓
-SurfaceView
-        ↓
-Android HDR compositor
+CloudNow/Auth/NVIDIAAuthAPI.swift
+CloudNow/Auth/AuthManager.swift
 ```
 
-The project will not treat `bitDepth == 10` alone as proof of HDR.
+当前吸收的行为：
+
+```text
+GET /v1/serviceUrls
+→ 登录 Provider discovery
+→ POST /device/authorize
+→ user_code / device_code / verification_uri
+→ POST /token 轮询
+→ authorization_pending：继续
+→ slow_down：轮询间隔 +5 秒
+→ expired_token：失败
+→ access_denied：失败
+→ Device Flow token
+→ /userinfo
+→ /client_token
+→ client_token grant
+→ re-bind 到主 GFN client ID
+→ 再获取 client_token
+```
+
+refresh 时当前参考顺序：Device Flow client ID 优先，主 client ID 回退。
+
+CloudNow 的 `AuthManager` 还使用 credential generation 防止旧登录任务覆盖新状态；Android 第二版在 `AuthController` 实现了同类保护。
+
+### 当前保留的不确定项
+
+`display_name = Apple TV` 是 CloudNow 当前已验证参数。本项目第二版暂时保持这一值以减少变量，但它不是 Android 的真实设备描述，也没有证据证明 NVIDIA 要求必须这样填。真机登录稳定后需要单独做 A/B 验证。
+
+## 后续 CloudMatch 参考
+
+参考：
+
+```text
+CloudNow/Session/CloudMatchClient.swift
+```
+
+重点模型：
+
+```text
+clientIdentification = GFN-PC
+clientPlatformName = windows
+nv-device-os = WINDOWS
+nv-device-type = DESKTOP
+nv-device-make = UNKNOWN
+nv-device-model = UNKNOWN
+```
+
+第二版没有把真实 CloudMatch HTTP 接入 UI，也没有提前硬编码 HDR/Main10 请求。第三版会先完成 Catalog / Library / CloudMatch SDR 基线。
+
+## 后续 Session 生命周期参考
+
+参考：
+
+```text
+CloudNow/Session/SessionOrchestrator.swift
+```
+
+当前纯 Kotlin fixture 已实现：
+
+```text
+create
+→ queue
+→ preparing
+→ 连续两次 ready
+```
+
+后续真实 CloudMatch 接入时继续保持 generation、single-flight、取消和 teardown 边界。
+
+## 后续 Main10 参考
+
+参考：
+
+```text
+CloudNow/Streaming/GFNVideoDecoderFactory.swift
+```
+
+CloudNow 会保留 H.265 `profile-id=2`。Android 端不会现在就假设需要相同 patch；只有真实 SDP 证明 Main10 payload 在 answer 阶段被过滤后，才实现对应的 `GfnVideoDecoderFactory`。

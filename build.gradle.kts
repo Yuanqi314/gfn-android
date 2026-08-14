@@ -1,7 +1,6 @@
 buildscript {
     dependencies {
-        // AGP 9.x built-in Kotlin uses KGP internally. Pin the same compiler version used by
-        // JVM modules and the Compose Compiler plugin so the whole build uses one Kotlin line.
+        // AGP 9.x built-in Kotlin、JVM 模块与 Compose Compiler 统一使用同一 Kotlin 版本。
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.21")
     }
 }

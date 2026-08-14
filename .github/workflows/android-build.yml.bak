@@ -1,0 +1,58 @@
+name: Android APK Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK 37
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          echo "Available Android 37 packages:"
+          sdkmanager --list --channel=3 | grep -E "platforms;android-37|build-tools;37" || true
+
+          BUILD_TOOLS=$(sdkmanager --list --channel=3 \
+            | awk -F'|' '/build-tools;37\./ {
+                gsub(/^[ \t]+|[ \t]+$/, "", $1)
+                print $1
+              }' \
+            | sort -V \
+            | tail -1)
+
+          echo "Build tools: $BUILD_TOOLS"
+          sdkmanager --channel=3 "platforms;android-37" "$BUILD_TOOLS"
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: gfn-android-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

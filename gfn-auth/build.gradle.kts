@@ -8,4 +8,9 @@ kotlin {
 
 dependencies {
     implementation(project(":core-network"))
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }

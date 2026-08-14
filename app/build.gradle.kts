@@ -11,8 +11,8 @@ android {
         applicationId = "dev.gfn.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        versionCode = 2
+        versionName = "0.2.0-dev"
     }
 
     buildFeatures {
@@ -30,14 +30,16 @@ android {
     }
 }
 
-
 dependencies {
     implementation(project(":core-model"))
+    implementation(project(":core-network"))
+    implementation(project(":gfn-auth"))
     implementation(project(":gfn-identity"))
     implementation(project(":diagnostics"))
     implementation(project(":stream-core"))
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.material3:material3:1.5.0-alpha25")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     debugImplementation("androidx.compose.ui:ui-tooling:1.12.0-rc01")
 }

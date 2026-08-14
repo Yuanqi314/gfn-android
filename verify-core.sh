@@ -14,5 +14,5 @@ SOURCES=$(find \
   "$ROOT/stream-core/src/main/kotlin" \
   "$ROOT/protocol-cli/src/main/kotlin" \
   -name '*.kt' -print)
-kotlinc $SOURCES -include-runtime -d "$OUT"
-java -jar "$OUT"
+kotlinc -J-Dfile.encoding=UTF-8 $SOURCES -include-runtime -d "$OUT"
+java -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -jar "$OUT"
