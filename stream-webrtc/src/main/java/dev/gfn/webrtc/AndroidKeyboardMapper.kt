@@ -85,15 +85,14 @@ object AndroidKeyboardMapper {
     fun map(keyCode: Int): GfnKey? = keys[keyCode]
 
     /**
-     * C2-ISO probe lock-key state.
+     * C3 OpenNOW CapsLock probe lock-state.
      *
-     * Deliberately isolates CapsLock from NumLock/ScrollLock so the wire state is exactly:
+     * Keep the C2 isolation invariant so only CapsLock affects type 19 during this test:
      * - Caps OFF -> 0x70
      * - Caps ON  -> 0x71
      *
-     * This is an experiment-only mapping used to test whether INPUT_LOCK_KEYS_SYNC itself
-     * controls the remote alphabetic-key failure. The exact meaning of base bits
-     * 0x10/0x20/0x40 remains undocumented.
+     * NumLock/ScrollLock remain intentionally excluded to avoid the 0x74/0x75 interference
+     * seen in the previous device log. The exact base-bit semantics remain undocumented.
      */
     fun lockKeysState(metaState: Int): Int =
         if (metaState and KeyEvent.META_CAPS_LOCK_ON != 0) 0x71 else 0x70

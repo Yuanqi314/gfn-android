@@ -55,7 +55,7 @@ class GfnKeyboardMouseInputController(
     @Volatile private var protocolReady = false
     @Volatile private var inputEnabled = true
     @Volatile private var protocolVersion: Int? = null
-    @Volatile private var keyboardWireMode: GfnKeyboardWireMode = GfnKeyboardWireMode.SCAN_SET1
+    @Volatile private var keyboardWireMode: GfnKeyboardWireMode = GfnKeyboardWireMode.VK_ONLY_SCAN_ZERO
 
     private var pendingDx = 0.0
     private var pendingDy = 0.0
@@ -138,27 +138,9 @@ class GfnKeyboardMouseInputController(
                 return@enqueue
             }
 
+            // C3 OpenNOW parity: synchronize the Caps lock state before the physical key event.
+            // Android reports the updated Caps bit on KEY_UP, matching OpenNOW's event ordering.
             syncLockKeysStateIfNeeded(trace.metaState)
-
-            // C2-ISO single-variable probe:
-            // keep Android's local CapsLock state transition, but never forward VK_CAPITAL
-            // to the remote session. This makes 0x70 <-> 0x71 INPUT_LOCK_KEYS_SYNC the
-            // only server-visible variable when the physical CapsLock key is toggled.
-            if (trace.keyCode == KeyEvent.KEYCODE_CAPS_LOCK) {
-                lastEvent = "CapsLock C2-ISO local-only ${if (down) "DOWN" else "UP"}"
-                GfnInputForensics.logInputKey(
-                    trace, connectionGeneration, eventEpoch, androidReportedModifiers, trackedModifiersForEvent,
-                    key.virtualKey, key.scanCode, protocolVersion, true, true, "C2_ISO_CAPS_SUPPRESSED",
-                )
-                Log.i(
-                    "GfnLockState",
-                    "probe=C2_ISO generation=$connectionGeneration inputEpoch=$eventEpoch " +
-                        "capsPhysical=${if (down) "DOWN" else "UP"} rawMeta=0x${trace.metaState.toString(16)} " +
-                        "vkCapitalSuppressed=true",
-                )
-                emitDiagnostics(force = true)
-                return@enqueue
-            }
 
             if (androidReportedModifiers != trackedModifiersForEvent) {
                 modifierMismatchCount += 1
@@ -174,8 +156,14 @@ class GfnKeyboardMouseInputController(
             )
 
             // 远端只使用本状态机实际持有的 modifier。Android metaState 只做诊断。
-            if (down) handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)
-            else handleKeyUp(trace, eventEpoch, key, trackedModifiersForEvent)
+            if (down) {
+                handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)
+            } else {
+                handleKeyUp(trace, eventEpoch, key, trackedModifiersForEvent)
+                if (trace.keyCode == KeyEvent.KEYCODE_CAPS_LOCK) {
+                    sendCapsLockCompatibilityShift(trace, eventEpoch, trackedModifiersForEvent)
+                }
+            }
         }
         return true
     }
@@ -322,30 +310,19 @@ class GfnKeyboardMouseInputController(
 
     fun setKeyboardWireMode(mode: GfnKeyboardWireMode) {
         enqueue {
+            val fixedMode = GfnKeyboardWireMode.VK_ONLY_SCAN_ZERO
             val oldMode = keyboardWireMode
-            if (oldMode == mode) {
+            if (mode != fixedMode) {
+                lastEvent = "C3 wire mode fixed to VK_ONLY_SCAN_ZERO"
                 GfnInputForensics.logWireMode(
-                    connectionGeneration, gate.currentEpoch, oldMode, mode, true, "UNCHANGED",
+                    connectionGeneration, gate.currentEpoch, oldMode, mode, false, "C3_OPENNOW_FIXED_SCAN_ZERO",
                 )
                 emitDiagnostics(force = true)
                 return@enqueue
             }
-            val heldKeysPresent = tracker.physicalHeldKeys.isNotEmpty() ||
-                tracker.remoteAssumedHeldKeys.isNotEmpty() || tracker.uncertainRemoteKeys.isNotEmpty()
-            val safeToSwitch = overlayOpen && !keyboardActive() && !heldKeysPresent
-            if (!safeToSwitch) {
-                lastEvent = "Wire mode switch rejected"
-                GfnInputForensics.logWireMode(
-                    connectionGeneration, gate.currentEpoch, oldMode, mode, false,
-                    "REQUIRES_OVERLAY_AND_ZERO_HELD_KEYS",
-                )
-                emitDiagnostics(force = true)
-                return@enqueue
-            }
-            keyboardWireMode = mode
-            lastEvent = "Wire ${mode.name}"
+            keyboardWireMode = fixedMode
             GfnInputForensics.logWireMode(
-                connectionGeneration, gate.currentEpoch, oldMode, mode, true, "SAFE_SWITCH",
+                connectionGeneration, gate.currentEpoch, oldMode, fixedMode, true, "C3_OPENNOW_FIXED_SCAN_ZERO",
             )
             emitDiagnostics(force = true)
         }
@@ -397,11 +374,35 @@ class GfnKeyboardMouseInputController(
         val ok = send(encoder.lockKeysSync(state))
         Log.i(
             "GfnLockState",
-            "probe=C2_ISO generation=$connectionGeneration protocol=${protocolVersion ?: encoder.protocolVersion} " +
+            "probe=C3_OPENNOW generation=$connectionGeneration protocol=${protocolVersion ?: encoder.protocolVersion} " +
                 "capsOn=$capsOn rawMeta=0x${metaState.toString(16)} " +
-                "numScrollIgnored=true state=0x${state.toString(16).padStart(2, '0')} sendAccepted=$ok",
+                "capsOnlyLockState=true state=0x${state.toString(16).padStart(2, '0')} sendAccepted=$ok",
         )
         if (ok) lastLockKeysState = state
+    }
+
+    /**
+     * OpenNOW/official-Web CapsLock compatibility path: after CapsLock KEY_UP,
+     * emit a transient VK_LSHIFT DOWN+UP with scan=0. These synthetic events do not
+     * mutate physical-held state because there is no corresponding Android Shift key.
+     */
+    private fun sendCapsLockCompatibilityShift(
+        trace: GfnInputForensics.KeyTrace,
+        eventEpoch: Long,
+        modifiers: Int,
+    ) {
+        val shift = AndroidKeyboardMapper.map(KeyEvent.KEYCODE_SHIFT_LEFT) ?: return
+        val downPacket = encodeKeyboardForWire(true, shift, modifiers)
+        val downOk = sendKeyboard(trace, eventEpoch, true, shift, modifiers, downPacket)
+        val upPacket = encodeKeyboardForWire(false, shift, modifiers)
+        val upOk = sendKeyboard(trace, eventEpoch, false, shift, modifiers, upPacket)
+        lastEvent = "CapsLock C3 synthetic LSHIFT"
+        Log.i(
+            "GfnCapsCompat",
+            "probe=C3_OPENNOW generation=$connectionGeneration inputEpoch=$eventEpoch " +
+                "vk=0x${shift.virtualKey.toString(16).padStart(4, '0')} scan=0x0000 " +
+                "mods=0x${modifiers.toString(16).padStart(4, '0')} downAccepted=$downOk upAccepted=$upOk",
+        )
     }
 
     private fun handleKeyDown(
