@@ -1,4 +1,4 @@
-# 当前状态 · v5.1.3 Input Forensics
+# 当前状态 · v5.1.4 Keyboard Wire A/B
 
 ## 真机已确认
 
@@ -21,13 +21,24 @@ control_channel Session End        ✅
 ## 当前唯一重点输入问题
 
 ```text
-普通字母键（最新明确 K，用户观察疑似所有字母）
-→ 远端全屏游戏窗口最小化
+W / N / K / G
+→ 均会让远端全屏游戏窗口最小化
 ```
 
-v5.1.2 的 tracked modifier 修复没有解决该问题，因此 phantom Meta 已从主要假设降级。
+v5.1.3 真机日志已确认这些键的 Android KeyEvent、consume、modifier=0、mapped VK/Set-1、protocol=3、28-byte final ByteBuffer、binary=true、DataChannel OPEN、sendAccepted=true。当前最高价值变量转为 GFN keyboard packet 的 wire scancode 语义。
 
-## v5.1.3 定义
+## v5.1.4 定义
+
+```text
+Keyboard Wire A/B
+
+A: mapped VK + Set-1 wire scan
+B: same mapped VK + wire scan=0
+```
+
+默认 A；只能在 Overlay + held keys=0 时切换。v5.1.3 Forensics 全部保留，并新增 `wireMode / mappedScan / wireScan`。
+
+## v5.1.3 取证基础
 
 ```text
 Input Forensics Only

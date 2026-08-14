@@ -1,0 +1,42 @@
+V514 SOURCE / FREEZE CHECKS
+
+stream-input/GfnInputProtocol.kt SHA-256:
+bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2
+= v5.1.3 unchanged
+
+AndroidKeyboardMapper.kt SHA-256:
+f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d
+= v5.1.3 unchanged
+
+Default wire mode:
+SCAN_SET1
+PASS
+
+Experimental wire mode:
+VK_ONLY_SCAN_ZERO
+PASS
+
+Switch safety:
+Overlay required
+keyboard inactive required
+physical/remote/uncertain held keys must be empty
+PASS
+
+Forensics:
+wireMode
+mappedScan
+wireScan
+final ByteBuffer exact bytes
+PASS
+
+Freeze:
+CloudMatch unchanged
+stream-signaling unchanged
+stream-input unchanged
+AndroidKeyboardMapper unchanged
+mouse/wheel logic unchanged
+Audio routing unchanged
+WebRTC public dependency remains api(...)
+PASS
+
+Build artifacts must be removed before ZIP packaging.

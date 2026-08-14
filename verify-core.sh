@@ -104,6 +104,23 @@ grep -Fq 'DataChannel.Init().apply { ordered = true }' stream-webrtc/src/main/ja
 grep -Fq 'fun releaseAll(reason: InputReleaseReason)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: releaseAll architecture changed' >&2; exit 1; }
 grep -Fq 'pendingWheel += verticalAxis * 3.0' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: mouse/wheel logic changed in forensics-only release' >&2; exit 1; }
 echo 'V513_INPUT_FORENSICS_GUARDS=PASS'
+# v5.1.4 keyboard wire A/B guards. Only final keyboard wire scan may vary.
+grep -Fq 'enum class GfnKeyboardWireMode' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: v5.1.4 wire mode enum missing' >&2; exit 1; }
+grep -Fq 'SCAN_SET1' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: Set-1 A mode missing' >&2; exit 1; }
+grep -Fq 'VK_ONLY_SCAN_ZERO' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: scan-zero B mode missing' >&2; exit 1; }
+grep -Fq 'keyboardWireMode: GfnKeyboardWireMode = GfnKeyboardWireMode.SCAN_SET1' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: v5.1.4 default mode must remain SCAN_SET1' >&2; exit 1; }
+grep -Fq 'GfnKeyboardWirePolicy.applyInPlace(packet, version, keyboardWireMode)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: final keyboard packet wire policy missing' >&2; exit 1; }
+grep -Fq 'wireMode=${tx.wireMode} mappedScan=' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: wire mode mapped/wire scan diagnostics missing' >&2; exit 1; }
+grep -Fq 'REQUIRES_OVERLAY_AND_ZERO_HELD_KEYS' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: unsafe held-key wire mode switch guard missing' >&2; exit 1; }
+grep -Fq 'wireHeldClear' app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt || { echo 'ERROR: fullscreen A/B UI held-key guard missing' >&2; exit 1; }
+grep -Fq 'setKeyboardWireMode' app/src/main/java/dev/gfn/android/stream/GfnStreamingController.kt || { echo 'ERROR: app to engine wire mode boundary missing' >&2; exit 1; }
+INPUT_PROTOCOL_SHA_V514=$(sha256sum stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt | awk '{print $1}')
+[ "$INPUT_PROTOCOL_SHA_V514" = 'bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2' ] || { echo 'ERROR: stream-input encoder changed during v5.1.4 A/B experiment' >&2; exit 1; }
+KEYBOARD_MAPPER_SHA_V514=$(sha256sum stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt | awk '{print $1}')
+[ "$KEYBOARD_MAPPER_SHA_V514" = 'f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d' ] || { echo 'ERROR: AndroidKeyboardMapper changed during v5.1.4 A/B experiment' >&2; exit 1; }
+echo 'V514_KEYBOARD_WIRE_AB_GUARDS=PASS'
+./verify-wire-ab.sh
+
 BUILD="$ROOT/build"
 MODULES="$BUILD/module-check"
 rm -rf "$MODULES"

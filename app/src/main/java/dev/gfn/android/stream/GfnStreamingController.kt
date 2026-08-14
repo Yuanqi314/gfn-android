@@ -8,6 +8,7 @@ import dev.gfn.core.model.SessionInfo
 import dev.gfn.stream.StreamConfig
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
+import dev.gfn.webrtc.GfnKeyboardWireMode
 import dev.gfn.webrtc.GfnVideoSurfaceView
 import dev.gfn.webrtc.GfnWebRtcEngine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +48,7 @@ class GfnStreamingController(
     fun onActivityPaused() = engine.onActivityPaused()
     fun onActivityDestroy() = engine.onActivityDestroy()
     fun setOverlayOpen(open: Boolean) = engine.onOverlayChanged(open)
+    fun setKeyboardWireMode(mode: GfnKeyboardWireMode) = engine.setKeyboardWireMode(mode)
     fun onFullscreenExit() = engine.onFullscreenExit()
 
     fun bindVideoOutput(view: GfnVideoSurfaceView?) {

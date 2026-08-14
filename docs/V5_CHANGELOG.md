@@ -133,4 +133,16 @@
 - A/W/K/1/Space/Esc 新增 v2/v3 golden packet fixture。
 - `GfnInputProtocol.kt` 与 `AndroidKeyboardMapper.kt` 与 v5.1.2 SHA 完全一致；K 继续 `VK=0x004B / scan=0x0025`。
 - 不修改 tracked modifier、releaseAll/epoch、mouse/wheel、CloudMatch、WSS、SDP、ICE、H.264、Audio。
+## v5.1.4 — Keyboard Wire A/B
+
+- 默认保持 `SCAN_SET1`，启动行为与 v5.1.3 相同。
+- 新增 `VK_ONLY_SCAN_ZERO` 实验模式；只在最终 keyboard packet 上把 wire scan 两字节清零。
+- `GfnInputPacketEncoder` 与 `AndroidKeyboardMapper` SHA 保持 v5.1.3 不变。
+- 新增 `GfnKeyboardWirePolicy`，normal key、releaseAll key-up、uncertain-state neutralization 都使用当前 wire mode。
+- Wire Mode 仅允许在 Overlay 打开、keyboard inactive、physical/remote held keys 均为 0 时切换。
+- 全屏 Overlay 增加 A/B 切换按钮；HUD 显示当前 `wireMode / mappedScan / wireScan`。
+- v5.1.3 `GfnInputTx` 继续 dump final ByteBuffer，并新增 mapped/wire scan 对照。
+- 新增 A/B byte fixture：W/N/K/G，protocol v2/v3，DOWN/UP；A/B 除 scan 两字节外 byte-for-byte 相同。
+- 新增 A→B→A 状态机 fixture，验证 held-key/Overlay 安全边界。
+- 未修改 modifier、VK mapping、v3 wrapper、DataChannel、mouse、audio、CloudMatch、WSS、SDP、ICE、H.264。
 

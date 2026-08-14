@@ -54,6 +54,7 @@ class GfnKeyboardMouseInputController(
     @Volatile private var protocolReady = false
     @Volatile private var inputEnabled = true
     @Volatile private var protocolVersion: Int? = null
+    @Volatile private var keyboardWireMode: GfnKeyboardWireMode = GfnKeyboardWireMode.SCAN_SET1
 
     private var pendingDx = 0.0
     private var pendingDy = 0.0
@@ -72,6 +73,8 @@ class GfnKeyboardMouseInputController(
     private var lastAndroidReportedModifierMask: Int? = null
     private var lastTrackedModifierMask: Int? = null
     private var modifierMismatchCount = 0L
+    private var lastMappedScanCode: Int? = null
+    private var lastWireScanCode: Int? = null
     private var lastHeartbeatNanos = System.nanoTime()
     private var lastDiagnosticNanos = 0L
 
@@ -292,6 +295,37 @@ class GfnKeyboardMouseInputController(
         else enqueue { emitDiagnostics(force = true) }
     }
 
+    fun setKeyboardWireMode(mode: GfnKeyboardWireMode) {
+        enqueue {
+            val oldMode = keyboardWireMode
+            if (oldMode == mode) {
+                GfnInputForensics.logWireMode(
+                    connectionGeneration, gate.currentEpoch, oldMode, mode, true, "UNCHANGED",
+                )
+                emitDiagnostics(force = true)
+                return@enqueue
+            }
+            val heldKeysPresent = tracker.physicalHeldKeys.isNotEmpty() ||
+                tracker.remoteAssumedHeldKeys.isNotEmpty() || tracker.uncertainRemoteKeys.isNotEmpty()
+            val safeToSwitch = overlayOpen && !keyboardActive() && !heldKeysPresent
+            if (!safeToSwitch) {
+                lastEvent = "Wire mode switch rejected"
+                GfnInputForensics.logWireMode(
+                    connectionGeneration, gate.currentEpoch, oldMode, mode, false,
+                    "REQUIRES_OVERLAY_AND_ZERO_HELD_KEYS",
+                )
+                emitDiagnostics(force = true)
+                return@enqueue
+            }
+            keyboardWireMode = mode
+            lastEvent = "Wire ${mode.name}"
+            GfnInputForensics.logWireMode(
+                connectionGeneration, gate.currentEpoch, oldMode, mode, true, "SAFE_SWITCH",
+            )
+            emitDiagnostics(force = true)
+        }
+    }
+
     fun releaseForFullscreenExit() = releaseAll(InputReleaseReason.FullscreenExit)
 
     /**
@@ -339,7 +373,7 @@ class GfnKeyboardMouseInputController(
         val held = HeldKey(key, modifiers)
         if (!tracker.recordPhysicalKeyDown(held)) return
         lastEvent = keyLabel(key) + " DOWN"
-        val packet = encoder.keyboard(true, key, modifiers)
+        val packet = encodeKeyboardForWire(true, key, modifiers)
         val ok = sendKeyboard(trace, eventEpoch, true, key, modifiers, packet)
         if (ok) tracker.markKeyDownAccepted(held) else tracker.markKeyUncertain(held)
         emitDiagnostics(force = true)
@@ -355,7 +389,7 @@ class GfnKeyboardMouseInputController(
         val held = previous ?: HeldKey(key, modifiers)
         val encodedModifiers = previous?.modifiersAtDown ?: modifiers
         lastEvent = keyLabel(key) + " UP"
-        val packet = encoder.keyboard(false, key, encodedModifiers)
+        val packet = encodeKeyboardForWire(false, key, encodedModifiers)
         val ok = sendKeyboard(trace, eventEpoch, false, key, encodedModifiers, packet)
         if (ok) tracker.markKeyUpAccepted(key) else tracker.markKeyUncertain(held)
         emitDiagnostics(force = true)
@@ -410,7 +444,7 @@ class GfnKeyboardMouseInputController(
             plan.forEach { command ->
                 when (command) {
                     is ReleaseCommand.KeyUp -> {
-                        if (send(encoder.keyboard(false, command.held.key, command.held.modifiersAtDown))) {
+                        if (send(encodeKeyboardForWire(false, command.held.key, command.held.modifiersAtDown))) {
                             tracker.clearRemoteKey(command.held.key)
                         } else {
                             tracker.markKeyUncertain(command.held)
@@ -439,7 +473,7 @@ class GfnKeyboardMouseInputController(
         plan.forEach { command ->
             when (command) {
                 is ReleaseCommand.KeyUp -> {
-                    if (send(encoder.keyboard(false, command.held.key, command.held.modifiersAtDown))) {
+                    if (send(encodeKeyboardForWire(false, command.held.key, command.held.modifiersAtDown))) {
                         tracker.clearRemoteKey(command.held.key)
                     }
                 }
@@ -508,6 +542,13 @@ class GfnKeyboardMouseInputController(
         emitDiagnostics()
     }
 
+    private fun encodeKeyboardForWire(down: Boolean, key: GfnKey, modifiers: Int): ByteArray {
+        val packet = encoder.keyboard(down, key, modifiers)
+        val version = protocolVersion ?: encoder.protocolVersion
+        GfnKeyboardWirePolicy.applyInPlace(packet, version, keyboardWireMode)
+        return packet
+    }
+
     private fun send(packet: ByteArray): Boolean {
         generated += 1
         if (!packetSink.isOpen()) {
@@ -530,6 +571,9 @@ class GfnKeyboardMouseInputController(
     ): Boolean {
         generated += 1
         val version = protocolVersion ?: encoder.protocolVersion
+        val wireScan = GfnKeyboardWirePolicy.readWireScan(packet, version)
+        lastMappedScanCode = key.scanCode
+        lastWireScanCode = wireScan
         val tx = GfnInputForensics.KeyboardTx(
             trace = trace,
             connectionGeneration = connectionGeneration,
@@ -539,7 +583,9 @@ class GfnKeyboardMouseInputController(
             payloadOffset = if (version >= 3) 10 else 0,
             virtualKey = key.virtualKey,
             modifiers = modifiers,
-            scanCode = key.scanCode,
+            wireMode = keyboardWireMode.name,
+            mappedScanCode = key.scanCode,
+            wireScanCode = wireScan,
         )
         if (!packetSink.isOpen()) {
             dropped += 1
@@ -598,6 +644,9 @@ class GfnKeyboardMouseInputController(
                 lastAndroidReportedModifierMask = lastAndroidReportedModifierMask,
                 lastTrackedModifierMask = lastTrackedModifierMask,
                 modifierMismatchCount = modifierMismatchCount,
+                keyboardWireMode = keyboardWireMode.name,
+                lastMappedScanCode = lastMappedScanCode,
+                lastWireScanCode = lastWireScanCode,
                 releaseCount = releaseCount,
                 lastEvent = lastEvent,
                 lastReleaseReason = lastReleaseReason?.name,

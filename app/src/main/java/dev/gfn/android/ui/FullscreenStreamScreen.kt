@@ -40,6 +40,7 @@ import androidx.lifecycle.LifecycleOwner
 import dev.gfn.android.stream.GfnStreamingController
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
+import dev.gfn.webrtc.GfnKeyboardWireMode
 import dev.gfn.webrtc.GfnVideoSurfaceView
 import kotlinx.coroutines.delay
 
@@ -182,6 +183,32 @@ fun FullscreenStreamScreen(
             ) {
                 Text("串流菜单", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("打开 Overlay 已执行 releaseAll；Esc 不被占用，仍发送给远端游戏。")
+                val wireInput = diagnostics.input
+                val wireHeldClear = wireInput.physicalHeldKeys == 0 && wireInput.remoteHeldKeys == 0
+                val nextWireMode = if (wireInput.keyboardWireMode == GfnKeyboardWireMode.SCAN_SET1.name) {
+                    GfnKeyboardWireMode.VK_ONLY_SCAN_ZERO
+                } else {
+                    GfnKeyboardWireMode.SCAN_SET1
+                }
+                Text(
+                    "Keyboard Wire: ${wireInput.keyboardWireMode} · mapped=${wireInput.lastMappedScanCode?.let { "0x${it.toString(16)}" } ?: "-"} " +
+                        "wire=${wireInput.lastWireScanCode?.let { "0x${it.toString(16)}" } ?: "-"}",
+                )
+                OutlinedButton(
+                    enabled = wireHeldClear && wireInput.dataChannelOpen,
+                    onClick = { controller.setKeyboardWireMode(nextWireMode) },
+                ) {
+                    Text(
+                        if (nextWireMode == GfnKeyboardWireMode.VK_ONLY_SCAN_ZERO) {
+                            "切换到 B：VK + scan=0"
+                        } else {
+                            "切换到 A：VK + Set-1 scan"
+                        },
+                    )
+                }
+                if (!wireHeldClear) {
+                    Text("仍有 held key，禁止切换 Wire Mode。")
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { setLocalOverlay(false) }) { Text("返回游戏") }
                     OutlinedButton(
@@ -243,6 +270,11 @@ private fun InputDebugHud(
             "mods android=${input.lastAndroidReportedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"} " +
                 "tracked=${input.lastTrackedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"} " +
                 "mismatch=${input.modifierMismatchCount}",
+            color = Color.White,
+        )
+        Text(
+            "Wire=${input.keyboardWireMode} mapped=${input.lastMappedScanCode?.let { "0x${it.toString(16)}" } ?: "-"} " +
+                "wire=${input.lastWireScanCode?.let { "0x${it.toString(16)}" } ?: "-"}",
             color = Color.White,
         )
         Text(input.lastEvent ?: "点击画面捕获鼠标", color = Color.White)

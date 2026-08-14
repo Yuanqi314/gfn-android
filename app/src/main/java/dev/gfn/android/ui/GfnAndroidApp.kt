@@ -241,7 +241,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.1 全屏键鼠",
+                "独立 Android GFN 客户端 · v5.1.4 Keyboard Wire A/B",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -892,7 +892,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "键鼠输入 v5.1",
+                "键鼠输入 v5.1.4 A/B",
                 listOf(
                     "Reliable channel" to if (streamDiagnostics.input.dataChannelOpen) "OPEN" else "-",
                     "Protocol ready" to streamDiagnostics.input.protocolReady.asYesNo(),
@@ -906,6 +906,8 @@ private fun DiagnosticsScreen(
                     "Android modifier mask" to (streamDiagnostics.input.lastAndroidReportedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"),
                     "Tracked modifier mask" to (streamDiagnostics.input.lastTrackedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"),
                     "Modifier mismatches" to streamDiagnostics.input.modifierMismatchCount.toString(),
+                    "Keyboard wire mode" to streamDiagnostics.input.keyboardWireMode,
+                    "Mapped / wire scan" to "${streamDiagnostics.input.lastMappedScanCode?.let { "0x${it.toString(16)}" } ?: "-"} / ${streamDiagnostics.input.lastWireScanCode?.let { "0x${it.toString(16)}" } ?: "-"}",
                     "Epoch" to streamDiagnostics.input.inputEpoch.toString(),
                     "Remote state" to streamDiagnostics.input.remoteState,
                     "Held keys local/remote" to "${streamDiagnostics.input.physicalHeldKeys}/${streamDiagnostics.input.remoteHeldKeys}",

@@ -1,0 +1,51 @@
+=== GFN Android v5.1.4 Keyboard Wire A/B 验证 ===
+
+[Wire bytes fixture]
+V514_KEYBOARD_WIRE_AB_ONLY_SCAN_BYTES=PASS
+覆盖：W/N/K/G，protocol v2/v3，DOWN/UP。
+断言：A/B 除 keyboard scan 字段两个字节外 byte-for-byte 相同。
+
+[Wire mode state fixture]
+V514_WIRE_MODE_A_B_A_STATE_FIXTURE=PASS
+A: K wireScan=0x0025
+未打开 Overlay 请求切 B：拒绝
+Overlay + held keys=0 后 B: K wireScan=0x0000
+再次安全切回 A: K wireScan=0x0025
+
+[Targeted compile]
+V514_INPUT_CONTROLLER_COMPILE=PASS
+V514_ENGINE_COMPILE=PASS
+V514_APP_STREAM_CONTROLLER_COMPILE=PASS
+V514_UI_SYNTAX_SCAN=PASS
+
+[Protocol CLI]
+V514_PROTOCOL_CLI_COMPILE_RUN=PASS
+原 v5.1.3 keyboard golden packets 继续 PASS。
+
+[Static guards]
+V5_WEBRTC_PUBLIC_ABI=PASS
+V5_WEBRTC_NETWORK_PERMISSIONS=PASS
+V51_INPUT_ARCHITECTURE=PASS
+V51_RELEASE_ALL_GUARDS=PASS
+V511_TRUE_DEVICE_FIX_GUARDS=PASS
+V512_AUDIO_KEYBOARD_GUARDS=PASS
+V513_INPUT_FORENSICS_GUARDS=PASS
+V514_KEYBOARD_WIRE_AB_GUARDS=PASS
+
+[Full verify-core]
+完整聚合执行在当前容器累计编译耗时达到工具限制；日志已通过：
+core-model
+core-network
+gfn-identity
+gfn-auth
+gfn-account
+gfn-games
+gfn-session
+diagnostics
+随后在 stream-core 编译阶段被外部工具超时终止。
+stream-core 已在 targeted compile 中独立 PASS。
+因此不把单次 verify-core 记为完整 PASS。
+
+[Environment]
+当前容器仍无完整 Android SDK/android.jar，未执行真实 AGP assembleDebug。
+最终 APK 编译以 Android Studio/真机环境为准。

@@ -1,9 +1,33 @@
-# GFN Android Lab · v5.1.3 Input Forensics 键盘全链路取证版
+# GFN Android Lab · v5.1.4 Keyboard Wire A/B 实验版
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
+
+## v5.1.4 本轮新增
+
+v5.1.3 真机取证已把 W / N / K / G 的 Android dispatch、modifier、VK/Set-1 mapping、protocol=3、28-byte framing、ByteBuffer 和 binary DataChannel send 基本确认正常；四个字母仍会让远端全屏游戏窗口最小化。
+
+v5.1.4 因此只做单变量 Keyboard Wire A/B：
+
+```text
+A / SCAN_SET1
+wire scan = mapped Windows Set-1 scan
+
+B / VK_ONLY_SCAN_ZERO
+wire scan = 0x0000
+```
+
+基础 `stream-input/GfnInputPacketEncoder` 与 `AndroidKeyboardMapper` 保持 v5.1.3 SHA 不变；B 只在最终 wire packet 上清零 scan 两字节。默认仍为 A。切换只允许在全屏 Overlay 打开且 held keys 清零后执行，并继续保留 v5.1.3 `eventSeq` 全链路日志。
+
+详细见：
+
+```text
+docs/V5_1_4_KEYBOARD_WIRE_AB.md
+docs/V5_1_4_TEST_GUIDE.md
+docs/V5_1_4_REFERENCE_ADOPTION.md
+```
 
 ## v5.1.3 本轮新增
 
