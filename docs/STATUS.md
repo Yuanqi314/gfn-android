@@ -1,90 +1,112 @@
-# 当前状态 · v5.1.4 Keyboard Wire A/B
+# 当前状态 · v5.2 Stream Settings Foundation
 
 ## 真机已确认
 
 ```text
-Auth / restart restore             ✅
-Membership / Library / Catalog     ✅
-Search / Game Detail               ✅
-CloudMatch Create / Provision      ✅
-Claim / RESUME                     ✅
-GFN WebSocket / SDP / ICE          ✅
-H.264 RTP / Decode / Surface       ✅
-Keyboard / Mouse 基础链            ✅
-Audio 有声                         ✅
-Audio 扬声器 / 媒体音量             ⏳ v5.1.2 待真机复测
-Wheel direction                    ✅
-Fullscreen landscape / aspect fit  ✅
-control_channel Session End        ✅
+Auth / restart restore                         ✅
+Membership / Library / Catalog                 ✅
+Search / Game Detail                           ✅
+CloudMatch Create / Provision                  ✅
+Claim / RESUME                                 ✅
+GFN WebSocket / SDP / ICE                      ✅
+H.264 RTP / Decode / Surface                   ✅
+Audio 有声                                     ✅
+Wheel direction                                ✅
+Fullscreen landscape / aspect fit              ✅
+control_channel Session End                    ✅
+Keyboard / Mouse stable baseline               ✅
+Cyberpunk 2077 keyboardLayout=en-US fix        ✅
+CS2 keyboard regression                        ✅
 ```
 
-## 当前唯一重点输入问题
+## Keyboard soft-freeze
+
+Cyberpunk 2077 最终真机裁决：
 
 ```text
-W / N / K / G
-→ 均会让远端全屏游戏窗口最小化
+Session keyboardLayout=zh-CN/auto-derived Chinese
+→ A-Z 进入远端 Windows completion/composition 路径
+
+新 Session keyboardLayout=en-US
+→ Caps OFF A-Z 恢复正常
 ```
 
-v5.1.3 真机日志已确认这些键的 Android KeyEvent、consume、modifier=0、mapped VK/Set-1、protocol=3、28-byte final ByteBuffer、binary=true、DataChannel OPEN、sendAccepted=true。当前最高价值变量转为 GFN keyboard packet 的 wire scancode 语义。
-
-## v5.1.4 定义
+v5.1.9 已回到 production keyboard semantics：
 
 ```text
-Keyboard Wire A/B
-
-A: mapped VK + Set-1 wire scan
-B: same mapped VK + wire scan=0
+Windows VK
++ Windows Set-1 scan
++ tracked modifiers
++ ordered input_channel_v1
 ```
 
-默认 A；只能在 Overlay + held keys=0 时切换。v5.1.3 Forensics 全部保留，并新增 `wireMode / mappedScan / wireScan`。
+并删除调查期的 scan=0 / type19 / Caps synthetic LSHIFT / Wire A-B。v5.2 对这些文件保持 byte-identical，Keyboard packet semantics 正式进入 soft-freeze。
 
-## v5.1.3 取证基础
+## v5.2 当前重点
 
 ```text
-Input Forensics Only
+PersistentStreamSettings
+        ↓ resolve once
+subscription entitlement
++ current engine capability
+        ↓
+ResolvedLaunchProfile
+        ↓
+CREATE / persist / CLAIM / WebRTC
 ```
 
-本版不宣称修复 K；只要求下一份真机日志能够回答：
+当前公开设置：
 
 ```text
-Android 收到什么 KeyEvent？
-View 是否 consume？
-mapper 输出什么 VK/scan？
-trackedMods 是什么？
-server handshake 原始字节是什么？
-protocolVersion 是 v2 还是 v3？
-最终 ByteBuffer 是 18 还是 28 bytes？
-position/limit/remaining 是否正确？
-binary 是否 true？
-sendAccepted 是否 true？
-同一时刻是否出现独立 KEYCODE_BACK？
+Keyboard Layout：Auto / en-US(default) / supported layouts
+Resolution：Auto / 1920x1080
+FPS：Auto / 60
+Max Bitrate：20 Mbps default，5–100 Mbps client guard
+Audio：Stereo 2ch
 ```
 
-## 冻结
-
-`GfnInputProtocol.kt` 与 v5.1.2 SHA-256 相同：
+当前不公开：
 
 ```text
-bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2
+HEVC
+Main10
+HDR10
+5.1
+120 / 240 FPS
 ```
 
-`AndroidKeyboardMapper.kt` 与 v5.1.2 SHA-256 相同：
+### 证据边界
 
 ```text
-f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d
+1080p60 H.264 SDR8 Stereo = 既有稳定真机路径
+20 Mbps                    = 稳定默认
+5–100 Mbps                 = client guard；非默认码率真机 A/B 待验证
 ```
 
-因此本版没有修改 keyboard wire protocol 或 mapping。
+## Legacy Resume
 
-## 暂缓
+v5.1.9 及更早的 persisted Session 没有完整 `ResolvedLaunchProfile`。
+
+v5.2 不根据当前 Settings 猜旧 Session 参数；旧记录必须 End/Cleanup 后创建新 Session。
+
+## 下一步
+
+v5.2 真机验证通过后：
 
 ```text
-登录记录偶发消失        ⏸ 继续只保留 diagnostics
-偶发非旋转 Home-return  ⏳ 未复现
-Gamepad / Touch         ⏳
-HEVC / Main10 / HDR     ⏳
+v5.2.1 Reconnect
+        ↓
+v5.3 Gamepad
+        ↓
+v5.4 Audio / 5.1
+        ↓
+v6.0 HEVC Main SDR8
+        ↓
+v6.1 Main10 SDR10
+        ↓
+v6.2 HDR10
 ```
 
-## 环境边界
+## 构建边界
 
-当前容器没有 Android SDK/android.jar，所以完整 AGP `assembleDebug` 未执行。v5.1.3 已完成 pure Kotlin golden fixtures 与 Android/WebRTC API-shaped compile；最终仍以真机 Android Studio build 为准。
+离线 resolver / persistence / controller fixtures 与 targeted Kotlin compile 已通过；完整 Android Gradle build 当前在下载 Gradle 9.5.0 前即因容器 DNS 无法解析 `services.gradle.org` 而停止，因此不能声称 APK 全工程编译通过。

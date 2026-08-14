@@ -2,17 +2,16 @@ package dev.gfn.android.session
 
 import android.util.Log
 import dev.gfn.android.auth.AuthController
-import dev.gfn.auth.AuthSession
 import dev.gfn.cloudmatch.CloudMatchException
 import dev.gfn.cloudmatch.GfnCloudMatchClient
-import dev.gfn.core.model.EntitledResolution
 import dev.gfn.core.model.GameDetail
 import dev.gfn.core.model.GameVariant
-import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionClaimRequest
 import dev.gfn.core.model.SessionCreateRequest
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.core.model.SubscriptionInfo
+import dev.gfn.android.settings.GfnStreamSettingsController
+import dev.gfn.android.settings.ResolvedLaunchProfile
 import dev.gfn.identity.GfnLocale
 import dev.gfn.session.CloudMatchPort
 import dev.gfn.session.SessionOrchestrator
@@ -90,7 +89,7 @@ class GfnSessionController(
     authController: AuthController,
     cloudMatchClient: GfnCloudMatchClient,
     private val recordStore: AndroidSessionRecordStore,
-    private val keyboardLayoutStore: AndroidKeyboardLayoutStore,
+    private val streamSettingsController: GfnStreamSettingsController,
     private val scope: CoroutineScope,
 ) {
     private val port: CloudMatchPort = AuthRefreshingCloudMatchPort(cloudMatchClient, authController)
@@ -107,8 +106,8 @@ class GfnSessionController(
     private val _resumeRecord = MutableStateFlow<PersistedSessionRecord?>(null)
     val resumeRecord: StateFlow<PersistedSessionRecord?> = _resumeRecord.asStateFlow()
 
-    private val _keyboardLayoutSelection = MutableStateFlow(keyboardLayoutStore.load())
-    val keyboardLayoutSelection: StateFlow<String> = _keyboardLayoutSelection.asStateFlow()
+    private val _activeLaunchProfile = MutableStateFlow<ResolvedLaunchProfile?>(null)
+    val activeLaunchProfile: StateFlow<ResolvedLaunchProfile?> = _activeLaunchProfile.asStateFlow()
 
     private var restored = false
     private var operationGeneration = 0L
@@ -120,34 +119,22 @@ class GfnSessionController(
         val appId: String,
         val title: String,
         val store: String,
-        val keyboardLayout: String,
-        val gameLanguage: String,
+        val profile: ResolvedLaunchProfile,
     )
 
     private class QueueAdUnsupportedException(val session: SessionInfo) : Exception(
-        "服务端要求 Queue Ad；v4 只验证 Session Lifecycle，尚未接广告播放器。",
+        "服务端要求 Queue Ad；当前 Android 客户端尚未接广告播放器。",
     )
 
     fun restoreResumeRecordOnce() {
         if (restored) return
         restored = true
         scope.launch {
-            _resumeRecord.value = withContext(Dispatchers.IO) { recordStore.load() }
+            val record = withContext(Dispatchers.IO) { recordStore.load() }
+            _resumeRecord.value = record
+            _activeLaunchProfile.value = record?.launchProfile
         }
     }
-
-    fun setKeyboardLayoutSelection(selection: String) {
-        val normalized = keyboardLayoutStore.save(selection)
-        if (_keyboardLayoutSelection.value != normalized) {
-            _keyboardLayoutSelection.value = normalized
-        }
-        Log.i(
-            KEYBOARD_TAG,
-            "selection=$normalized effective=${resolveKeyboardLayout(normalized)} nextSession=true",
-        )
-    }
-
-    fun effectiveKeyboardLayout(): String = resolveKeyboardLayout(_keyboardLayoutSelection.value)
 
     fun startGame(
         game: GameDetail,
@@ -170,45 +157,53 @@ class GfnSessionController(
             return
         }
 
+        val launchProfile = try {
+            streamSettingsController.resolveForNewSession(
+                subscription = subscription,
+                autoKeyboardLayout = GfnLocale.keyboardLayoutCode(),
+                gameLanguage = GfnLocale.nvidiaCode(),
+            )
+        } catch (error: IllegalArgumentException) {
+            _state.value = SessionUiState.Error(
+                "串流设置无法解析：${error.message ?: error::class.simpleName}",
+            )
+            return
+        }
+
         operationGeneration += 1
         val operation = operationGeneration
         val attempt = orchestrator.beginAttempt()
-        val selectedKeyboardLayout = effectiveKeyboardLayout()
-        val gameLanguage = GfnLocale.nvidiaCode()
         val active = ActiveGame(
             appId = variant.launchAppId,
             title = game.title,
             store = variant.appStore,
-            keyboardLayout = selectedKeyboardLayout,
-            gameLanguage = gameLanguage,
+            profile = launchProfile,
         )
         activeGame = active
-        val preset = selectV4Preset(subscription)
+        _activeLaunchProfile.value = launchProfile
         _state.value = SessionUiState.Creating(active.title, active.store)
+        Log.i(PROFILE_TAG, "RESOLVED newSession=true ${launchProfile.summary} entitlementVerified=${launchProfile.entitlementVerified}")
 
         activeJob = scope.launch {
             try {
+                val streamConfig = active.profile.streamConfig
                 val request = SessionCreateRequest(
                     appId = active.appId,
                     internalTitle = null,
                     token = auth.gfnToken,
                     streamingBaseUrl = base,
-                    width = preset.width,
-                    height = preset.height,
-                    fps = preset.fps.coerceAtMost(60),
-                    keyboardLayout = active.keyboardLayout,
-                    gameLanguage = active.gameLanguage,
-                    requestedColorMode = RequestedColorMode.CompatibilitySdr,
-                    audioChannels = 2,
+                    width = streamConfig.width,
+                    height = streamConfig.height,
+                    fps = streamConfig.fps,
+                    keyboardLayout = active.profile.keyboardLayout,
+                    gameLanguage = active.profile.gameLanguage,
+                    requestedColorMode = streamConfig.colorMode,
+                    audioChannels = streamConfig.audioChannels,
                     accountLinked = true,
                     persistInGameSettings = false,
                     appLaunchMode = 1,
                 )
-                Log.i(
-                    KEYBOARD_TAG,
-                    "CREATE keyboardLayout=${request.keyboardLayout} gameLanguage=${request.gameLanguage} " +
-                        "selection=${_keyboardLayoutSelection.value}",
-                )
+                Log.i(PROFILE_TAG, "CREATE ${active.profile.summary}")
                 var session = orchestrator.createSession(request, attempt)
                 if (!isCurrent(operation)) return@launch
                 ensureQueueAdsSupported(session)
@@ -237,16 +232,19 @@ class GfnSessionController(
             } catch (error: Exception) {
                 if (!isCurrent(operation)) return@launch
                 Log.w(TAG, "Session 创建/排队失败：${error::class.simpleName}")
-                _state.value = SessionUiState.Error(error.userFacing("Session 创建/排队失败"), currentSession())
+                val remainingSession = currentSession()
+                if (remainingSession == null) {
+                    activeGame = null
+                    _activeLaunchProfile.value = null
+                }
+                _state.value = SessionUiState.Error(error.userFacing("Session 创建/排队失败"), remainingSession)
             } finally {
                 if (isCurrent(operation)) activeJob = null
             }
         }
     }
 
-    /**
-     * 对当前 Ready session 执行 RESUME/Claim。v4 用它单独验证 claim endpoint；不会连接 WebRTC。
-     */
+    /** 对当前 Ready Session 执行 RESUME/Claim；WebRTC 仍由 GfnStreamingController 单独连接。 */
     fun claimCurrent() {
         val record = _resumeRecord.value ?: currentSession()?.let { session ->
             activeGame?.let { makeRecord(session, it) }
@@ -274,6 +272,15 @@ class GfnSessionController(
             _state.value = SessionUiState.Error("恢复 Session 前必须先恢复登录态。")
             return
         }
+        val launchProfile = record.launchProfile
+        if (launchProfile == null) {
+            _state.value = SessionUiState.Error(
+                "该 Session 来自 v5.1.9 或更早版本，缺少不可变 ResolvedLaunchProfile；" +
+                    "为避免 CREATE/CLAIM/WebRTC 参数漂移，请先 End / Cleanup，再新建 Session。",
+                record.toSessionInfo(),
+            )
+            return
+        }
         operationGeneration += 1
         val operation = operationGeneration
         val attempt = orchestrator.beginAttempt()
@@ -281,30 +288,26 @@ class GfnSessionController(
             appId = record.appId,
             title = record.gameTitle,
             store = record.appStore,
-            keyboardLayout = record.keyboardLayout ?: effectiveKeyboardLayout(),
-            gameLanguage = record.gameLanguage ?: GfnLocale.nvidiaCode(),
+            profile = launchProfile,
         )
         activeGame = active
+        _activeLaunchProfile.value = launchProfile
         _state.value = SessionUiState.Claiming(active.title, active.store, record.sessionId)
 
         activeJob = scope.launch {
             try {
                 val claimRequest = SessionClaimRequest(
-                        session = record.toSessionInfo(),
-                        appId = record.appId,
-                        token = auth.gfnToken,
-                        baseUrl = record.streamingBaseUrl,
-                        keyboardLayout = active.keyboardLayout,
-                        gameLanguage = active.gameLanguage,
-                        audioChannels = 2,
-                        persistInGameSettings = false,
-                        appLaunchMode = 1,
-                    )
-                Log.i(
-                    KEYBOARD_TAG,
-                    "CLAIM keyboardLayout=${claimRequest.keyboardLayout} gameLanguage=${claimRequest.gameLanguage} " +
-                        "sessionId=${record.sessionId}",
+                    session = record.toSessionInfo(),
+                    appId = record.appId,
+                    token = auth.gfnToken,
+                    baseUrl = record.streamingBaseUrl,
+                    keyboardLayout = active.profile.keyboardLayout,
+                    gameLanguage = active.profile.gameLanguage,
+                    audioChannels = active.profile.streamConfig.audioChannels,
+                    persistInGameSettings = false,
+                    appLaunchMode = 1,
                 )
+                Log.i(PROFILE_TAG, "CLAIM sessionId=${record.sessionId} ${active.profile.summary}")
                 var session = orchestrator.claimSession(
                     claimRequest,
                     attempt,
@@ -347,14 +350,17 @@ class GfnSessionController(
         val operation = operationGeneration
         orchestrator.cancelAttempt()
         val current = currentSession()
+        val owned = orchestrator.currentOwnedSession()
         val persisted = _resumeRecord.value
         _state.value = SessionUiState.Ending(current?.sessionId ?: persisted?.sessionId)
 
         // 不直接 cancel 旧阻塞 HTTP Job：让 create 的迟到结果回到 orchestrator，触发 stale cleanup。
+        // 恢复自磁盘、但尚未被 orchestrator claim 的 Session 不属于 ownedSession；此时必须直接
+        // DELETE persisted Session，不能因为 Error state 带了 SessionInfo 就误调用 stopOwnedSession().
         scope.launch {
             var failure: Throwable? = null
             try {
-                if (current != null) {
+                if (owned != null) {
                     orchestrator.stopOwnedSession()
                 } else if (persisted != null) {
                     val auth = authController.currentSession()
@@ -367,6 +373,7 @@ class GfnSessionController(
             }
             withContext(Dispatchers.IO) { recordStore.clear() }
             _resumeRecord.value = null
+            _activeLaunchProfile.value = null
             activeGame = null
             activeJob = null
             if (!isCurrent(operation)) return@launch
@@ -408,6 +415,7 @@ class GfnSessionController(
             }
         }
         activeGame = null
+        _activeLaunchProfile.value = null
         scope.launch {
             withContext(Dispatchers.IO) { recordStore.clear() }
             _resumeRecord.value = null
@@ -466,10 +474,15 @@ class GfnSessionController(
 
     /** 仅删除本地 resume 记录；不会声称服务端 Session 已被结束。 */
     fun forgetResumeRecord() {
+        val hasOwnedSession = orchestrator.currentOwnedSession() != null
         scope.launch {
             withContext(Dispatchers.IO) { recordStore.clear() }
             _resumeRecord.value = null
-            if (currentSession() == null) _state.value = SessionUiState.Idle
+            if (!hasOwnedSession) {
+                _activeLaunchProfile.value = null
+                activeGame = null
+                _state.value = SessionUiState.Idle
+            }
         }
     }
 
@@ -507,6 +520,8 @@ class GfnSessionController(
         if (cleanupError == null) {
             withContext(Dispatchers.IO) { recordStore.clear() }
             _resumeRecord.value = null
+            _activeLaunchProfile.value = null
+            activeGame = null
         } else {
             // DELETE 失败时保留 resume 信息，让用户仍能手工再次 Cleanup。
             persist(error.session, active)
@@ -565,21 +580,10 @@ class GfnSessionController(
             clientId = session.clientId,
             deviceId = session.deviceId,
             createdAtEpochMillis = System.currentTimeMillis(),
-            keyboardLayout = active.keyboardLayout,
-            gameLanguage = active.gameLanguage,
+            keyboardLayout = active.profile.keyboardLayout,
+            gameLanguage = active.profile.gameLanguage,
+            launchProfile = active.profile,
         )
-
-    private fun resolveKeyboardLayout(selection: String): String =
-        if (selection == GfnKeyboardLayoutCatalog.AUTO) GfnLocale.keyboardLayoutCode() else selection
-
-    private fun selectV4Preset(subscription: SubscriptionInfo): EntitledResolution {
-        val entitled = subscription.entitledResolutions
-        val safe = entitled.filter { it.width <= 1920 && it.height <= 1080 }
-            .maxWithOrNull(compareBy<EntitledResolution>({ it.width * it.height }, { it.fps }))
-        val selected = safe ?: entitled.minWithOrNull(compareBy({ it.width * it.height }, { it.fps }))
-        return selected?.copy(fps = selected.fps.coerceAtMost(60))
-            ?: EntitledResolution(width = 1280, height = 720, fps = 60)
-    }
 
     private fun isCurrent(operation: Long): Boolean = operation == operationGeneration
 
@@ -588,6 +592,6 @@ class GfnSessionController(
 
     private companion object {
         const val TAG = "GfnSession"
-        const val KEYBOARD_TAG = "GfnKeyboardLayout"
+        const val PROFILE_TAG = "GfnLaunchProfile"
     }
 }

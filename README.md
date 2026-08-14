@@ -1,8 +1,65 @@
-# GFN Android Lab · v5.1.9 Keyboard Stable Baseline
+# GFN Android Lab · v5.2 Stream Settings Foundation
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
+
+## v5.2 本轮新增
+
+v5.1.9 已完成 Cyberpunk 2077 + CS2 真机回归，Keyboard packet semantics 进入 soft-freeze。v5.2 不再修改 VK / Set-1 scan / modifier / framing / CapsLock，而是建立后续 Reconnect、Audio、HEVC 共用的 Session 设置基础。
+
+```text
+Persistent StreamSettings
+        ↓
+resolve against entitlement + current engine capability
+        ↓
+ResolvedLaunchProfile (immutable)
+        ↓
+CREATE / persist / CLAIM / WebRTC
+```
+
+当前只开放现有 production path 已经具备的维度：
+
+```text
+Keyboard Layout：默认 en-US，保留 Auto 和其他布局
+Resolution：Auto / 1920x1080
+FPS：Auto / 60
+Max Bitrate：20 Mbps 默认，可按 5 Mbps 步进做下一 Session A/B
+Audio：Stereo 2ch
+Codec：H.264 固定
+Color：SDR8 固定
+```
+
+5–100 Mbps 是客户端 bitrate guard，不声称是已经由本项目真机证明的服务端上限；非默认码率仍需真机 A/B。HEVC/Main10/HDR/5.1/120 FPS 不在 v5.2 UI 中提前伪装为可用。
+
+`ResolvedLaunchProfile` 会随 Session 持久化。Claim/Resume 和 WebRTC 必须复用创建时的 snapshot，活动 Session 期间修改 Settings 只影响下一新 Session。v5.1.9 及更早的 legacy resume record 没有完整 profile，因此 v5.2 不猜参数，要求先 End/Cleanup 后重新创建。
+
+详细见：
+
+```text
+docs/V5_2_STREAM_SETTINGS_FOUNDATION.md
+docs/V5_2_REFERENCE_ADOPTION.md
+docs/V5_2_TEST_GUIDE.md
+docs/REFERENCE_MATRIX.md
+verify-stream-settings.sh
+```
+
+### v5.2 当前验证边界
+
+```text
+settings resolver / capability fixture        PASS
+SharedPreferences migration / round-trip      PASS
+Session ResolvedLaunchProfile persistence     PASS
+legacy Resume cleanup DELETE behavior         PASS
+active Session profile preservation           PASS
+GfnStreamSettingsController targeted compile  PASS
+GfnSessionController targeted compile         PASS
+GfnStreamingController targeted compile       PASS
+v5.1.9 keyboard regression fixtures           PASS
+keyboard production files byte-identical      PASS
+```
+
+完整 Android Gradle build 当前仍在 wrapper 下载 Gradle 9.5.0 阶段被容器 DNS 阻断；因此上述结果不冒充最终 APK 全工程编译。真机重点见 `docs/V5_2_TEST_GUIDE.md`。
 
 ## v5.1.9 本轮新增
 

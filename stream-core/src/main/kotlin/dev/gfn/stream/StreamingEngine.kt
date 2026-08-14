@@ -20,6 +20,46 @@ data class StreamConfig(
     val audioChannels: Int = 2,
 )
 
+data class StreamResolution(val width: Int, val height: Int)
+
+data class StreamEngineCapabilities(
+    val resolutions: Set<StreamResolution>,
+    val frameRates: Set<Int>,
+    val maxBitrateKbpsRange: IntRange,
+    val codecs: Set<VideoCodecPreference>,
+    val colorModes: Set<RequestedColorMode>,
+    val audioChannels: Set<Int>,
+) {
+    fun rejectionReason(config: StreamConfig): String? = when {
+        StreamResolution(config.width, config.height) !in resolutions ->
+            "当前引擎不支持 ${config.width}x${config.height}。"
+        config.fps !in frameRates -> "当前引擎不支持 ${config.fps} FPS。"
+        config.maxBitrateKbps !in maxBitrateKbpsRange ->
+            "最大码率必须在 ${maxBitrateKbpsRange.first / 1_000}-${maxBitrateKbpsRange.last / 1_000} Mbps。"
+        config.codec !in codecs -> "当前引擎不支持 codec=${config.codec}。"
+        config.colorMode !in colorModes -> "当前引擎不支持 colorMode=${config.colorMode}。"
+        config.audioChannels !in audioChannels -> "当前引擎不支持 ${config.audioChannels} 声道。"
+        else -> null
+    }
+}
+
+/**
+ * v5.2 只公开当前 Android WebRTC production path 已经具备的媒体维度。
+ * 1080p60 / H.264 / SDR8 / Stereo 是现有稳定路径；码率范围是客户端参数 guard，
+ * 非默认码率仍需真机 A/B 验证实际服务端效果，不能把 5-100 Mbps 解释为已验证的服务端上限。
+ * HEVC/Main10/HDR/5.1/120 FPS 会在后续版本单独取证，不提前出现在可选能力集合。
+ */
+object StreamCapabilityProfiles {
+    val V52_ANDROID_WEBRTC = StreamEngineCapabilities(
+        resolutions = setOf(StreamResolution(1920, 1080)),
+        frameRates = setOf(60),
+        maxBitrateKbpsRange = 5_000..100_000,
+        codecs = setOf(VideoCodecPreference.H264),
+        colorModes = setOf(RequestedColorMode.CompatibilitySdr),
+        audioChannels = setOf(2),
+    )
+}
+
 sealed interface StreamState {
     data object Idle : StreamState
     data object OpeningSignaling : StreamState

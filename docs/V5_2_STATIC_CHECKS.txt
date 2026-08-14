@@ -1,0 +1,49 @@
+v5.2 Stream Settings Foundation — static / targeted verification
+
+PASS: PersistentStreamSettings exists and is not read by stream-webrtc.
+PASS: ResolvedLaunchProfile exists and contains StreamConfig + keyboardLayout + gameLanguage + entitlementVerified.
+PASS: Session create resolves persistent settings exactly once via GfnStreamSettingsController.resolveForNewSession().
+PASS: Resolved profile is persisted with the resumable Session.
+PASS: Claim/Resume restores record.launchProfile; legacy records with no profile are not guessed.
+PASS: GfnStreamingController.connectClaimedSession() passes profile.streamConfig to GfnWebRtcEngine.
+PASS: GfnWebRtcEngine validation uses StreamCapabilityProfiles.V52_ANDROID_WEBRTC, shared with resolver.
+PASS: v5.1.8/v5.1.9 SharedPreferences key keyboardLayoutSelection is preserved for migration.
+PASS: CloudMatch CREATE and CLAIM still encode request.keyboardLayout in URL.
+PASS: stream-input / AndroidKeyboardMapper / GfnKeyboardMouseInputController / GfnInputForensics / GfnVideoSurfaceView are byte-identical to v5.1.9 baseline.
+PASS: no type19 / scan=0 / synthetic LSHIFT / Wire A-B behavior reintroduced.
+PASS: verify-stream-settings.sh shell syntax.
+PASS: verify-keyboard-stable.sh shell syntax.
+PASS: verify-core.sh shell syntax.
+
+Targeted Kotlin verification:
+PASS: resolver/capability fixture.
+PASS: unified SharedPreferences migration + round-trip fixture.
+PASS: ResolvedLaunchProfile session-record persistence + legacy null-profile fixture.
+PASS: production GfnStreamSettingsController targeted compile.
+PASS: production GfnSessionController targeted compile against actual core-model/core-network/gfn-identity/gfn-auth/gfn-session/gfn-cloudmatch/stream-core jars, with Android/Auth UI stubs only.
+PASS: production GfnStreamingController targeted compile against actual core-model/stream-core and API-shaped Android/WebRTC stubs.
+PASS: legacy pre-v5.2 Resume rejection followed by End/Cleanup sends direct DELETE for persisted Session (does not mistake Error SessionInfo for orchestrator-owned Session).
+PASS: clearing only the local resume record while an owned active Session exists preserves the active ResolvedLaunchProfile and Claimed state.
+PASS: v5.1.9 stable keyboard packet fixture.
+
+UI parse boundary:
+PASS: GfnAndroidApp.kt Kotlin parser reported zero syntax-pattern errors.
+NOTE: standalone kotlinc cannot resolve Android/Compose imports without Android/Compose classpath, so this is a parse check, not a full UI compile.
+
+Full verify-core.sh:
+PARTIAL PASS before environment execution timeout:
+- all static guards through v5.2 snapshot and v5.1.9 keyboard soft-freeze passed
+- verify-stream-settings.sh passed
+- verify-keyboard-stable.sh passed
+- script reached staged module compilation
+The single full script exceeded the execution window at COMPILE_START=core-model; relevant modified pure modules/controllers were compiled separately as listed above.
+
+Android Gradle build:
+NOT COMPLETED.
+Gradle wrapper requires Gradle 9.5.0 from services.gradle.org; current container DNS cannot resolve services.gradle.org.
+Failure point is distribution download, before AGP/Android/Kotlin project compilation.
+
+Evidence boundary:
+- 1920x1080 / 60 / H.264 / SDR8 / Stereo are the existing stable Android stream path.
+- 20 Mbps remains stable default.
+- 5–100 Mbps is a client-side v5.2 parameter guard; non-default bitrate server behavior remains true-device A/B pending.

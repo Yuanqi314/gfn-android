@@ -46,9 +46,12 @@ import dev.gfn.android.GfnAppRuntimeViewModel
 import dev.gfn.android.auth.AuthUiState
 import dev.gfn.android.content.ContentUiState
 import dev.gfn.android.content.GameDetailUiState
-import dev.gfn.android.session.GfnKeyboardLayoutCatalog
 import dev.gfn.android.session.PersistedSessionRecord
 import dev.gfn.android.session.SessionUiState
+import dev.gfn.android.settings.GfnKeyboardLayoutCatalog
+import dev.gfn.android.settings.GfnStreamSettingsCatalog
+import dev.gfn.android.settings.PersistentStreamSettings
+import dev.gfn.android.settings.ResolvedLaunchProfile
 import dev.gfn.android.stream.GfnStreamingController
 import dev.gfn.core.model.GameDetail
 import dev.gfn.core.model.GameSummary
@@ -79,6 +82,7 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
 
     val authController = runtime.authController
     val contentController = runtime.contentController
+    val streamSettingsController = runtime.streamSettingsController
     val sessionController = runtime.sessionController
     val streamingController = runtime.streamingController
 
@@ -88,7 +92,8 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
     val detailState by contentController.detailState.collectAsState()
     val sessionState by sessionController.state.collectAsState()
     val resumeRecord by sessionController.resumeRecord.collectAsState()
-    val keyboardLayoutSelection by sessionController.keyboardLayoutSelection.collectAsState()
+    val activeLaunchProfile by sessionController.activeLaunchProfile.collectAsState()
+    val streamSettings by streamSettingsController.settings.collectAsState()
     val streamState by streamingController.state.collectAsState()
     val streamDiagnostics by streamingController.diagnostics.collectAsState()
 
@@ -186,6 +191,7 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
                         resumeRecord = resumeRecord,
                         streamState = streamState,
                         streamDiagnostics = streamDiagnostics,
+                        launchProfile = activeLaunchProfile,
                         streamingController = streamingController,
                         onResume = sessionController::resumePersisted,
                         onClaim = sessionController::claimCurrent,
@@ -217,8 +223,13 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
                         authState = authState,
                         contentState = contentState,
                         sessionState = sessionState,
-                        keyboardLayoutSelection = keyboardLayoutSelection,
-                        onKeyboardLayoutSelected = sessionController::setKeyboardLayoutSelection,
+                        hasFrozenLaunchProfile = activeLaunchProfile != null || resumeRecord != null,
+                        streamSettings = streamSettings,
+                        onKeyboardLayoutSelected = streamSettingsController::setKeyboardLayout,
+                        onResolutionSelected = streamSettingsController::setResolution,
+                        onFpsSelected = streamSettingsController::setFps,
+                        onMaxBitrateSelected = streamSettingsController::setMaxBitrateKbps,
+                        onAudioChannelsSelected = streamSettingsController::setAudioChannels,
                         onToggleTheme = { darkTheme = !darkTheme },
                     )
                 }
@@ -248,7 +259,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.1.9 Keyboard Stable Baseline",
+                "独立 Android GFN 客户端 · v5.2 Stream Settings Foundation",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -550,7 +561,7 @@ private fun GameDetailCard(
                 }.ifEmpty { listOf("标准 GFN") }.joinToString(" · "),
                 color = MaterialTheme.colorScheme.primary,
             )
-            Text("v5.0 固定 H.264 / SDR8 / 1080p60 / Stereo；HEVC/Main10/HDR 不在这一版启用。")
+            Text("v5.2 当前 engine capability 仍为 H.264 / SDR8 / 1080p60 / Stereo；最大码率与 Session 级设置已进入 snapshot，HEVC/Main10/HDR 尚未启用。")
             if (detail.variants.isEmpty()) {
                 Text("当前详情没有可启动 variant。", color = MaterialTheme.colorScheme.error)
             } else {
@@ -576,10 +587,11 @@ private fun SessionScreen(
     resumeRecord: PersistedSessionRecord?,
     streamState: StreamState,
     streamDiagnostics: StreamDiagnostics,
+    launchProfile: ResolvedLaunchProfile?,
     streamingController: GfnStreamingController,
     onResume: () -> Unit,
     onClaim: () -> Unit,
-    onConnectStream: (SessionInfo) -> Unit,
+    onConnectStream: (SessionInfo, ResolvedLaunchProfile) -> Unit,
     onDisconnectStream: () -> Unit,
     onEnterFullscreen: () -> Unit,
     onEnd: () -> Unit,
@@ -592,7 +604,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5.1 保持 v5.0 H.264 链冻结，只新增全屏硬件键盘 / 相对鼠标输入。")
+            Text("v5.2 使用不可变 ResolvedLaunchProfile 驱动 CloudMatch 与 WebRTC；键盘 packet 语义保持 v5.1.9 soft-freeze。")
         }
 
         if (resumeRecord != null) {
@@ -613,6 +625,25 @@ private fun SessionScreen(
         }
 
         item { SessionStateCard(state) }
+
+        launchProfile?.let { profile ->
+            item {
+                Card(shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Resolved Launch Profile", style = MaterialTheme.typography.titleMedium)
+                        Text("${profile.streamConfig.width} × ${profile.streamConfig.height} · ${profile.streamConfig.fps} FPS")
+                        Text("Max bitrate：${profile.streamConfig.maxBitrateKbps / 1_000} Mbps")
+                        Text("Audio：${profile.streamConfig.audioChannels}ch · Codec：${profile.streamConfig.codec}")
+                        Text("Keyboard：${profile.keyboardLayout} · Game language：${profile.gameLanguage}")
+                        Text(
+                            if (profile.entitlementVerified) "Resolution/FPS entitlement：已匹配" else "Resolution/FPS entitlement：服务端未返回可验证列表",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text("该 snapshot 从 CREATE 到 CLAIM/WebRTC 保持不变。", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
 
         if (state is SessionUiState.Claimed && streamState !is StreamState.Idle && streamState !is StreamState.Closed) {
             item {
@@ -639,8 +670,19 @@ private fun SessionScreen(
                     when (streamState) {
                         StreamState.Idle,
                         StreamState.Closed,
-                        is StreamState.Failed -> Button(onClick = { onConnectStream(state.session) }) {
-                            Text("连接 WebRTC H.264")
+                        is StreamState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(
+                                enabled = launchProfile != null,
+                                onClick = { launchProfile?.let { onConnectStream(state.session, it) } },
+                            ) {
+                                Text("连接 WebRTC H.264")
+                            }
+                            if (launchProfile == null) {
+                                Text(
+                                    "当前 Session 缺少 v5.2 ResolvedLaunchProfile，禁止用实时 Settings 猜测 WebRTC 参数。",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
                         }
                         StreamState.SessionEnded -> Text("服务端已结束当前游戏会话。")
                         else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -974,12 +1016,22 @@ private fun SettingsScreen(
     authState: AuthUiState,
     contentState: ContentUiState,
     sessionState: SessionUiState,
-    keyboardLayoutSelection: String,
+    hasFrozenLaunchProfile: Boolean,
+    streamSettings: PersistentStreamSettings,
     onKeyboardLayoutSelected: (String) -> Unit,
+    onResolutionSelected: (String) -> Unit,
+    onFpsSelected: (Int) -> Unit,
+    onMaxBitrateSelected: (Int) -> Unit,
+    onAudioChannelsSelected: (Int) -> Unit,
     onToggleTheme: () -> Unit,
 ) {
     var keyboardLayoutMenuOpen by remember { mutableStateOf(false) }
-    val normalizedKeyboardLayout = GfnKeyboardLayoutCatalog.normalize(keyboardLayoutSelection)
+    var resolutionMenuOpen by remember { mutableStateOf(false) }
+    var fpsMenuOpen by remember { mutableStateOf(false) }
+    var audioMenuOpen by remember { mutableStateOf(false) }
+
+    val settings = GfnStreamSettingsCatalog.normalize(streamSettings)
+    val normalizedKeyboardLayout = GfnKeyboardLayoutCatalog.normalize(settings.keyboardLayoutSelection)
     val keyboardLayoutChoice = GfnKeyboardLayoutCatalog.choice(normalizedKeyboardLayout)
     val autoDetectedLayout = GfnLocale.keyboardLayoutCode()
     val effectiveKeyboardLayout = if (normalizedKeyboardLayout == GfnKeyboardLayoutCatalog.AUTO) {
@@ -987,6 +1039,19 @@ private fun SettingsScreen(
     } else {
         normalizedKeyboardLayout
     }
+    val resolutionChoice = GfnStreamSettingsCatalog.resolutionChoices
+        .first { it.code == settings.resolutionSelection }
+    val fpsChoice = GfnStreamSettingsCatalog.fpsChoices.first { it.fps == settings.fpsSelection }
+    val audioChoice = GfnStreamSettingsCatalog.audioChoices.first { it.channels == settings.audioChannels }
+    val activeOrResumable = hasFrozenLaunchProfile || (
+        sessionState !is SessionUiState.Idle &&
+            sessionState !is SessionUiState.Ended && sessionState !is SessionUiState.Cancelled
+        )
+    val entitlementSummary = (contentState as? ContentUiState.Ready)?.subscription?.entitledResolutions
+        ?.takeIf { it.isNotEmpty() }
+        ?.joinToString { "${it.width}x${it.height}@${it.fps}" }
+        ?: "未返回可验证列表"
+
     LazyColumn(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -1003,13 +1068,14 @@ private fun SettingsScreen(
         }
         item {
             Card(shape = RoundedCornerShape(24.dp)) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("串流键盘布局", style = MaterialTheme.typography.titleMedium)
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("串流设置 · v5.2 Snapshot", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "该布局会作为 CloudMatch keyboardLayout 写入下一次新建 Session。" +
-                            " 游戏语言保持独立，不会随此选项改变。",
+                        "这些值不会被 WebRTC 运行时直接重读。新建 Session 时先和账号 entitlement、当前 engine capability 解析成不可变 ResolvedLaunchProfile，随后 CREATE / CLAIM / WebRTC 共用同一份 snapshot。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+
+                    Text("串流键盘布局", fontWeight = FontWeight.SemiBold)
                     OutlinedButton(onClick = { keyboardLayoutMenuOpen = true }) {
                         Text("${keyboardLayoutChoice.label} · $effectiveKeyboardLayout")
                     }
@@ -1030,16 +1096,97 @@ private fun SettingsScreen(
                             )
                         }
                     }
-                    if (sessionState !is SessionUiState.Idle && sessionState !is SessionUiState.Ended &&
-                        sessionState !is SessionUiState.Cancelled
-                    ) {
+
+                    Text("最大码率", fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedButton(
+                            enabled = settings.maxBitrateKbps > GfnStreamSettingsCatalog.bitrateRangeKbps.first,
+                            onClick = {
+                                onMaxBitrateSelected(
+                                    settings.maxBitrateKbps - GfnStreamSettingsCatalog.BITRATE_STEP_KBPS,
+                                )
+                            },
+                        ) { Text("- 5 Mbps") }
                         Text(
-                            "当前活动/可恢复 Session 已冻结其创建时的键盘布局；这里的修改只影响下一次新 Session。",
+                            "${settings.maxBitrateKbps / 1_000} Mbps",
+                            modifier = Modifier.padding(top = 12.dp),
+                            fontWeight = FontWeight.Bold,
+                        )
+                        OutlinedButton(
+                            enabled = settings.maxBitrateKbps < GfnStreamSettingsCatalog.bitrateRangeKbps.last,
+                            onClick = {
+                                onMaxBitrateSelected(
+                                    settings.maxBitrateKbps + GfnStreamSettingsCatalog.BITRATE_STEP_KBPS,
+                                )
+                            },
+                        ) { Text("+ 5 Mbps") }
+                    }
+                    Text(
+                        "该值进入 SDP bandwidth 与 NVST bitrate 字段；20 Mbps 是当前稳定默认值。5-100 Mbps 为客户端参数范围，非默认值仍需真机 A/B，不能视为已验证服务端上限。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    Text("分辨率", fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(onClick = { resolutionMenuOpen = true }) { Text(resolutionChoice.label) }
+                    DropdownMenu(
+                        expanded = resolutionMenuOpen,
+                        onDismissRequest = { resolutionMenuOpen = false },
+                    ) {
+                        GfnStreamSettingsCatalog.resolutionChoices.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.label) },
+                                onClick = {
+                                    resolutionMenuOpen = false
+                                    onResolutionSelected(choice.code)
+                                },
+                            )
+                        }
+                    }
+
+                    Text("帧率", fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(onClick = { fpsMenuOpen = true }) { Text(fpsChoice.label) }
+                    DropdownMenu(
+                        expanded = fpsMenuOpen,
+                        onDismissRequest = { fpsMenuOpen = false },
+                    ) {
+                        GfnStreamSettingsCatalog.fpsChoices.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.label) },
+                                onClick = {
+                                    fpsMenuOpen = false
+                                    onFpsSelected(choice.fps)
+                                },
+                            )
+                        }
+                    }
+
+                    Text("音频模式", fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(onClick = { audioMenuOpen = true }) { Text(audioChoice.label) }
+                    DropdownMenu(
+                        expanded = audioMenuOpen,
+                        onDismissRequest = { audioMenuOpen = false },
+                    ) {
+                        GfnStreamSettingsCatalog.audioChoices.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.label) },
+                                onClick = {
+                                    audioMenuOpen = false
+                                    onAudioChannelsSelected(choice.channels)
+                                },
+                            )
+                        }
+                    }
+
+                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 SDR8 · Stereo")
+                    Text("账号 entitlement：$entitlementSummary", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (activeOrResumable) {
+                        Text(
+                            "当前活动/可恢复 Session 已冻结其 ResolvedLaunchProfile；这里的修改只影响下一次新 Session。",
                             color = MaterialTheme.colorScheme.primary,
                         )
                     } else {
                         Text(
-                            "当前将发送：keyboardLayout=$effectiveKeyboardLayout",
+                            "下一 Session intent：keyboard=$effectiveKeyboardLayout · resolution=${resolutionChoice.code} · fps=${fpsChoice.fps} · max=${settings.maxBitrateKbps / 1_000}Mbps · audio=${settings.audioChannels}ch",
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -1060,10 +1207,10 @@ private fun SettingsScreen(
                         },
                     )
                     Text("Session：${sessionStateLabel(sessionState)}")
-                    Text("v4：CloudMatch / Claim 已进入 soft-freeze")
-                    Text("v5.0：WSS → SDP → ICE → H.264 First Frame · 真机通过")
-                    Text("v5.1.9：keyboardLayout 正式修复 + Windows Set-1 稳定键盘路径")
-                    Text("后续：v5.2 Stream Settings Foundation → Reconnect → Gamepad → Audio → HEVC")
+                    Text("Keyboard：v5.1.9 soft-freeze · en-US Cyberpunk / CS2 真机通过")
+                    Text("v5.2：Persistent StreamSettings → ResolvedLaunchProfile → CREATE / CLAIM / WebRTC")
+                    Text("当前仍只开放：H.264 SDR8 · 1080p60 · Stereo；HEVC/Main10/HDR/5.1/120 FPS 未伪装为可用。")
+                    Text("后续：v5.2.1 Reconnect → v5.3 Gamepad → v5.4 Audio → v6 HEVC")
                 }
             }
         }

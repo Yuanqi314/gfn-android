@@ -4,8 +4,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import dev.gfn.android.settings.ResolvedLaunchProfile
 import dev.gfn.core.model.SessionInfo
-import dev.gfn.stream.StreamConfig
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
 import dev.gfn.webrtc.GfnVideoSurfaceView
@@ -29,8 +29,9 @@ class GfnStreamingController(
     private val _diagnostics = MutableStateFlow(StreamDiagnostics())
     val diagnostics: StateFlow<StreamDiagnostics> = _diagnostics.asStateFlow()
 
-    fun connectClaimedSession(session: SessionInfo) {
-        engine.connect(session, StreamConfig())
+    fun connectClaimedSession(session: SessionInfo, profile: ResolvedLaunchProfile) {
+        Log.i("GfnLaunchProfile", "WEBRTC sessionId=${session.sessionId} ${profile.summary}")
+        engine.connect(session, profile.streamConfig)
     }
 
     fun disconnect() {

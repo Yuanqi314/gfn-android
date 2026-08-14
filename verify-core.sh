@@ -100,16 +100,21 @@ grep -Fq 'fun releaseAll(reason: InputReleaseReason)' stream-webrtc/src/main/jav
 grep -Fq 'pendingWheel += verticalAxis * 3.0' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: mouse/wheel logic changed' >&2; exit 1; }
 echo 'V513_INPUT_FORENSICS_GUARDS=PASS'
 
-# v5.1.8 production keyboardLayout fix: persistent choice, create-time resolve, immutable session snapshot for claim/resume.
-grep -Fq 'const val DEFAULT = "en-US"' app/src/main/java/dev/gfn/android/session/AndroidKeyboardLayoutStore.kt || { echo 'ERROR: keyboard layout default must be en-US' >&2; exit 1; }
-grep -Fq 'keyboardLayout = selectedKeyboardLayout' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: create Session does not resolve keyboard layout before launch' >&2; exit 1; }
-FROZEN_LAYOUT_USES=$(grep -Fc 'keyboardLayout = active.keyboardLayout' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt)
-[ "$FROZEN_LAYOUT_USES" -ge 3 ] || { echo 'ERROR: create/claim/persist paths are not sharing the frozen keyboard layout snapshot' >&2; exit 1; }
-grep -Fq 'keyboardLayout = record.keyboardLayout ?: effectiveKeyboardLayout()' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: persisted-session claim does not prefer the original keyboard layout' >&2; exit 1; }
-grep -Fq 'keyboardLayout = props.getProperty("keyboardLayout")' app/src/main/java/dev/gfn/android/session/AndroidSessionPersistence.kt || { echo 'ERROR: persisted session record does not restore keyboard layout' >&2; exit 1; }
+# v5.2 Session snapshot foundation: persistent settings resolve once, then CREATE/CLAIM/WebRTC share one profile.
+grep -Fq 'const val DEFAULT = "en-US"' app/src/main/java/dev/gfn/android/settings/GfnKeyboardLayoutCatalog.kt || { echo 'ERROR: keyboard layout default must be en-US' >&2; exit 1; }
+grep -Fq 'const val KEY_KEYBOARD_LAYOUT = "keyboardLayoutSelection"' app/src/main/java/dev/gfn/android/settings/AndroidStreamSettingsStore.kt || { echo 'ERROR: v5.1.8 keyboard preference migration key changed' >&2; exit 1; }
+grep -Fq 'streamSettingsController.resolveForNewSession' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: Session create does not resolve persistent settings first' >&2; exit 1; }
+grep -Fq 'val launchProfile: ResolvedLaunchProfile? = null' app/src/main/java/dev/gfn/android/session/AndroidSessionPersistence.kt || { echo 'ERROR: persisted Session does not carry ResolvedLaunchProfile' >&2; exit 1; }
+grep -Fq 'launchProfile = active.profile' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: resolved profile not persisted with Session' >&2; exit 1; }
+grep -Fq 'val launchProfile = record.launchProfile' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: Claim does not restore frozen launch profile' >&2; exit 1; }
+grep -Fq 'engine.connect(session, profile.streamConfig)' app/src/main/java/dev/gfn/android/stream/GfnStreamingController.kt || { echo 'ERROR: WebRTC does not consume frozen StreamConfig snapshot' >&2; exit 1; }
+grep -Fq 'val owned = orchestrator.currentOwnedSession()' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: persisted legacy cleanup does not distinguish owned Session from restored record' >&2; exit 1; }
+grep -Fq 'val hasOwnedSession = orchestrator.currentOwnedSession() != null' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: local resume-record cleanup can clear an active launch profile' >&2; exit 1; }
+grep -Fq 'StreamCapabilityProfiles.V52_ANDROID_WEBRTC.rejectionReason(config)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: WebRTC engine capability validation drifted from resolver' >&2; exit 1; }
 CLOUDMATCH_LAYOUT_QUERIES=$(grep -Fc 'keyboardLayout=${enc(request.keyboardLayout)}' gfn-cloudmatch/src/main/kotlin/dev/gfn/cloudmatch/CloudMatchProtocol.kt)
 [ "$CLOUDMATCH_LAYOUT_QUERIES" -ge 2 ] || { echo 'ERROR: create/claim CloudMatch keyboardLayout queries are not both present' >&2; exit 1; }
-echo 'V518_KEYBOARD_LAYOUT_GUARDS=PASS'
+echo 'V520_STREAM_SETTINGS_SNAPSHOT_GUARDS=PASS'
+./verify-stream-settings.sh
 
 # v5.1.9 stable keyboard baseline: Set-1 is the sole production path; all C2/C3 probes are removed.
 test ! -e stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: experiment-only GfnKeyboardWireMode.kt still exists' >&2; exit 1; }

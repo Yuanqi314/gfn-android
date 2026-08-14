@@ -6,10 +6,11 @@ import dev.gfn.account.GfnAccountClient
 import dev.gfn.android.auth.AndroidKeystoreTokenStore
 import dev.gfn.android.auth.AuthController
 import dev.gfn.android.content.GfnContentController
-import dev.gfn.android.session.AndroidKeyboardLayoutStore
 import dev.gfn.android.session.AndroidSessionRecordStore
 import dev.gfn.android.session.AndroidStableDeviceId
 import dev.gfn.android.session.GfnSessionController
+import dev.gfn.android.settings.AndroidStreamSettingsStore
+import dev.gfn.android.settings.GfnStreamSettingsController
 import dev.gfn.android.stream.GfnStreamingController
 import dev.gfn.auth.AuthSessionService
 import dev.gfn.auth.NvidiaAuthApi
@@ -30,6 +31,7 @@ class GfnAppRuntimeViewModel(application: Application) : AndroidViewModel(applic
 
     val authController: AuthController
     val contentController: GfnContentController
+    val streamSettingsController: GfnStreamSettingsController
     val sessionController: GfnSessionController
     val streamingController: GfnStreamingController
 
@@ -50,6 +52,9 @@ class GfnAppRuntimeViewModel(application: Application) : AndroidViewModel(applic
             scope = runtimeScope,
         )
         val stableDeviceId = AndroidStableDeviceId(appContext)
+        streamSettingsController = GfnStreamSettingsController(
+            store = AndroidStreamSettingsStore(appContext),
+        )
         sessionController = GfnSessionController(
             authController = authController,
             cloudMatchClient = GfnCloudMatchClient(
@@ -57,7 +62,7 @@ class GfnAppRuntimeViewModel(application: Application) : AndroidViewModel(applic
                 deviceId = stableDeviceId::getOrCreate,
             ),
             recordStore = AndroidSessionRecordStore(appContext),
-            keyboardLayoutStore = AndroidKeyboardLayoutStore(appContext),
+            streamSettingsController = streamSettingsController,
             scope = runtimeScope,
         )
         streamingController = GfnStreamingController(

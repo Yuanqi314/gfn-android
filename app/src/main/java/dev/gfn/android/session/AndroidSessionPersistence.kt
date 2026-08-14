@@ -1,7 +1,11 @@
 package dev.gfn.android.session
 
 import android.content.Context
+import dev.gfn.android.settings.ResolvedLaunchProfile
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionInfo
+import dev.gfn.stream.StreamConfig
+import dev.gfn.stream.VideoCodecPreference
 import java.io.File
 import java.util.Properties
 import java.util.UUID
@@ -40,6 +44,7 @@ data class PersistedSessionRecord(
     val createdAtEpochMillis: Long,
     val keyboardLayout: String? = null,
     val gameLanguage: String? = null,
+    val launchProfile: ResolvedLaunchProfile? = null,
 ) {
     fun toSessionInfo(): SessionInfo = SessionInfo(
         sessionId = sessionId,
@@ -77,6 +82,7 @@ class AndroidSessionRecordStore(context: Context) {
                 createdAtEpochMillis = props.getProperty("createdAtEpochMillis")?.toLongOrNull() ?: 0L,
                 keyboardLayout = props.getProperty("keyboardLayout")?.takeIf { it.isNotBlank() },
                 gameLanguage = props.getProperty("gameLanguage")?.takeIf { it.isNotBlank() },
+                launchProfile = props.launchProfileOrNull(),
             )
         }.getOrElse {
             file.delete()
@@ -100,12 +106,23 @@ class AndroidSessionRecordStore(context: Context) {
             setProperty("createdAtEpochMillis", record.createdAtEpochMillis.toString())
             setProperty("keyboardLayout", record.keyboardLayout.orEmpty())
             setProperty("gameLanguage", record.gameLanguage.orEmpty())
+            record.launchProfile?.let { profile ->
+                setProperty("launchProfileVersion", "1")
+                setProperty("streamWidth", profile.streamConfig.width.toString())
+                setProperty("streamHeight", profile.streamConfig.height.toString())
+                setProperty("streamFps", profile.streamConfig.fps.toString())
+                setProperty("streamMaxBitrateKbps", profile.streamConfig.maxBitrateKbps.toString())
+                setProperty("streamCodec", profile.streamConfig.codec.name)
+                setProperty("streamColorMode", profile.streamConfig.colorMode.name)
+                setProperty("streamAudioChannels", profile.streamConfig.audioChannels.toString())
+                setProperty("streamEntitlementVerified", profile.entitlementVerified.toString())
+            }
         }
         file.parentFile?.mkdirs()
         val temp = File(file.parentFile, "${file.name}.tmp")
-        temp.outputStream().use { props.store(it, "GFN Android v4 resumable session") }
+        temp.outputStream().use { props.store(it, "GFN Android v5.2 resumable session") }
         if (!temp.renameTo(file)) {
-            file.outputStream().use { props.store(it, "GFN Android v4 resumable session") }
+            file.outputStream().use { props.store(it, "GFN Android v5.2 resumable session") }
             temp.delete()
         }
     }
@@ -113,6 +130,38 @@ class AndroidSessionRecordStore(context: Context) {
     @Synchronized
     fun clear() {
         file.delete()
+    }
+
+    private fun Properties.launchProfileOrNull(): ResolvedLaunchProfile? {
+        if (getProperty("launchProfileVersion") != "1") return null
+        val width = getProperty("streamWidth")?.toIntOrNull() ?: return null
+        val height = getProperty("streamHeight")?.toIntOrNull() ?: return null
+        val fps = getProperty("streamFps")?.toIntOrNull() ?: return null
+        val maxBitrateKbps = getProperty("streamMaxBitrateKbps")?.toIntOrNull() ?: return null
+        val audioChannels = getProperty("streamAudioChannels")?.toIntOrNull() ?: return null
+        val codec = getProperty("streamCodec")?.let { raw ->
+            runCatching { VideoCodecPreference.valueOf(raw) }.getOrNull()
+        } ?: return null
+        val colorMode = getProperty("streamColorMode")?.let { raw ->
+            runCatching { RequestedColorMode.valueOf(raw) }.getOrNull()
+        } ?: return null
+        val keyboardLayout = getProperty("keyboardLayout")?.takeIf { it.isNotBlank() } ?: return null
+        val gameLanguage = getProperty("gameLanguage")?.takeIf { it.isNotBlank() } ?: return null
+        val entitlementVerified = getProperty("streamEntitlementVerified")?.toBooleanStrictOrNull() ?: false
+        return ResolvedLaunchProfile(
+            streamConfig = StreamConfig(
+                width = width,
+                height = height,
+                fps = fps,
+                maxBitrateKbps = maxBitrateKbps,
+                codec = codec,
+                colorMode = colorMode,
+                audioChannels = audioChannels,
+            ),
+            keyboardLayout = keyboardLayout,
+            gameLanguage = gameLanguage,
+            entitlementVerified = entitlementVerified,
+        )
     }
 
     private fun Properties.required(name: String): String =

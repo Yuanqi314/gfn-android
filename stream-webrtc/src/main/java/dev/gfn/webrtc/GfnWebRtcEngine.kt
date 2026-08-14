@@ -1,7 +1,6 @@
 package dev.gfn.webrtc
 
 import android.content.Context
-import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionConnectionInfo
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.input.GfnInputHandshake
@@ -14,11 +13,11 @@ import dev.gfn.stream.IceDiagnostics
 import dev.gfn.stream.InputDiagnostics
 import dev.gfn.stream.SdpDiagnostics
 import dev.gfn.stream.SignalingDiagnostics
+import dev.gfn.stream.StreamCapabilityProfiles
 import dev.gfn.stream.StreamConfig
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
 import dev.gfn.stream.StreamingEngine
-import dev.gfn.stream.VideoCodecPreference
 import dev.gfn.stream.VideoDiagnostics
 import java.net.URI
 import java.nio.ByteBuffer
@@ -199,12 +198,7 @@ class GfnWebRtcEngine(
     private fun validate(session: SessionInfo, config: StreamConfig): String? = when {
         !session.isReadyStatus -> "v5 只接受已 Ready/Claimed 的 Session（status=${session.status}）。"
         session.signalingUrl.isNullOrBlank() -> "Claimed Session 缺少 signalingUrl。"
-        config.codec != VideoCodecPreference.H264 -> "v5.0 强制 H.264；HEVC/AV1 尚未启用。"
-        config.colorMode != RequestedColorMode.CompatibilitySdr -> "v5.0 强制 SDR8。"
-        config.width != 1920 || config.height != 1080 -> "v5.0 当前固定 1920x1080。"
-        config.fps != 60 -> "v5.0 当前固定 60 FPS。"
-        config.audioChannels != 2 -> "v5.0 当前固定 Stereo。"
-        else -> null
+        else -> StreamCapabilityProfiles.V52_ANDROID_WEBRTC.rejectionReason(config)
     }
 
     fun unbindVideoOutput(output: GfnVideoSurfaceView) {
