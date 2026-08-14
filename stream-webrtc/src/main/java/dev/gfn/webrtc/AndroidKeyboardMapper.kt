@@ -84,14 +84,19 @@ object AndroidKeyboardMapper {
 
     fun map(keyCode: Int): GfnKey? = keys[keyCode]
 
-    /** OpenNOW-compatible lock-key state. The exact meaning of base bits 0x10/0x20/0x40 is undocumented. */
-    fun lockKeysState(metaState: Int): Int {
-        var state = 0x70
-        if (metaState and KeyEvent.META_CAPS_LOCK_ON != 0) state = state or 0x01
-        if (metaState and KeyEvent.META_NUM_LOCK_ON != 0) state = state or 0x02
-        if (metaState and KeyEvent.META_SCROLL_LOCK_ON != 0) state = state or 0x04
-        return state
-    }
+    /**
+     * C2-ISO probe lock-key state.
+     *
+     * Deliberately isolates CapsLock from NumLock/ScrollLock so the wire state is exactly:
+     * - Caps OFF -> 0x70
+     * - Caps ON  -> 0x71
+     *
+     * This is an experiment-only mapping used to test whether INPUT_LOCK_KEYS_SYNC itself
+     * controls the remote alphabetic-key failure. The exact meaning of base bits
+     * 0x10/0x20/0x40 remains undocumented.
+     */
+    fun lockKeysState(metaState: Int): Int =
+        if (metaState and KeyEvent.META_CAPS_LOCK_ON != 0) 0x71 else 0x70
 
     fun modifiers(metaState: Int): Int {
         var result = 0

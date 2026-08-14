@@ -9,6 +9,7 @@ import dev.gfn.input.InputStateTracker
 import dev.gfn.input.ReleaseCommand
 import dev.gfn.stream.InputDiagnostics
 import android.util.Log
+import android.view.KeyEvent
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
@@ -138,6 +139,26 @@ class GfnKeyboardMouseInputController(
             }
 
             syncLockKeysStateIfNeeded(trace.metaState)
+
+            // C2-ISO single-variable probe:
+            // keep Android's local CapsLock state transition, but never forward VK_CAPITAL
+            // to the remote session. This makes 0x70 <-> 0x71 INPUT_LOCK_KEYS_SYNC the
+            // only server-visible variable when the physical CapsLock key is toggled.
+            if (trace.keyCode == KeyEvent.KEYCODE_CAPS_LOCK) {
+                lastEvent = "CapsLock C2-ISO local-only ${if (down) "DOWN" else "UP"}"
+                GfnInputForensics.logInputKey(
+                    trace, connectionGeneration, eventEpoch, androidReportedModifiers, trackedModifiersForEvent,
+                    key.virtualKey, key.scanCode, protocolVersion, true, true, "C2_ISO_CAPS_SUPPRESSED",
+                )
+                Log.i(
+                    "GfnLockState",
+                    "probe=C2_ISO generation=$connectionGeneration inputEpoch=$eventEpoch " +
+                        "capsPhysical=${if (down) "DOWN" else "UP"} rawMeta=0x${trace.metaState.toString(16)} " +
+                        "vkCapitalSuppressed=true",
+                )
+                emitDiagnostics(force = true)
+                return@enqueue
+            }
 
             if (androidReportedModifiers != trackedModifiersForEvent) {
                 modifierMismatchCount += 1
@@ -372,11 +393,13 @@ class GfnKeyboardMouseInputController(
     private fun syncLockKeysStateIfNeeded(metaState: Int) {
         val state = AndroidKeyboardMapper.lockKeysState(metaState)
         if (lastLockKeysState == state) return
+        val capsOn = metaState and KeyEvent.META_CAPS_LOCK_ON != 0
         val ok = send(encoder.lockKeysSync(state))
         Log.i(
             "GfnLockState",
-            "generation=$connectionGeneration protocol=${protocolVersion ?: encoder.protocolVersion} " +
-                "state=0x${state.toString(16).padStart(2, '0')} sendAccepted=$ok",
+            "probe=C2_ISO generation=$connectionGeneration protocol=${protocolVersion ?: encoder.protocolVersion} " +
+                "capsOn=$capsOn rawMeta=0x${metaState.toString(16)} " +
+                "numScrollIgnored=true state=0x${state.toString(16).padStart(2, '0')} sendAccepted=$ok",
         )
         if (ok) lastLockKeysState = state
     }
