@@ -90,6 +90,7 @@ class GfnSessionController(
     authController: AuthController,
     cloudMatchClient: GfnCloudMatchClient,
     private val recordStore: AndroidSessionRecordStore,
+    private val keyboardLayoutStore: AndroidKeyboardLayoutStore,
     private val scope: CoroutineScope,
 ) {
     private val port: CloudMatchPort = AuthRefreshingCloudMatchPort(cloudMatchClient, authController)
@@ -106,6 +107,9 @@ class GfnSessionController(
     private val _resumeRecord = MutableStateFlow<PersistedSessionRecord?>(null)
     val resumeRecord: StateFlow<PersistedSessionRecord?> = _resumeRecord.asStateFlow()
 
+    private val _keyboardLayoutSelection = MutableStateFlow(keyboardLayoutStore.load())
+    val keyboardLayoutSelection: StateFlow<String> = _keyboardLayoutSelection.asStateFlow()
+
     private var restored = false
     private var operationGeneration = 0L
     private var activeJob: Job? = null
@@ -116,6 +120,8 @@ class GfnSessionController(
         val appId: String,
         val title: String,
         val store: String,
+        val keyboardLayout: String,
+        val gameLanguage: String,
     )
 
     private class QueueAdUnsupportedException(val session: SessionInfo) : Exception(
@@ -129,6 +135,19 @@ class GfnSessionController(
             _resumeRecord.value = withContext(Dispatchers.IO) { recordStore.load() }
         }
     }
+
+    fun setKeyboardLayoutSelection(selection: String) {
+        val normalized = keyboardLayoutStore.save(selection)
+        if (_keyboardLayoutSelection.value != normalized) {
+            _keyboardLayoutSelection.value = normalized
+        }
+        Log.i(
+            KEYBOARD_TAG,
+            "selection=$normalized effective=${resolveKeyboardLayout(normalized)} nextSession=true",
+        )
+    }
+
+    fun effectiveKeyboardLayout(): String = resolveKeyboardLayout(_keyboardLayoutSelection.value)
 
     fun startGame(
         game: GameDetail,
@@ -154,7 +173,15 @@ class GfnSessionController(
         operationGeneration += 1
         val operation = operationGeneration
         val attempt = orchestrator.beginAttempt()
-        val active = ActiveGame(variant.launchAppId, game.title, variant.appStore)
+        val selectedKeyboardLayout = effectiveKeyboardLayout()
+        val gameLanguage = GfnLocale.nvidiaCode()
+        val active = ActiveGame(
+            appId = variant.launchAppId,
+            title = game.title,
+            store = variant.appStore,
+            keyboardLayout = selectedKeyboardLayout,
+            gameLanguage = gameLanguage,
+        )
         activeGame = active
         val preset = selectV4Preset(subscription)
         _state.value = SessionUiState.Creating(active.title, active.store)
@@ -169,13 +196,18 @@ class GfnSessionController(
                     width = preset.width,
                     height = preset.height,
                     fps = preset.fps.coerceAtMost(60),
-                    keyboardLayout = GfnLocale.keyboardLayoutCode(),
-                    gameLanguage = GfnLocale.nvidiaCode(),
+                    keyboardLayout = active.keyboardLayout,
+                    gameLanguage = active.gameLanguage,
                     requestedColorMode = RequestedColorMode.CompatibilitySdr,
                     audioChannels = 2,
                     accountLinked = true,
                     persistInGameSettings = false,
                     appLaunchMode = 1,
+                )
+                Log.i(
+                    KEYBOARD_TAG,
+                    "CREATE keyboardLayout=${request.keyboardLayout} gameLanguage=${request.gameLanguage} " +
+                        "selection=${_keyboardLayoutSelection.value}",
                 )
                 var session = orchestrator.createSession(request, attempt)
                 if (!isCurrent(operation)) return@launch
@@ -245,24 +277,36 @@ class GfnSessionController(
         operationGeneration += 1
         val operation = operationGeneration
         val attempt = orchestrator.beginAttempt()
-        val active = ActiveGame(record.appId, record.gameTitle, record.appStore)
+        val active = ActiveGame(
+            appId = record.appId,
+            title = record.gameTitle,
+            store = record.appStore,
+            keyboardLayout = record.keyboardLayout ?: effectiveKeyboardLayout(),
+            gameLanguage = record.gameLanguage ?: GfnLocale.nvidiaCode(),
+        )
         activeGame = active
         _state.value = SessionUiState.Claiming(active.title, active.store, record.sessionId)
 
         activeJob = scope.launch {
             try {
-                var session = orchestrator.claimSession(
-                    SessionClaimRequest(
+                val claimRequest = SessionClaimRequest(
                         session = record.toSessionInfo(),
                         appId = record.appId,
                         token = auth.gfnToken,
                         baseUrl = record.streamingBaseUrl,
-                        keyboardLayout = GfnLocale.keyboardLayoutCode(),
-                        gameLanguage = GfnLocale.nvidiaCode(),
+                        keyboardLayout = active.keyboardLayout,
+                        gameLanguage = active.gameLanguage,
                         audioChannels = 2,
                         persistInGameSettings = false,
                         appLaunchMode = 1,
-                    ),
+                    )
+                Log.i(
+                    KEYBOARD_TAG,
+                    "CLAIM keyboardLayout=${claimRequest.keyboardLayout} gameLanguage=${claimRequest.gameLanguage} " +
+                        "sessionId=${record.sessionId}",
+                )
+                var session = orchestrator.claimSession(
+                    claimRequest,
                     attempt,
                 )
                 if (!isCurrent(operation)) return@launch
@@ -521,7 +565,12 @@ class GfnSessionController(
             clientId = session.clientId,
             deviceId = session.deviceId,
             createdAtEpochMillis = System.currentTimeMillis(),
+            keyboardLayout = active.keyboardLayout,
+            gameLanguage = active.gameLanguage,
         )
+
+    private fun resolveKeyboardLayout(selection: String): String =
+        if (selection == GfnKeyboardLayoutCatalog.AUTO) GfnLocale.keyboardLayoutCode() else selection
 
     private fun selectV4Preset(subscription: SubscriptionInfo): EntitledResolution {
         val entitled = subscription.entitledResolutions
@@ -539,5 +588,6 @@ class GfnSessionController(
 
     private companion object {
         const val TAG = "GfnSession"
+        const val KEYBOARD_TAG = "GfnKeyboardLayout"
     }
 }

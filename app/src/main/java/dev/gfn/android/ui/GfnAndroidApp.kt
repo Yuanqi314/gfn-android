@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -44,6 +46,7 @@ import dev.gfn.android.GfnAppRuntimeViewModel
 import dev.gfn.android.auth.AuthUiState
 import dev.gfn.android.content.ContentUiState
 import dev.gfn.android.content.GameDetailUiState
+import dev.gfn.android.session.GfnKeyboardLayoutCatalog
 import dev.gfn.android.session.PersistedSessionRecord
 import dev.gfn.android.session.SessionUiState
 import dev.gfn.android.stream.GfnStreamingController
@@ -53,6 +56,7 @@ import dev.gfn.core.model.GameVariant
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.diagnostics.DiagnosticsSnapshot
 import dev.gfn.identity.GfnClientIdentity
+import dev.gfn.identity.GfnLocale
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
 import dev.gfn.webrtc.GfnVideoSurfaceView
@@ -84,6 +88,7 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
     val detailState by contentController.detailState.collectAsState()
     val sessionState by sessionController.state.collectAsState()
     val resumeRecord by sessionController.resumeRecord.collectAsState()
+    val keyboardLayoutSelection by sessionController.keyboardLayoutSelection.collectAsState()
     val streamState by streamingController.state.collectAsState()
     val streamDiagnostics by streamingController.diagnostics.collectAsState()
 
@@ -212,6 +217,8 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
                         authState = authState,
                         contentState = contentState,
                         sessionState = sessionState,
+                        keyboardLayoutSelection = keyboardLayoutSelection,
+                        onKeyboardLayoutSelected = sessionController::setKeyboardLayoutSelection,
                         onToggleTheme = { darkTheme = !darkTheme },
                     )
                 }
@@ -241,7 +248,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.1.4 Keyboard Wire A/B",
+                "独立 Android GFN 客户端 · v5.1.8 Keyboard Layout Override",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -968,8 +975,19 @@ private fun SettingsScreen(
     authState: AuthUiState,
     contentState: ContentUiState,
     sessionState: SessionUiState,
+    keyboardLayoutSelection: String,
+    onKeyboardLayoutSelected: (String) -> Unit,
     onToggleTheme: () -> Unit,
 ) {
+    var keyboardLayoutMenuOpen by remember { mutableStateOf(false) }
+    val normalizedKeyboardLayout = GfnKeyboardLayoutCatalog.normalize(keyboardLayoutSelection)
+    val keyboardLayoutChoice = GfnKeyboardLayoutCatalog.choice(normalizedKeyboardLayout)
+    val autoDetectedLayout = GfnLocale.keyboardLayoutCode()
+    val effectiveKeyboardLayout = if (normalizedKeyboardLayout == GfnKeyboardLayoutCatalog.AUTO) {
+        autoDetectedLayout
+    } else {
+        normalizedKeyboardLayout
+    }
     LazyColumn(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -981,6 +999,51 @@ private fun SettingsScreen(
                     Text("外观", style = MaterialTheme.typography.titleMedium)
                     Text(if (darkTheme) "动态深色" else "动态浅色")
                     Button(onClick = onToggleTheme) { Text("切换主题") }
+                }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("串流键盘布局", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "该布局会作为 CloudMatch keyboardLayout 写入下一次新建 Session。" +
+                            " 游戏语言保持独立，不会随此选项改变。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { keyboardLayoutMenuOpen = true }) {
+                        Text("${keyboardLayoutChoice.label} · $effectiveKeyboardLayout")
+                    }
+                    DropdownMenu(
+                        expanded = keyboardLayoutMenuOpen,
+                        onDismissRequest = { keyboardLayoutMenuOpen = false },
+                    ) {
+                        GfnKeyboardLayoutCatalog.choices.forEach { choice ->
+                            DropdownMenuItem(
+                                text = {
+                                    val suffix = if (choice.automatic) "（当前 $autoDetectedLayout）" else choice.code
+                                    Text("${choice.label} · $suffix")
+                                },
+                                onClick = {
+                                    keyboardLayoutMenuOpen = false
+                                    onKeyboardLayoutSelected(choice.code)
+                                },
+                            )
+                        }
+                    }
+                    if (sessionState !is SessionUiState.Idle && sessionState !is SessionUiState.Ended &&
+                        sessionState !is SessionUiState.Cancelled
+                    ) {
+                        Text(
+                            "当前活动/可恢复 Session 已冻结其创建时的键盘布局；这里的修改只影响下一次新 Session。",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Text(
+                            "当前将发送：keyboardLayout=$effectiveKeyboardLayout",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
         }
@@ -1000,7 +1063,7 @@ private fun SettingsScreen(
                     Text("Session：${sessionStateLabel(sessionState)}")
                     Text("v4：CloudMatch / Claim 已进入 soft-freeze")
                     Text("v5.0：WSS → SDP → ICE → H.264 First Frame · 真机通过")
-                    Text("v5.1：全屏键鼠 + releaseAll(reason) + ordered queue + epoch")
+                    Text("v5.1.8：串流 keyboardLayout override + C3 键盘兼容路径")
                     Text("后续：Audio quality/stereo → Reconnect → HEVC Main → Main10 → HDR10")
                 }
             }

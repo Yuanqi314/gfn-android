@@ -6,6 +6,7 @@ import dev.gfn.account.GfnAccountClient
 import dev.gfn.android.auth.AndroidKeystoreTokenStore
 import dev.gfn.android.auth.AuthController
 import dev.gfn.android.content.GfnContentController
+import dev.gfn.android.session.AndroidKeyboardLayoutStore
 import dev.gfn.android.session.AndroidSessionRecordStore
 import dev.gfn.android.session.AndroidStableDeviceId
 import dev.gfn.android.session.GfnSessionController
@@ -56,6 +57,7 @@ class GfnAppRuntimeViewModel(application: Application) : AndroidViewModel(applic
                 deviceId = stableDeviceId::getOrCreate,
             ),
             recordStore = AndroidSessionRecordStore(appContext),
+            keyboardLayoutStore = AndroidKeyboardLayoutStore(appContext),
             scope = runtimeScope,
         )
         streamingController = GfnStreamingController(

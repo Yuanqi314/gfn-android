@@ -38,6 +38,8 @@ data class PersistedSessionRecord(
     val clientId: String,
     val deviceId: String,
     val createdAtEpochMillis: Long,
+    val keyboardLayout: String? = null,
+    val gameLanguage: String? = null,
 ) {
     fun toSessionInfo(): SessionInfo = SessionInfo(
         sessionId = sessionId,
@@ -73,6 +75,8 @@ class AndroidSessionRecordStore(context: Context) {
                 clientId = props.required("clientId"),
                 deviceId = props.required("deviceId"),
                 createdAtEpochMillis = props.getProperty("createdAtEpochMillis")?.toLongOrNull() ?: 0L,
+                keyboardLayout = props.getProperty("keyboardLayout")?.takeIf { it.isNotBlank() },
+                gameLanguage = props.getProperty("gameLanguage")?.takeIf { it.isNotBlank() },
             )
         }.getOrElse {
             file.delete()
@@ -94,6 +98,8 @@ class AndroidSessionRecordStore(context: Context) {
             setProperty("clientId", record.clientId)
             setProperty("deviceId", record.deviceId)
             setProperty("createdAtEpochMillis", record.createdAtEpochMillis.toString())
+            setProperty("keyboardLayout", record.keyboardLayout.orEmpty())
+            setProperty("gameLanguage", record.gameLanguage.orEmpty())
         }
         file.parentFile?.mkdirs()
         val temp = File(file.parentFile, "${file.name}.tmp")
