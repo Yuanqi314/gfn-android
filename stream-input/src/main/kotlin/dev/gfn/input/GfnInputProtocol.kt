@@ -14,7 +14,6 @@ object GfnInputType {
     const val MOUSE_BUTTON_DOWN: Int = 8
     const val MOUSE_BUTTON_UP: Int = 9
     const val MOUSE_WHEEL: Int = 10
-    const val LOCK_KEYS_SYNC: Int = 19
 }
 
 enum class InputReleaseReason {
@@ -235,17 +234,6 @@ class GfnInputPacketEncoder(
         }
 
     fun heartbeat(): ByteArray = ByteArray(4).also { writeUInt32LE(it, 0, GfnInputType.HEARTBEAT.toLong()) }
-
-    fun lockKeysSync(state: Int): ByteArray {
-        require(state in 0..0xff) { "lock key state must fit in one byte" }
-        val timestamp = timestampMicros()
-        val payloadOffset = if (protocolVersion >= 3) 10 else 0
-        val out = ByteArray(payloadOffset + 5)
-        writeSingleEventHeader(out, timestamp)
-        writeUInt32LE(out, payloadOffset, GfnInputType.LOCK_KEYS_SYNC.toLong())
-        out[payloadOffset + 4] = state.toByte()
-        return out
-    }
 
     fun keyboard(down: Boolean, key: GfnKey, modifiers: Int): ByteArray {
         val timestamp = timestampMicros()

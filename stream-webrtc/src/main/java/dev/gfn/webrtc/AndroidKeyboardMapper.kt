@@ -84,19 +84,6 @@ object AndroidKeyboardMapper {
 
     fun map(keyCode: Int): GfnKey? = keys[keyCode]
 
-    /**
-     * C3 OpenNOW CapsLock probe lock-state.
-     *
-     * Keep the C2 isolation invariant so only CapsLock affects type 19 during this test:
-     * - Caps OFF -> 0x70
-     * - Caps ON  -> 0x71
-     *
-     * NumLock/ScrollLock remain intentionally excluded to avoid the 0x74/0x75 interference
-     * seen in the previous device log. The exact base-bit semantics remain undocumented.
-     */
-    fun lockKeysState(metaState: Int): Int =
-        if (metaState and KeyEvent.META_CAPS_LOCK_ON != 0) 0x71 else 0x70
-
     fun modifiers(metaState: Int): Int {
         var result = 0
         if (metaState and KeyEvent.META_SHIFT_ON != 0) result = result or MOD_SHIFT

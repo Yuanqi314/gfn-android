@@ -7,7 +7,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * v5.1.3 Input Forensics baseline; v5.1.4 adds wire-mode evidence only.
+ * v5.1.9 stable Input Forensics baseline.
  *
  * 只记录 Android KeyEvent -> mapper -> encoder -> DataChannel.send() 证据链，
  * 不参与任何键位映射、modifier、packet framing 或发送决策。
@@ -45,9 +45,7 @@ object GfnInputForensics {
         val payloadOffset: Int,
         val virtualKey: Int,
         val modifiers: Int,
-        val wireMode: String,
-        val mappedScanCode: Int,
-        val wireScanCode: Int,
+        val scanCode: Int,
     )
 
     private data class DispatchFrame(
@@ -217,7 +215,7 @@ object GfnInputForensics {
             "seq=${tx.trace.eventSeq} activity=${tx.trace.activityInstanceId ?: -1} connectionGen=${tx.connectionGeneration} " +
                 "epoch=${tx.inputEpoch} type=$type protocol=${tx.protocolVersion} payloadOffset=${tx.payloadOffset} " +
                 "length=${bytes.size} vk=${hex16(tx.virtualKey)} mods=${hex16(tx.modifiers)} " +
-                "wireMode=${tx.wireMode} mappedScan=${hex16(tx.mappedScanCode)} wireScan=${hex16(tx.wireScanCode)} " +
+                "scan=${hex16(tx.scanCode)} " +
                 "binary=$binary channel=input_channel_v1 channelState=$channelState position=$position limit=$limit " +
                 "remaining=$remaining bufferedAmountBefore=$bufferedAmount bytes=${bytes.toHex()}"
         return prefix
@@ -231,22 +229,6 @@ object GfnInputForensics {
         )
     }
 
-
-    fun logWireMode(
-        connectionGeneration: Long,
-        inputEpoch: Long,
-        oldMode: GfnKeyboardWireMode,
-        newMode: GfnKeyboardWireMode,
-        accepted: Boolean,
-        reason: String,
-    ) {
-        if (!enabled) return
-        Log.i(
-            "GfnInputWireMode",
-            "connectionGen=$connectionGeneration epoch=$inputEpoch old=${oldMode.name} new=${newMode.name} " +
-                "accepted=$accepted reason=$reason",
-        )
-    }
 
     private fun snapshot(event: KeyEvent, eventSeq: Long, activityInstanceId: Long?): KeyTrace = KeyTrace(
         eventSeq = eventSeq,

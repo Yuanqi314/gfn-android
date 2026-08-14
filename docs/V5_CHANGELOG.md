@@ -1,3 +1,15 @@
+# v5.1.9 — Keyboard Stable Baseline
+
+- 真机已确认 Cyberpunk 2077 的有效修复变量是新 Session `keyboardLayout=en-US`。
+- 保留 v5.1.8 串流键盘布局设置、默认 English (US)、Create/Claim/Resume Session layout snapshot。
+- 删除 C2/C3 实验遗留：scan=0 强制、type19 LOCK_KEYS_SYNC、Caps synthetic LSHIFT、probe logs、Wire A/B mode/UI。
+- 删除 `GfnKeyboardWireMode.kt` 与 `setKeyboardWireMode()` 实验边界。
+- 键盘生产路径恢复为 Windows VK + Windows Set-1 scan + tracked modifiers。
+- `GfnInputForensics` 保留，但只记录最终 VK/scan/mods/protocol/sendAccepted/generation/epoch/release reason，不参与编码决策。
+- 新增 `verify-keyboard-stable.sh`：v2/v3 Set-1 golden packet + production residue guards。
+- 新增 `docs/REFERENCE_MATRIX.md`，从本版开始对大功能记录 CloudNow/OpenNOW/本项目/Verified 四列证据。
+- 完成 Cyberpunk 2077 + CS2 真机回归后，Keyboard 模块进入 soft-freeze。
+
 # v5.1.1 — 真机问题修正版
 
 - Android 真机 wheel direction：取消 v5.1 对 `AXIS_VSCROLL` 的额外负号；保持倍率/accumulator/packet framing 不变。

@@ -155,8 +155,6 @@ class GfnWebRtcEngine(
     fun onActivityPaused() = synchronized(lock) { inputController }?.onActivityPaused()
     fun onActivityDestroy() = synchronized(lock) { inputController }?.onActivityDestroy()
     fun onOverlayChanged(open: Boolean) = synchronized(lock) { inputController }?.onOverlayChanged(open)
-    fun setKeyboardWireMode(mode: GfnKeyboardWireMode) =
-        synchronized(lock) { inputController }?.setKeyboardWireMode(mode)
     fun onFullscreenExit() = synchronized(lock) { inputController }?.releaseForFullscreenExit()
 
     fun bindVideoOutput(output: GfnVideoSurfaceView?) {

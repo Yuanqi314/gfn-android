@@ -83,7 +83,7 @@ grep -Fq 'handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)' strea
 grep -Fq 'modifierMismatchCount' stream-core/src/main/kotlin/dev/gfn/stream/StreamingEngine.kt || { echo 'ERROR: modifier mismatch diagnostics missing' >&2; exit 1; }
 echo 'V512_AUDIO_KEYBOARD_GUARDS=PASS'
 
-# v5.1.3 Input Forensics only guards. These must not alter keyboard protocol semantics.
+# v5.1.3+ generic Input Forensics guards. Diagnostics must observe, never transform keyboard semantics.
 grep -Fq 'buildConfigField("boolean", "INPUT_FORENSICS_ENABLED", "true")' app/build.gradle.kts || { echo 'ERROR: debug Input Forensics switch missing' >&2; exit 1; }
 grep -Fq 'BuildConfig.DEBUG && BuildConfig.INPUT_FORENSICS_ENABLED' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: Input Forensics must be debug-gated' >&2; exit 1; }
 grep -Fq 'override fun dispatchKeyEvent(event: KeyEvent)' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: Activity dispatch PRE/POST instrumentation missing' >&2; exit 1; }
@@ -95,31 +95,35 @@ grep -Fq 'asReadOnlyBuffer()' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInpu
 grep -Fq 'val finalBuffer = ByteBuffer.wrap(packet)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: Tx diagnostics are not attached to final DataChannel ByteBuffer' >&2; exit 1; }
 grep -Fq 'DataChannel.Buffer(finalBuffer, true)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: actual final ByteBuffer is not sent as binary DataChannel payload' >&2; exit 1; }
 grep -Fq 'GfnInputForensics.logHandshake(eventGeneration, bytes, version)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: raw input handshake diagnostics missing' >&2; exit 1; }
-grep -Fq 'KEYCODE_K to k(0x4B, 0x25)' stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt || { echo 'ERROR: K mapping changed during forensics-only release' >&2; exit 1; }
-INPUT_PROTOCOL_SHA=$(sha256sum stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt | awk '{print $1}')
-[ "$INPUT_PROTOCOL_SHA" = 'bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2' ] || { echo 'ERROR: stream-input protocol semantics changed in v5.1.3' >&2; exit 1; }
-KEYBOARD_MAPPER_SHA=$(sha256sum stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt | awk '{print $1}')
-[ "$KEYBOARD_MAPPER_SHA" = 'f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d' ] || { echo 'ERROR: AndroidKeyboardMapper changed in v5.1.3 forensics-only release' >&2; exit 1; }
 grep -Fq 'DataChannel.Init().apply { ordered = true }' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: input_channel_v1 DataChannel configuration changed' >&2; exit 1; }
 grep -Fq 'fun releaseAll(reason: InputReleaseReason)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: releaseAll architecture changed' >&2; exit 1; }
-grep -Fq 'pendingWheel += verticalAxis * 3.0' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: mouse/wheel logic changed in forensics-only release' >&2; exit 1; }
+grep -Fq 'pendingWheel += verticalAxis * 3.0' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: mouse/wheel logic changed' >&2; exit 1; }
 echo 'V513_INPUT_FORENSICS_GUARDS=PASS'
-# v5.1.4 keyboard wire A/B guards. Only final keyboard wire scan may vary.
-grep -Fq 'enum class GfnKeyboardWireMode' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: v5.1.4 wire mode enum missing' >&2; exit 1; }
-grep -Fq 'SCAN_SET1' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: Set-1 A mode missing' >&2; exit 1; }
-grep -Fq 'VK_ONLY_SCAN_ZERO' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: scan-zero B mode missing' >&2; exit 1; }
-grep -Fq 'keyboardWireMode: GfnKeyboardWireMode = GfnKeyboardWireMode.SCAN_SET1' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: v5.1.4 default mode must remain SCAN_SET1' >&2; exit 1; }
-grep -Fq 'GfnKeyboardWirePolicy.applyInPlace(packet, version, keyboardWireMode)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: final keyboard packet wire policy missing' >&2; exit 1; }
-grep -Fq 'wireMode=${tx.wireMode} mappedScan=' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: wire mode mapped/wire scan diagnostics missing' >&2; exit 1; }
-grep -Fq 'REQUIRES_OVERLAY_AND_ZERO_HELD_KEYS' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: unsafe held-key wire mode switch guard missing' >&2; exit 1; }
-grep -Fq 'wireHeldClear' app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt || { echo 'ERROR: fullscreen A/B UI held-key guard missing' >&2; exit 1; }
-grep -Fq 'setKeyboardWireMode' app/src/main/java/dev/gfn/android/stream/GfnStreamingController.kt || { echo 'ERROR: app to engine wire mode boundary missing' >&2; exit 1; }
-INPUT_PROTOCOL_SHA_V514=$(sha256sum stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt | awk '{print $1}')
-[ "$INPUT_PROTOCOL_SHA_V514" = 'bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2' ] || { echo 'ERROR: stream-input encoder changed during v5.1.4 A/B experiment' >&2; exit 1; }
-KEYBOARD_MAPPER_SHA_V514=$(sha256sum stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt | awk '{print $1}')
-[ "$KEYBOARD_MAPPER_SHA_V514" = 'f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d' ] || { echo 'ERROR: AndroidKeyboardMapper changed during v5.1.4 A/B experiment' >&2; exit 1; }
-echo 'V514_KEYBOARD_WIRE_AB_GUARDS=PASS'
-./verify-wire-ab.sh
+
+# v5.1.8 production keyboardLayout fix: persistent choice, create-time resolve, immutable session snapshot for claim/resume.
+grep -Fq 'const val DEFAULT = "en-US"' app/src/main/java/dev/gfn/android/session/AndroidKeyboardLayoutStore.kt || { echo 'ERROR: keyboard layout default must be en-US' >&2; exit 1; }
+grep -Fq 'keyboardLayout = selectedKeyboardLayout' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: create Session does not resolve keyboard layout before launch' >&2; exit 1; }
+FROZEN_LAYOUT_USES=$(grep -Fc 'keyboardLayout = active.keyboardLayout' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt)
+[ "$FROZEN_LAYOUT_USES" -ge 3 ] || { echo 'ERROR: create/claim/persist paths are not sharing the frozen keyboard layout snapshot' >&2; exit 1; }
+grep -Fq 'keyboardLayout = record.keyboardLayout ?: effectiveKeyboardLayout()' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: persisted-session claim does not prefer the original keyboard layout' >&2; exit 1; }
+grep -Fq 'keyboardLayout = props.getProperty("keyboardLayout")' app/src/main/java/dev/gfn/android/session/AndroidSessionPersistence.kt || { echo 'ERROR: persisted session record does not restore keyboard layout' >&2; exit 1; }
+CLOUDMATCH_LAYOUT_QUERIES=$(grep -Fc 'keyboardLayout=${enc(request.keyboardLayout)}' gfn-cloudmatch/src/main/kotlin/dev/gfn/cloudmatch/CloudMatchProtocol.kt)
+[ "$CLOUDMATCH_LAYOUT_QUERIES" -ge 2 ] || { echo 'ERROR: create/claim CloudMatch keyboardLayout queries are not both present' >&2; exit 1; }
+echo 'V518_KEYBOARD_LAYOUT_GUARDS=PASS'
+
+# v5.1.9 stable keyboard baseline: Set-1 is the sole production path; all C2/C3 probes are removed.
+test ! -e stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: experiment-only GfnKeyboardWireMode.kt still exists' >&2; exit 1; }
+if grep -RqsE 'LOCK_KEYS_SYNC|lockKeysSync|GfnKeyboardWireMode|GfnKeyboardWirePolicy|setKeyboardWireMode|GfnCapsCompat|GfnLockState|C2_ISO|C3_OPENNOW' stream-input/src/main stream-webrtc/src/main app/src/main; then
+  echo 'ERROR: C2/C3 keyboard experiment residue remains in production source' >&2
+  exit 1
+fi
+grep -Fq 'KeyEvent.KEYCODE_CAPS_LOCK to k(0x14, 0x3A)' stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt || { echo 'ERROR: stable CapsLock VK/Set-1 mapping missing' >&2; exit 1; }
+grep -Fq 'val packet = encoder.keyboard(true, key, modifiers)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: stable key-down encoder path missing' >&2; exit 1; }
+grep -Fq 'val packet = encoder.keyboard(false, key, encodedModifiers)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: stable key-up encoder path missing' >&2; exit 1; }
+grep -Fq 'scan=${hex16(tx.scanCode)}' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: generic final scan diagnostics missing' >&2; exit 1; }
+if grep -Fq 'Keyboard Wire:' app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt; then echo 'ERROR: Wire A/B experiment UI remains' >&2; exit 1; fi
+echo 'V519_KEYBOARD_STABLE_GUARDS=PASS'
+./verify-keyboard-stable.sh
 
 BUILD="$ROOT/build"
 MODULES="$BUILD/module-check"

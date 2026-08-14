@@ -176,12 +176,6 @@ fun FullscreenStreamScreen(
             ) {
                 Text("串流菜单", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("打开 Overlay 已执行 releaseAll；Esc 不被占用，仍发送给远端游戏。")
-                val wireInput = diagnostics.input
-                Text(
-                    "Keyboard Wire: ${wireInput.keyboardWireMode}（C3 固定 scan=0） · " +
-                        "mapped=${wireInput.lastMappedScanCode?.let { "0x${it.toString(16)}" } ?: "-"} " +
-                        "wire=${wireInput.lastWireScanCode?.let { "0x${it.toString(16)}" } ?: "-"}",
-                )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { setLocalOverlay(false) }) { Text("返回游戏") }
                     OutlinedButton(

@@ -1,11 +1,34 @@
-# GFN Android Lab · v5.1.4 Keyboard Wire A/B 实验版
+# GFN Android Lab · v5.1.9 Keyboard Stable Baseline
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
+## v5.1.9 本轮新增
 
-## v5.1.4 本轮新增
+Cyberpunk 2077 真机已经确认：造成 A-Z 被 Windows completion/composition 输入路径截获的有效变量是 **Session `keyboardLayout`**；新 Session 固定 `en-US` 后 Caps OFF 的字母恢复正常。
+
+v5.1.9 因此只做 production cleanup：
+
+```text
+保留：keyboardLayout setting + Session snapshot
+恢复：Windows VK + Windows Set-1 scan + tracked modifiers
+删除：scan=0 / type19 / synthetic LSHIFT / C2-C3 probe / Wire A-B UI
+```
+
+通用 `GfnInputForensics` 继续保留，但不再参与任何 packet 变换。Cyberpunk 2077 + CS2 回归通过后，Keyboard 模块进入 soft-freeze。
+
+详细见：
+
+```text
+docs/V5_1_9_KEYBOARD_STABLE_BASELINE.md
+docs/V5_1_9_TEST_GUIDE.md
+docs/V5_1_9_REFERENCE_ADOPTION.md
+docs/REFERENCE_MATRIX.md
+```
+
+
+## 历史：v5.1.4 Keyboard Wire A/B
 
 v5.1.3 真机取证已把 W / N / K / G 的 Android dispatch、modifier、VK/Set-1 mapping、protocol=3、28-byte framing、ByteBuffer 和 binary DataChannel send 基本确认正常；四个字母仍会让远端全屏游戏窗口最小化。
 

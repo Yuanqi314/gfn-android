@@ -248,7 +248,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.1.8 Keyboard Layout Override",
+                "独立 Android GFN 客户端 · v5.1.9 Keyboard Stable Baseline",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -899,7 +899,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "键鼠输入 v5.1.4 A/B",
+                "键鼠输入 v5.1.9 Stable",
                 listOf(
                     "Reliable channel" to if (streamDiagnostics.input.dataChannelOpen) "OPEN" else "-",
                     "Protocol ready" to streamDiagnostics.input.protocolReady.asYesNo(),
@@ -913,8 +913,7 @@ private fun DiagnosticsScreen(
                     "Android modifier mask" to (streamDiagnostics.input.lastAndroidReportedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"),
                     "Tracked modifier mask" to (streamDiagnostics.input.lastTrackedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"),
                     "Modifier mismatches" to streamDiagnostics.input.modifierMismatchCount.toString(),
-                    "Keyboard wire mode" to streamDiagnostics.input.keyboardWireMode,
-                    "Mapped / wire scan" to "${streamDiagnostics.input.lastMappedScanCode?.let { "0x${it.toString(16)}" } ?: "-"} / ${streamDiagnostics.input.lastWireScanCode?.let { "0x${it.toString(16)}" } ?: "-"}",
+                    "Last Set-1 scan" to (streamDiagnostics.input.lastScanCode?.let { "0x${it.toString(16)}" } ?: "-"),
                     "Epoch" to streamDiagnostics.input.inputEpoch.toString(),
                     "Remote state" to streamDiagnostics.input.remoteState,
                     "Held keys local/remote" to "${streamDiagnostics.input.physicalHeldKeys}/${streamDiagnostics.input.remoteHeldKeys}",
@@ -1063,8 +1062,8 @@ private fun SettingsScreen(
                     Text("Session：${sessionStateLabel(sessionState)}")
                     Text("v4：CloudMatch / Claim 已进入 soft-freeze")
                     Text("v5.0：WSS → SDP → ICE → H.264 First Frame · 真机通过")
-                    Text("v5.1.8：串流 keyboardLayout override + C3 键盘兼容路径")
-                    Text("后续：Audio quality/stereo → Reconnect → HEVC Main → Main10 → HDR10")
+                    Text("v5.1.9：keyboardLayout 正式修复 + Windows Set-1 稳定键盘路径")
+                    Text("后续：v5.2 Stream Settings Foundation → Reconnect → Gamepad → Audio → HEVC")
                 }
             }
         }

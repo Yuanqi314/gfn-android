@@ -9,7 +9,6 @@ import dev.gfn.input.InputStateTracker
 import dev.gfn.input.ReleaseCommand
 import dev.gfn.stream.InputDiagnostics
 import android.util.Log
-import android.view.KeyEvent
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
@@ -55,7 +54,6 @@ class GfnKeyboardMouseInputController(
     @Volatile private var protocolReady = false
     @Volatile private var inputEnabled = true
     @Volatile private var protocolVersion: Int? = null
-    @Volatile private var keyboardWireMode: GfnKeyboardWireMode = GfnKeyboardWireMode.VK_ONLY_SCAN_ZERO
 
     private var pendingDx = 0.0
     private var pendingDy = 0.0
@@ -74,9 +72,7 @@ class GfnKeyboardMouseInputController(
     private var lastAndroidReportedModifierMask: Int? = null
     private var lastTrackedModifierMask: Int? = null
     private var modifierMismatchCount = 0L
-    private var lastMappedScanCode: Int? = null
-    private var lastWireScanCode: Int? = null
-    private var lastLockKeysState: Int? = null
+    private var lastScanCode: Int? = null
     private var lastHeartbeatNanos = System.nanoTime()
     private var lastDiagnosticNanos = 0L
 
@@ -138,10 +134,6 @@ class GfnKeyboardMouseInputController(
                 return@enqueue
             }
 
-            // C3 OpenNOW parity: synchronize the Caps lock state before the physical key event.
-            // Android reports the updated Caps bit on KEY_UP, matching OpenNOW's event ordering.
-            syncLockKeysStateIfNeeded(trace.metaState)
-
             if (androidReportedModifiers != trackedModifiersForEvent) {
                 modifierMismatchCount += 1
                 Log.w(
@@ -156,14 +148,8 @@ class GfnKeyboardMouseInputController(
             )
 
             // 远端只使用本状态机实际持有的 modifier。Android metaState 只做诊断。
-            if (down) {
-                handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)
-            } else {
-                handleKeyUp(trace, eventEpoch, key, trackedModifiersForEvent)
-                if (trace.keyCode == KeyEvent.KEYCODE_CAPS_LOCK) {
-                    sendCapsLockCompatibilityShift(trace, eventEpoch, trackedModifiersForEvent)
-                }
-            }
+            if (down) handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)
+            else handleKeyUp(trace, eventEpoch, key, trackedModifiersForEvent)
         }
         return true
     }
@@ -294,7 +280,6 @@ class GfnKeyboardMouseInputController(
             if (!dataChannelOpen || !packetSink.isOpen()) return@enqueue
             protocolVersion = version
             encoder.protocolVersion = version
-            lastLockKeysState = null
             neutralizeUncertainRemoteStateBeforeReady()
             protocolReady = true
             GfnInputForensics.logProtocolReady(connectionGeneration, gate.currentEpoch, version)
@@ -306,26 +291,6 @@ class GfnKeyboardMouseInputController(
         inputEnabled = enabled
         if (!enabled) releaseAll(InputReleaseReason.InputDisabled)
         else enqueue { emitDiagnostics(force = true) }
-    }
-
-    fun setKeyboardWireMode(mode: GfnKeyboardWireMode) {
-        enqueue {
-            val fixedMode = GfnKeyboardWireMode.VK_ONLY_SCAN_ZERO
-            val oldMode = keyboardWireMode
-            if (mode != fixedMode) {
-                lastEvent = "C3 wire mode fixed to VK_ONLY_SCAN_ZERO"
-                GfnInputForensics.logWireMode(
-                    connectionGeneration, gate.currentEpoch, oldMode, mode, false, "C3_OPENNOW_FIXED_SCAN_ZERO",
-                )
-                emitDiagnostics(force = true)
-                return@enqueue
-            }
-            keyboardWireMode = fixedMode
-            GfnInputForensics.logWireMode(
-                connectionGeneration, gate.currentEpoch, oldMode, fixedMode, true, "C3_OPENNOW_FIXED_SCAN_ZERO",
-            )
-            emitDiagnostics(force = true)
-        }
     }
 
     fun releaseForFullscreenExit() = releaseAll(InputReleaseReason.FullscreenExit)
@@ -356,7 +321,6 @@ class GfnKeyboardMouseInputController(
         if (!enqueue {
                 tracker.markAllRemoteUnknown()
                 tracker.clearPhysicalState()
-                lastLockKeysState = null
                 pendingDx = 0.0
                 pendingDy = 0.0
                 pendingWheel = 0.0
@@ -365,44 +329,6 @@ class GfnKeyboardMouseInputController(
             }) {
             executor.shutdown()
         }
-    }
-
-    private fun syncLockKeysStateIfNeeded(metaState: Int) {
-        val state = AndroidKeyboardMapper.lockKeysState(metaState)
-        if (lastLockKeysState == state) return
-        val capsOn = metaState and KeyEvent.META_CAPS_LOCK_ON != 0
-        val ok = send(encoder.lockKeysSync(state))
-        Log.i(
-            "GfnLockState",
-            "probe=C3_OPENNOW generation=$connectionGeneration protocol=${protocolVersion ?: encoder.protocolVersion} " +
-                "capsOn=$capsOn rawMeta=0x${metaState.toString(16)} " +
-                "capsOnlyLockState=true state=0x${state.toString(16).padStart(2, '0')} sendAccepted=$ok",
-        )
-        if (ok) lastLockKeysState = state
-    }
-
-    /**
-     * OpenNOW/official-Web CapsLock compatibility path: after CapsLock KEY_UP,
-     * emit a transient VK_LSHIFT DOWN+UP with scan=0. These synthetic events do not
-     * mutate physical-held state because there is no corresponding Android Shift key.
-     */
-    private fun sendCapsLockCompatibilityShift(
-        trace: GfnInputForensics.KeyTrace,
-        eventEpoch: Long,
-        modifiers: Int,
-    ) {
-        val shift = AndroidKeyboardMapper.map(KeyEvent.KEYCODE_SHIFT_LEFT) ?: return
-        val downPacket = encodeKeyboardForWire(true, shift, modifiers)
-        val downOk = sendKeyboard(trace, eventEpoch, true, shift, modifiers, downPacket)
-        val upPacket = encodeKeyboardForWire(false, shift, modifiers)
-        val upOk = sendKeyboard(trace, eventEpoch, false, shift, modifiers, upPacket)
-        lastEvent = "CapsLock C3 synthetic LSHIFT"
-        Log.i(
-            "GfnCapsCompat",
-            "probe=C3_OPENNOW generation=$connectionGeneration inputEpoch=$eventEpoch " +
-                "vk=0x${shift.virtualKey.toString(16).padStart(4, '0')} scan=0x0000 " +
-                "mods=0x${modifiers.toString(16).padStart(4, '0')} downAccepted=$downOk upAccepted=$upOk",
-        )
     }
 
     private fun handleKeyDown(
@@ -414,7 +340,7 @@ class GfnKeyboardMouseInputController(
         val held = HeldKey(key, modifiers)
         if (!tracker.recordPhysicalKeyDown(held)) return
         lastEvent = keyLabel(key) + " DOWN"
-        val packet = encodeKeyboardForWire(true, key, modifiers)
+        val packet = encoder.keyboard(true, key, modifiers)
         val ok = sendKeyboard(trace, eventEpoch, true, key, modifiers, packet)
         if (ok) tracker.markKeyDownAccepted(held) else tracker.markKeyUncertain(held)
         emitDiagnostics(force = true)
@@ -430,7 +356,7 @@ class GfnKeyboardMouseInputController(
         val held = previous ?: HeldKey(key, modifiers)
         val encodedModifiers = previous?.modifiersAtDown ?: modifiers
         lastEvent = keyLabel(key) + " UP"
-        val packet = encodeKeyboardForWire(false, key, encodedModifiers)
+        val packet = encoder.keyboard(false, key, encodedModifiers)
         val ok = sendKeyboard(trace, eventEpoch, false, key, encodedModifiers, packet)
         if (ok) tracker.markKeyUpAccepted(key) else tracker.markKeyUncertain(held)
         emitDiagnostics(force = true)
@@ -485,7 +411,7 @@ class GfnKeyboardMouseInputController(
             plan.forEach { command ->
                 when (command) {
                     is ReleaseCommand.KeyUp -> {
-                        if (send(encodeKeyboardForWire(false, command.held.key, command.held.modifiersAtDown))) {
+                        if (send(encoder.keyboard(false, command.held.key, command.held.modifiersAtDown))) {
                             tracker.clearRemoteKey(command.held.key)
                         } else {
                             tracker.markKeyUncertain(command.held)
@@ -505,7 +431,6 @@ class GfnKeyboardMouseInputController(
         }
         tracker.clearPhysicalState()
         tracker.finishRelease(channelUsable)
-        lastLockKeysState = null
         emitDiagnostics(force = true)
     }
 
@@ -515,7 +440,7 @@ class GfnKeyboardMouseInputController(
         plan.forEach { command ->
             when (command) {
                 is ReleaseCommand.KeyUp -> {
-                    if (send(encodeKeyboardForWire(false, command.held.key, command.held.modifiersAtDown))) {
+                    if (send(encoder.keyboard(false, command.held.key, command.held.modifiersAtDown))) {
                         tracker.clearRemoteKey(command.held.key)
                     }
                 }
@@ -584,13 +509,6 @@ class GfnKeyboardMouseInputController(
         emitDiagnostics()
     }
 
-    private fun encodeKeyboardForWire(down: Boolean, key: GfnKey, modifiers: Int): ByteArray {
-        val packet = encoder.keyboard(down, key, modifiers)
-        val version = protocolVersion ?: encoder.protocolVersion
-        GfnKeyboardWirePolicy.applyInPlace(packet, version, keyboardWireMode)
-        return packet
-    }
-
     private fun send(packet: ByteArray): Boolean {
         generated += 1
         if (!packetSink.isOpen()) {
@@ -613,9 +531,7 @@ class GfnKeyboardMouseInputController(
     ): Boolean {
         generated += 1
         val version = protocolVersion ?: encoder.protocolVersion
-        val wireScan = GfnKeyboardWirePolicy.readWireScan(packet, version)
-        lastMappedScanCode = key.scanCode
-        lastWireScanCode = wireScan
+        lastScanCode = key.scanCode
         val tx = GfnInputForensics.KeyboardTx(
             trace = trace,
             connectionGeneration = connectionGeneration,
@@ -625,9 +541,7 @@ class GfnKeyboardMouseInputController(
             payloadOffset = if (version >= 3) 10 else 0,
             virtualKey = key.virtualKey,
             modifiers = modifiers,
-            wireMode = keyboardWireMode.name,
-            mappedScanCode = key.scanCode,
-            wireScanCode = wireScan,
+            scanCode = key.scanCode,
         )
         if (!packetSink.isOpen()) {
             dropped += 1
@@ -686,9 +600,7 @@ class GfnKeyboardMouseInputController(
                 lastAndroidReportedModifierMask = lastAndroidReportedModifierMask,
                 lastTrackedModifierMask = lastTrackedModifierMask,
                 modifierMismatchCount = modifierMismatchCount,
-                keyboardWireMode = keyboardWireMode.name,
-                lastMappedScanCode = lastMappedScanCode,
-                lastWireScanCode = lastWireScanCode,
+                lastScanCode = lastScanCode,
                 releaseCount = releaseCount,
                 lastEvent = lastEvent,
                 lastReleaseReason = lastReleaseReason?.name,

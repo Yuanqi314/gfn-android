@@ -1,0 +1,22 @@
+v5.1.9 Keyboard Stable Baseline - static checks
+
+PASS  production source contains no:
+      LOCK_KEYS_SYNC / lockKeysSync
+      GfnKeyboardWireMode / GfnKeyboardWirePolicy
+      setKeyboardWireMode
+      GfnCapsCompat / GfnLockState
+      C2_ISO / C3_OPENNOW
+
+PASS  GfnKeyboardWireMode.kt deleted
+PASS  verify-wire-ab.sh deleted
+PASS  Fullscreen Wire A/B UI removed
+PASS  CapsLock stable mapping = VK 0x14 / Set-1 0x3A
+PASS  controller key DOWN/UP directly uses GfnInputPacketEncoder.keyboard()
+PASS  releaseAll/uncertain neutralization directly use GfnInputPacketEncoder.keyboard()
+PASS  generic GfnInputForensics retained
+PASS  InputDiagnostics retains final Set-1 scan without experiment wire-mode state
+PASS  keyboard layout default remains en-US
+PASS  Session create/claim/persist paths share frozen keyboardLayout snapshot
+PASS  CloudMatch create/claim still carry request.keyboardLayout
+
+Full Android Gradle compile was not claimed in this environment because Gradle 9.5.0 is not cached and the wrapper requires external download.
