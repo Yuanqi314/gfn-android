@@ -18,6 +18,13 @@ import dev.gfn.core.model.SessionClaimRequest
 import dev.gfn.core.model.SessionCreateRequest
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.identity.GfnClientIdentity
+import dev.gfn.input.GfnInputHandshake
+import dev.gfn.input.GfnInputPacketEncoder
+import dev.gfn.input.GfnKey
+import dev.gfn.input.HeldKey
+import dev.gfn.input.InputEpochGate
+import dev.gfn.input.InputStateTracker
+import dev.gfn.input.ReleaseCommand
 import dev.gfn.network.HttpRequest
 import dev.gfn.network.HttpResponse
 import dev.gfn.network.HttpTransport
@@ -248,12 +255,67 @@ fun main() {
     println("=== GFN Android 第五版核心验证 ===")
     verifyV4CloudMatchLifecycle()
     verifyV5SignalingAndSdp()
+    verifyV51KeyboardMouseProtocol()
     verifyStaleCreateCleanup()
     verifyDeviceFlow()
     verifySessionRestoreAfterUnauthorized()
     verifyContentApis()
 }
 
+
+private fun verifyV51KeyboardMouseProtocol() {
+    println("\n[v5.1 Keyboard / Mouse]")
+
+    check(GfnInputHandshake.parseProtocolVersion(byteArrayOf(0x0e, 0x02, 0x03, 0x00)) == 3)
+    check(GfnInputHandshake.parseProtocolVersion(byteArrayOf(0x0e, 0x02)) == 2)
+    check(GfnInputHandshake.parseProtocolVersion(byteArrayOf(0x01, 0x00)) == null)
+
+    val fixedTs = 0x0102030405060708L
+    val encoder = GfnInputPacketEncoder(protocolVersion = 2, timestampMicros = { fixedTs })
+    val w = GfnKey(virtualKey = 0x57, scanCode = 0x11)
+    val ctrl = GfnKey(virtualKey = 0xA2, scanCode = 0x1D, modifierBit = 0x0002)
+    val wDown = encoder.keyboard(down = true, key = w, modifiers = 0x0002)
+    check(wDown.size == 18)
+    check(wDown.sliceArray(0..3).contentEquals(byteArrayOf(3, 0, 0, 0)))
+    check((wDown[4].toInt() and 0xff) == 0 && (wDown[5].toInt() and 0xff) == 0x57)
+    check((wDown[6].toInt() and 0xff) == 0 && (wDown[7].toInt() and 0xff) == 0x02)
+    check((wDown[8].toInt() and 0xff) == 0 && (wDown[9].toInt() and 0xff) == 0x11)
+
+    encoder.protocolVersion = 3
+    val mouse = encoder.mouseMove(dx = 14, dy = -7)
+    check(mouse.size == 34)
+    check((mouse[0].toInt() and 0xff) == 0x23)
+    check((mouse[9].toInt() and 0xff) == 0x21)
+    check((mouse[10].toInt() and 0xff) == 0 && (mouse[11].toInt() and 0xff) == 22)
+    check(mouse.sliceArray(12..15).contentEquals(byteArrayOf(7, 0, 0, 0)))
+
+    val tracker = InputStateTracker()
+    val ctrlHeld = HeldKey(ctrl, 0x0002)
+    // 模拟 W 先按下、随后 Ctrl 才按下；releaseAll 时 W UP 仍必须携带当前 Ctrl mask。
+    val wHeld = HeldKey(w, 0x0000)
+    tracker.markKeyDownAccepted(wHeld)
+    tracker.markKeyDownAccepted(ctrlHeld)
+    tracker.markMouseDownAccepted(1)
+    val release = tracker.buildReleasePlan()
+    check(release.size == 3)
+    check(release[0] == ReleaseCommand.KeyUp(wHeld.copy(modifiersAtDown = 0x0002)))
+    check(release[1] == ReleaseCommand.MouseButtonUp(1))
+    check(release[2] == ReleaseCommand.KeyUp(ctrlHeld))
+    tracker.clearRemoteKey(w)
+    tracker.clearRemoteMouseButton(1)
+    tracker.clearRemoteKey(ctrl)
+    tracker.finishRelease(channelUsable = true)
+    check(tracker.buildReleasePlan().isEmpty())
+
+    val epoch = InputEpochGate(10)
+    val old = epoch.currentEpoch
+    check(epoch.isCurrent(old))
+    check(epoch.advance() == 11L)
+    check(!epoch.isCurrent(old))
+    check(epoch.isCurrent(11L))
+
+    println("Handshake → packet framing → release 顺序 → epoch stale rejection 验证通过")
+}
 
 private fun verifyV5SignalingAndSdp() {
     println("\n[v5 Signaling / SDP]")

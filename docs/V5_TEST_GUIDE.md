@@ -1,198 +1,143 @@
-## v5.0.1 首要 Gate：WebSocket Upgrade
-
-升级后第一项只验证 WSS，不先判断 SDP/ICE：
-
-```text
-旧 v5.0：HTTP 400 Bad Request，WSS RX/TX 0/0
-
-v5.0.1 目标：
-HTTP 101 Switching Protocols
-→ WSS connected
-→ TX peer_info > 0
-→ RX peer_info/offer/heartbeat > 0
-```
-
-握手请求必须包含：
-
-```text
-Sec-WebSocket-Protocol: x-nv-sessionid.<sessionId>
-Origin: https://play.geforcenow.com
-User-Agent: GFN-PC browser UA
-```
-
-如果仍然返回 HTTP 400，请只提供：HTTP code/message、WSS endpoint host/path、RX/TX 计数，不要提供 token、完整 SDP、ICE password 或 TURN credential。
-
-# v5.0 真机测试指南
+# v5.1 真机测试指南
 
 ## 前提
 
-必须先获得一个真实 `Claimed` Session，且 UI 已显示真实 signaling URL。
+v5.0 H.264 画面已经真机成功。v5.1 只判断输入，不重新调整 CloudMatch/WSS/SDP/ICE/H.264。
 
-不要同时修改 CloudMatch 参数、HDR、HEVC 或分辨率。
+## 1. 构建
 
-## Test 1 — Android 构建
+Android Studio：
 
 ```text
-Android Studio Sync
+Sync
 → :app assembleDebug
-→ 安装真机
+→ 真机安装
 ```
 
-如果编译失败，保留**第一条 Kotlin/Java compiler error**，不要只提供最后一行 Gradle FAILED。
+如果失败，只保留第一条 Kotlin/Java compiler error。
 
-## Test 2 — WSS
+## 2. 进入全屏
 
-在 Claimed Session 点击：
+真实 Session 到可播放状态后进入：
 
 ```text
-连接 WebRTC H.264
+进入全屏键鼠
 ```
+
+期望：系统栏隐藏、视频继续播放；Input HUD 能看到 DataChannel / Protocol / Pointer Capture / RemoteState。
+
+## 3. DataChannel handshake
 
 期望：
 
 ```text
-OpeningSignaling
-→ AwaitingOffer
+input_channel_v1 = OPEN
+Protocol = v2 或 v3（以服务器实际为准）
+protocolReady = true
 ```
 
-Diagnostics：
+如果只有 OPEN 而 Protocol 未出现，不应发送键鼠；提供 Input HUD 状态即可。
+
+## 4. Keyboard
+
+依次测试：
 
 ```text
-WSS connected = 是
-TX last = peer_info
+W A S D
+Space
+Enter
+Esc
+Shift
+Ctrl
+Alt
+Tab
+Arrow Keys
 ```
 
-如果失败，只记录：
+验证 DOWN/UP 都能在远端产生对应动作。Esc 应传给游戏，不用于本地 Overlay。
+
+## 5. releaseAll 防卡键
+
+在远端持续按住 W，分别触发：
 
 ```text
-异常类型
-TLS/HTTP 状态
-host
+Activity pause
+Window focus lost
+打开本地 Overlay
+主动退出全屏
+WebRTC disconnect（可控场景）
+Session End
 ```
 
-不要关闭证书校验，也不要先套用 Apple 的 TLS workaround。
+期望：远端角色停止，不出现永久向前。
 
-## Test 3 — Offer
+HUD 应看到 held keys 归零；如果 DataChannel 已经先关闭，允许 `RemoteState=UNKNOWN`，不能要求假装 ASSUMED_SYNCED。
 
-期望：
+## 6. Pointer Capture
+
+鼠标捕获后测试相对移动。然后在仍保持窗口焦点时主动失去 Pointer Capture：
 
 ```text
-RX offer
-Offer = 是
-Offer H264 PT = 非空
+鼠标按钮必须 release
+relative motion / wheel accumulator 清空
+KeyboardActive 仍可继续
 ```
 
-如果 H.264 PT 为空，立即停止；v5.0 不回退 HEVC/AV1。
+例如 W 保持按下时失去 Pointer Capture，不应立即产生 W UP；之后 Window focus lost 才应释放 W。
 
-## Test 4 — Answer / NVST
+## 7. Mouse
 
-期望：
+验证：
 
 ```text
-Answer = 是
-Answer H264 PT = 非空
-ICE ufrag/pwd = 是/是
-DTLS fingerprint = 是
-TX last = answer 或 ice
+Left / Right / Middle
+Wheel Up / Down
+Relative X/Y
 ```
 
-不要提供完整 SDP、ICE password、TURN credential；Diagnostics 只需存在性与 PT 列表。
+如果 Y 方向反了，请只回报“上下反向”，不要改 GFN packet framing；修正应局限在 Android mouse mapper。
 
-## Test 5 — ICE
-
-真实环境已观察：
+## 8. 重复 lifecycle 幂等
 
 ```text
-Server ICE entries = 0
+W DOWN
+→ onPause
+→ focus lost
+→ pointer capture lost
 ```
 
-所以重点看：
+不应产生重复有效 W UP，也不应闪退。
+
+## 9. 主动 End
+
+按住 W 后执行 End Session：
 
 ```text
-Effective ICE servers
-Local candidates
-Remote signaling candidates
-Injected host candidates
-ICE connection state
-Peer connection state
-```
-
-理想：
-
-```text
-CHECKING → CONNECTED/COMPLETED
-```
-
-如果失败，请同时给出两条真实 ConnectionInfo 的：
-
-```text
-usage
-host
-port
-resourcePath
-```
-
-但不要给 token/TURN password。
-
-## Test 6 — Video
-
-期望顺序：
-
-```text
-First RTP packet = 是
-Remote video track = 是
-First surface frame = 是
-```
-
-如果：
-
-```text
-ICE Connected + First RTP=否
-```
-
-优先看 RTP/服务器 media endpoint。
-
-如果：
-
-```text
-First RTP=是 + Remote Track=是 + First Frame=否
-```
-
-优先看 H.264 decoder / Surface。
-
-如果：
-
-```text
-FIRST FRAME=是
-```
-
-记录分辨率，即完成 v5.0 首要 Gate。
-
-## Test 7 — Cleanup
-
-测试结束务必：
-
-```text
-断开 WebRTC
+freeze input
+→ W UP submitted
+→ local DataChannel drain/barrier
 → End Session
 ```
 
-v4 的 DELETE + active-session GET 复核仍建议单独补测。
+没有 application-level ACK，因此只能验证本地 packet submission/drain 和远端实际行为，不能仅靠 `send=true` 宣称服务器已处理。
 
-## 回报最小信息
+## 建议回报
 
 ```text
-媒体状态
-WSS connected
-RX/TX count + last type
-Offer codecs + H264 PT
-Answer codecs + H264 PT
-Server/Effective ICE count
-Local/Remote/Injected candidate count
-ICE state
-PeerConnection state
-First RTP
-Remote Track
-First Frame + Resolution
-错误文本（若有）
+Protocol v?
+DataChannel OPEN/CLOSED
+KeyboardActive
+MouseActive
+PointerCapture
+RemoteState
+Physical Held / Remote Assumed
+Generated / Submitted / Rejected / Dropped
+最后输入事件
+最后 release reason
+
+以及真机：
+WASD 是否生效
+鼠标按钮/滚轮是否生效
+鼠标 X/Y 是否方向正确
+pause/focus/overlay 后是否有卡键
 ```

@@ -1,221 +1,188 @@
-# 第五版架构
+# v5.1 架构
 
 ## 总边界
 
 ```text
-Compose UI
-≠ Auth
-≠ GFN Content
-≠ CloudMatch Session
-≠ GFN Signaling Envelope
-≠ WebRTC PeerConnection
-≠ Video Decoder / Surface
+Auth / Content             [soft-freeze]
+CloudMatch / Session       [soft-freeze]
+GFN Signaling / WebRTC     [v5.0 H.264 真机成功，soft-freeze]
+Input Protocol             [v5.1]
+Android Input Capture      [v5.1]
+Compose Fullscreen UI      [v5.1]
 ```
 
-v5 不把 signaling JSON 塞进 CloudMatch，也不让 WebRTC 重新创建 Session。
+v5.1 不因为输入问题修改 CloudMatch、WSS、SDP、ICE、H.264 decoder 或 Surface。
 
 ## 调用链
 
 ```text
-GfnAndroidApp
-│
-├── AuthController                 [soft-freeze]
-├── GfnContentController           [soft-freeze]
-├── GfnSessionController           [v4 soft-freeze]
-│   └── Claimed SessionInfo
-│
-└── GfnStreamingController         [v5]
-    └── GfnWebRtcEngine
-        ├── GfnSignalingClient     OkHttp WebSocket transport
-        ├── stream-signaling       envelope / SDP / NVST SDP
-        ├── PeerConnectionFactory  direct org.webrtc API
-        └── GfnVideoSurfaceView    SurfaceViewRenderer
-```
-
-## 输入契约
-
-`GfnWebRtcEngine` 只接受：
-
-```text
-SessionInfo.isReadyStatus == true
-signalingUrl != null
-```
-
-并强制：
-
-```text
-H264 / SDR8 / 1920x1080 / 60 / Stereo
-```
-
-它不调用 CloudMatch Create/Claim。
-
-## Signaling 状态
-
-```text
-Idle
-↓
-OpeningSignaling
-↓
-AwaitingOffer
-↓
-NegotiatingSdp
-↓
-IceChecking
-↓
-Connected
-↓
-FirstFrame
-```
-
-失败：
-
-```text
-Failed(reason)
-```
-
-用户主动断开：
-
-```text
-Closed
-```
-
-## WebSocket
-
-```text
-{signalingUrl}/sign_in
-  peer_id=random
-  version=2
-  peer_role=1
-  pairing_id=sessionId
-```
-
-目前 Android 使用标准 TLS + OkHttp HTTP/1.1。不会在没有真机错误证据时绕过证书验证。
-
-## Signaling envelope
-
-```text
-root
-├── peer_info
-├── ackid / ack
-├── hb
-└── peer_msg
-    ├── from
-    ├── to
-    └── msg = JSON string
-        ├── offer + sdp
-        └── candidate + sdpMid + sdpMLineIndex
-```
-
-Answer：
-
-```text
-peer_msg.msg = {
-  type: answer,
-  sdp: <WebRTC Answer>,
-  nvstSdp: <GFN capability descriptor>
-}
-```
-
-## SDP 原则
-
-1. 不先修改服务器 Offer 的 codec 列表。
-2. 有明确 media IP 时只修正 `0.0.0.0/127.0.0.1` 占位地址。
-3. `setRemoteDescription(Offer)`。
-4. libwebrtc 生成 Answer。
-5. 只在 Answer 侧保留 H.264 + 其 RTX/FEC repair PT。
-6. 注入带宽 hints。
-7. `setLocalDescription(Answer)`。
-8. 从本地 Answer 读取 ICE credential / DTLS fingerprint，构造 NVST SDP。
-
-## ICE
-
-服务端 ICE 与有效 ICE 分开：
-
-```text
-Server ICE entries     = SessionInfo.iceServers
-Effective ICE servers  = 实际 RTCConfiguration
-```
-
-v5.0 不启用公共 STUN fallback。
-
-GFN Offer 可能不带 `a=candidate`。Answer 发出后，v5 根据 Session 数据构造远端 host candidate：
-
-```text
-media connection priority:
-usage 2
-→ usage 17
-→ usage 14 highest valid port
-```
-
-端口来源：
-
-```text
-selected ConnectionInfo.port
-+
-Offer first video m-line port
-```
-
-IP 来源：
-
-```text
-selected media ConnectionInfo
-resolved server
-sessionControlIp
-```
-
-只接受可以严格解析成 IPv4 的 dotted/dash-encoded host；不猜其他 host 结构。
-
-## DataChannel
-
-为了让生成的 Answer 与 GFN 预期的 application m-line 保持一致，收到 Offer 后、创建 Answer 前建立：
-
-```text
-input_channel_v1                  ordered
-input_channel_partially_reliable unordered / lifetime 来自 Offer
-stats_channel                     unordered / no retransmit
-```
-
-v5.0 **不实现输入协议**，只建立协商骨架。真实 input packet 在后续 v5.x。
-
-## Video
-
-```text
-RtpReceiver
-↓
-first video packet observer
-↓
-VideoTrack
-↓
-GfnVideoSurfaceView
-↓
-SurfaceViewRenderer
-↓
-onFirstFrameRendered
-```
-
-当前解码工厂：`DefaultVideoDecoderFactory`。
-
-具体真机选择：
-
-```text
-hardware MediaCodec
-或
-software decoder
-```
-
-当前不确定，必须用真实 stats/设备结果确认。
-
-## 后续 Main10/HDR
-
-未来不会把 HDR 解码逻辑塞进 v5 H.264 renderer：
-
-```text
-stream-webrtc       H264/HEVC bring-up
+FullscreenStreamScreen
+        ↓
+GfnStreamingController
+        ↓
+GfnWebRtcEngine
+        ├── GfnVideoSurfaceView
+        │       ├── KeyEvent
+        │       ├── MotionEvent
+        │       └── Pointer Capture
         │
-        └── future direct decoder boundary
-            → MediaCodec HEVC Main10
-            → SurfaceView
-            → HDR10
+        └── GfnKeyboardMouseInputController
+                ├── AndroidKeyboardMapper
+                ├── InputStateTracker
+                ├── InputEpochGate
+                ├── GfnInputPacketEncoder
+                └── PacketSink
+                        ↓
+                  input_channel_v1
 ```
 
-Session 与 Signaling API 保持不变。
+`stream-input` 不依赖 Android/WebRTC，负责 GFN 输入 packet、handshake parser、held-state 与 release plan。`stream-webrtc` 负责 Android 事件和 WebRTC DataChannel transport。
+
+## Server handshake
+
+```text
+input_channel_v1 OPEN
+↓
+等待 server message
+↓
+firstWord == 526 (0x020e)
+  version = bytes[2..3] LE
+或 bytes[0] == 0x0e
+  version = firstWord
+↓
+ordered queue 中 neutralize uncertain state
+↓
+protocolReady = true
+```
+
+其他 DataChannel message 不当 handshake；客户端不 echo handshake。
+
+## GFN packet framing
+
+协议类型：
+
+```text
+2   heartbeat
+3   key down
+4   key up
+7   mouse relative
+8   mouse button down
+9   mouse button up
+10  mouse wheel
+```
+
+v2 keyboard：
+
+```text
+u32 LE type
+u16 BE virtual key
+u16 BE modifiers
+u16 BE Windows Set-1 scan code
+u64 BE timestamp(us)
+```
+
+v3 single-event 包增加 `0x23 + timestamp + 0x22` wrapper；mouse relative 使用 `0x21 + body length` wrapper。
+
+## Android keyboard mapping
+
+绝不直接使用 `KeyEvent.scanCode` 作为 Windows scan code。映射链：
+
+```text
+Android KEYCODE_*
+→ AndroidKeyboardMapper
+→ GfnKey(virtualKey, windowsSet1ScanCode, modifierBit)
+```
+
+支持 A-Z、0-9、Esc/Tab/Space/Enter、符号键、F1-F12、方向/导航、数字小键盘、左右 Ctrl/Shift/Alt/Meta。
+
+## Keyboard / Mouse Active 分离
+
+```text
+KeyboardActive =
+    streamConnected
+    && lifecycleResumed
+    && windowFocused
+    && dataChannelOpen
+    && protocolReady
+    && inputEnabled
+    && !overlayOpen
+
+MouseActive = KeyboardActive && pointerCaptured
+```
+
+Pointer Capture lost 只触发 mouse-only suspension；不会推进全局 input epoch。
+
+## ordered queue + epoch
+
+所有 packet/state mutation 进入单线程 ScheduledExecutor。
+
+全量 suspension：
+
+```text
+事件线程：inputEpoch++
+↓
+ordered queue：releaseAll(epoch)
+```
+
+每个用户输入事件在产生时捕获 `eventEpoch`，进入 queue 后再次检查；epoch 已变化则丢弃 stale event。
+
+## releaseAll(reason)
+
+触发点：Activity pause/destroy、Window focus lost、WebRTC disconnect、DataChannel close、Overlay open、Session End/Switch、Input disable、Fullscreen exit、Reconnect、User disconnect。
+
+确定化释放顺序：
+
+```text
+普通键 UP
+→ 鼠标按钮 UP
+→ Modifier UP
+→ 清 relative motion
+→ 清 wheel accumulator
+```
+
+Remote state 分为：
+
+```text
+ASSUMED_SYNCED
+RELEASING
+UNKNOWN
+```
+
+没有 application ACK，所以命名为 ASSUMED，而不是绝对 SYNCED。
+
+## transport 已关闭
+
+不能发送真实 UP 时：
+
+```text
+physical held -> clear
+remote assumed -> uncertain
+RemoteState -> UNKNOWN
+```
+
+重新收到 input handshake 时，先尝试对 uncertain held snapshot 补 UP；完成后才放开 `protocolReady`。
+
+## 主动断开
+
+```text
+freeze admission
+→ epoch++
+→ releaseAll
+→ ordered queue barrier
+→ bounded bufferedAmount drain (120ms)
+→ close PeerConnection / Session action
+```
+
+buffer drain 只说明本地 DataChannel 缓冲下降，不代表服务器/游戏 ACK。
+
+## 鼠标
+
+- Pointer Capture 下使用 `AXIS_RELATIVE_X/Y`。
+- 消费 `MotionEvent` historical batched relative samples，再消费 current sample。
+- motion/wheel 做 accumulator/coalescing，避免高 polling mouse 把离散 Key UP/Mouse UP 堵在队列后面。
+- mouse button：Left=1、Middle=2、Right=3。
+- wheel 当前按参考行为进行方向/倍率转换，最终以真机为准。
+
+## JNI callback 安全
+
+DataChannel Observer 是 native→Java/JNI 回调入口。v5.1 的 `onStateChange/onMessage` 不允许 Kotlin 异常向外逃逸：输入握手解析失败、executor 已 shutdown 等情况只记录/忽略，避免再次触发 WebRTC `HandleException → SIGABRT` 类型故障。

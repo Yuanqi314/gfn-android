@@ -1,0 +1,69 @@
+GFN Android v5.1 targeted validation
+=====================================
+
+V5_WEBRTC_PUBLIC_ABI=PASS
+  api("io.github.webrtc-sdk:android:144.7559.09") retained
+
+V5_WEBRTC_NETWORK_PERMISSIONS=PASS
+  ACCESS_NETWORK_STATE / CHANGE_NETWORK_STATE retained
+
+V51_INPUT_ARCHITECTURE=PASS
+V51_RELEASE_ALL_GUARDS=PASS
+
+STREAM_INPUT_COMPILE=PASS
+V51_INPUT_FIXTURE=PASS
+  - server input handshake v2/v3
+  - keyboard packet framing
+  - v3 mouse wrapper
+  - deterministic release order
+  - empty release plan state
+  - epoch stale rejection
+  - remote UNKNOWN tracking
+
+V51_CONTROLLER_RELEASE_FIXTURE=PASS
+  - W DOWN -> Activity pause -> W UP
+  - repeated focus loss -> no duplicate W UP
+  - Pointer Capture lost -> mouse UP only; keyboard remains active
+  - DataChannel closed -> local clear + RemoteState UNKNOWN
+  - SessionEnd -> release packet submitted before barrier callback
+  - bounded local bufferedAmount drain
+
+V51_STREAM_WEBRTC_STUB_COMPILE=PASS
+V51_APP_STREAM_CONTROLLER_COMPILE=PASS
+V51_MODULE_BOUNDARY_COMPILE=PASS (targeted/staged v5.1 dependency chain)
+GFN_CLOUDMATCH_ISOLATED_COMPILE=PASS (prior isolated check in this v5.1 development run)
+
+FULL_VERIFY_CORE=TIMEOUT
+  most recent verify-core.sh reached:
+    static guards PASS
+    core-model PASS
+    core-network PASS
+    gfn-identity PASS
+    gfn-auth PASS
+    gfn-account PASS
+    gfn-games PASS
+    gfn-session PASS
+    diagnostics PASS
+    then hit the container timeout while compiling stream-core
+  no Kotlin compiler error was present in the captured log.
+  stream-core / stream-input / stream-webrtc were also compiled separately in targeted checks above.
+
+IMPORTANT
+---------
+- No Android SDK is installed in this container.
+- API-shaped/stub compilation is not equivalent to a real AGP + Android SDK + libwebrtc AAR build.
+- Keyboard/mouse remote-game behavior is not yet real-device verified.
+
+FINAL_POST_HARDENING_CHECKS
+---------------------------
+V51_STREAM_WEBRTC_STUB_COMPILE=PASS
+V51_CONTROLLER_RELEASE_FIXTURE=PASS
+V51_APP_STREAM_CONTROLLER_COMPILE=PASS
+V51_UI_SYNTAX_SCAN=PASS
+  - server handshake callback re-syncs DataChannel current OPEN state before protocolReady
+  - video InputListener binding re-syncs current window focus / pointer capture
+  - Overlay open freezes input synchronously before local overlay becomes active
+V51_RELEASE_MODIFIER_MASK_FIXTURE=PASS
+  - ordinary key UP uses currently-held modifier mask during releaseAll
+V51_VIDEO_OUTPUT_IDENTITY_UNBIND=PASS
+  - stale normal-card Surface cannot unbind a newer fullscreen Surface

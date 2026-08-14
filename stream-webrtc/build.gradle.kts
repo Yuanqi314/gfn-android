@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":core-model"))
     implementation(project(":gfn-identity"))
     implementation(project(":stream-core"))
+    implementation(project(":stream-input"))
     implementation(project(":stream-signaling"))
 
     implementation("com.squareup.okhttp3:okhttp:5.3.0")

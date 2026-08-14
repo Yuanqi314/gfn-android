@@ -28,6 +28,7 @@ include(
     ":gfn-session",
     ":diagnostics",
     ":stream-core",
+    ":stream-input",
     ":stream-signaling",
     ":stream-webrtc",
     ":protocol-cli",

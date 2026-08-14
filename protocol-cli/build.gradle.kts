@@ -22,4 +22,5 @@ dependencies {
     implementation(project(":gfn-cloudmatch"))
     implementation(project(":diagnostics"))
     implementation(project(":stream-signaling"))
+    implementation(project(":stream-input"))
 }

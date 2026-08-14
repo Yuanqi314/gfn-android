@@ -1,270 +1,179 @@
-# GFN Android Lab · 第五版（v5.0.1）
+# GFN Android Lab · v5.1 全屏键鼠
 
-> **v5.0.1 握手修复**：真机 v5.0 已到 GFN signaling HTTP endpoint，但 WebSocket Upgrade 返回 `HTTP 400 Bad Request`。取证确认 v5.0 Android 请求漏发了 GFN 会话 WebSocket 子协议 `x-nv-sessionid.<sessionId>`，同时未显式发送 CloudNow 当前成功实现中的 `Origin` 与 GFN-PC `User-Agent`。v5.0.1 已补齐三项；CloudMatch/Claim/SDP/ICE 行为未改。
-这是一个独立 Android GeForce NOW 客户端实验工程。官方客户端只作为协议取证参考，CloudNow 作为已经实现的行为/架构参考；Android 端保持自己的模块边界，不修改 NVIDIA 官方 APK。
+这是一个独立 Android GeForce NOW 客户端实验工程。v5.0 已在真实 Android 设备完成 **GFN WSS → SDP → ICE → H.264 RTP → 解码 → Surface 画面**；v5.1 在不修改已验证媒体链的前提下，只新增 **全屏串流页面、键盘、鼠标、Pointer Capture 与输入失焦安全状态机**。
 
-> 仅使用用户自己的合法 GeForce NOW 账号，不修改订阅等级、账号 entitlement 或服务端授权。
+> 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## 已有真机基础
-
-当前用户已在真实 Android 设备确认：
+## 当前真机里程碑
 
 ```text
-Device Flow 登录 / 重启恢复       ✅
-用户名 / 邮箱                     ✅
-会员 / Subscription               ✅
-Library / Catalog                 ✅
-Server-side Search                ✅
-Game Detail                       ✅
-CloudMatch Create / Provision     ✅
-Resolved Server / Signaling URL   ✅
-Claim / RESUME PUT                ✅
+Auth / restart restore           ✅
+Membership                       ✅
+Library / Catalog                ✅
+Search / Game Detail             ✅
+CloudMatch / Claim / RESUME      ✅
+WSS / Offer / Answer             ✅
+ICE / PeerConnection             ✅
+H.264 RTP / Decode / Surface     ✅
+
+v5.1 Keyboard / Mouse            ⏳ 待真机验证
 ```
 
-因此 Auth、Content 与 v4 Session Create/Claim 进入 soft-freeze。没有新的真实协议证据，不因为 v5 媒体问题回头改这些层。
+真实媒体测试曾出现：`ConnectionInfo=2`、两条 `usage=14`、`Server ICE entries=0`，但 H.264 画面仍成功。因此 v5.1 不为了 `Server ICE=0` 改动已经成功的 ICE/host-candidate 路径。
 
-仍未独立真机确认：
+## v5.1 唯一范围
 
 ```text
-Double Ready 日志                 ⏳
-DELETE + active-session 复核      ⏳
-Cancel cleanup 真机               ⏳
-Process-death reconcile           ⏳
+FullscreenStreamScreen
+        ↓
+GfnVideoSurfaceView
+        ↓
+Android KeyEvent / MotionEvent
+        ↓
+GfnKeyboardMouseInputController
+        ↓
+InputStateTracker
+        ↓
+GfnInputPacketEncoder
+        ↓
+input_channel_v1
 ```
 
-这些保留为 v4.x 加固项，不改变 v5.0 的媒体边界。
-
-## v5.0 唯一目标
+只实现：
 
 ```text
-Existing Claimed Session
-↓
-GFN WSS /nvst/sign_in
-↓
-peer_info / offer / answer / ICE
-↓
-PeerConnection
-↓
-H.264 RTP
-↓
-libwebrtc decoder
-↓
-SurfaceViewRenderer
-↓
-FIRST FRAME
+Keyboard DOWN / UP
+Modifiers
+Mouse buttons
+Mouse wheel
+Relative mouse
+Pointer Capture
+releaseAll(reason)
+Input diagnostics
 ```
 
-v5.0 固定：
+本版明确不做：
 
 ```text
-Codec       H.264
-Color       SDR8
-Resolution  1920x1080
-FPS         60
-Audio       Stereo（仅协商；v5.0 不验证播放）
-HEVC        OFF
-Main10      OFF
-HDR10       OFF
-AV1         OFF
-120 FPS     OFF
-5.1         OFF
+Gamepad / Touch Controller
+Audio
+HEVC / Main10 / HDR
+复杂 Overlay
 ```
 
-## v5 新模块
+## 模块
 
 ```text
-gfn-android
-├── app                 Compose UI + Controller
-├── core-model          Account/Game/Session/ICE/Connection 模型
-├── core-network        HTTP / JSON / 日志脱敏
-├── gfn-auth            Device Flow / refresh / client_token / re-bind
-├── gfn-account         serverInfo / VPC / MES
-├── gfn-games           Catalog / Library / Search / Detail
-├── gfn-identity        Windows/GFN-PC identity + locale
-├── gfn-cloudmatch      CloudMatch Create/Poll/Claim/Delete [soft-freeze]
-├── gfn-session         generation / Queue / Ready / cleanup [soft-freeze]
-├── stream-core         媒体状态与诊断模型
-├── stream-signaling    纯 JVM GFN WSS envelope / SDP / NVST SDP
-├── stream-webrtc       Android OkHttp WSS + libwebrtc H.264 + SurfaceViewRenderer
-├── diagnostics         诊断模型
-└── protocol-cli        脱敏 fixture 回归
+:app
+:core-model
+:core-network
+:gfn-auth
+:gfn-account
+:gfn-games
+:gfn-cloudmatch
+:gfn-identity
+:gfn-session
+:diagnostics
+:stream-core
+:stream-input       ← v5.1 新增纯 Kotlin GFN Input 协议/状态模型
+:stream-signaling
+:stream-webrtc      ← Android 输入采集 + DataChannel transport
+:protocol-cli
 ```
 
-核心边界保持：
+`stream-webrtc` 继续使用：
+
+```kotlin
+api("io.github.webrtc-sdk:android:144.7559.09")
+```
+
+不能改回 `implementation(...)`：公开的 `GfnVideoSurfaceView` 继承 WebRTC 的 `SurfaceViewRenderer`，WebRTC 类型属于模块公共 ABI。
+
+## DataChannel Gate
+
+`input_channel_v1` 的 `OPEN` 不代表可以发送键鼠。v5.1 等待服务器第一条 input handshake：
 
 ```text
-GFN Session
-≠ GFN Signaling Envelope
-≠ WebRTC PeerConnection
-≠ Decoder
-≠ Compose UI
+DataChannel OPEN
+↓
+server handshake
+↓
+parse protocol version
+↓
+neutralize uncertain remote state
+↓
+protocolReady = true
+↓
+KeyboardActive / MouseActive
 ```
 
-## GFN Signaling
+不会 echo server handshake。
 
-当前按 CloudNow 已验证行为实现：
+## releaseAll(reason)
+
+统一入口覆盖：
 
 ```text
-wss://<resolved-server>/nvst/sign_in
-?peer_id=<random-peer-name>
-&version=2
-&peer_role=1
-&pairing_id=<session-id>
+Activity pause / destroy
+Window focus lost
+WebRTC disconnect
+DataChannel close
+Overlay open
+Session End / switch
+Input disable
+Fullscreen exit
+Reconnect / user disconnect
 ```
 
-连接后：
+Pointer Capture lost 是特例：它只关闭 `MouseActive`，释放鼠标按钮并清 motion/wheel；如果窗口仍有焦点，不释放键盘。
+
+全量释放使用：
 
 ```text
-TX peer_info
-↕ heartbeat / ack
-RX peer_msg.msg { type=offer, sdp=... }
-RX peer_msg.msg { candidate=... }
-TX peer_msg.msg { type=answer, sdp=..., nvstSdp=... }
-TX local ICE candidate
+freeze admission
+→ input epoch++
+→ ordered queue
+→ ordinary key UP
+→ mouse button UP
+→ modifier UP
+→ clear mouse/wheel accumulator
+→ queue barrier / bounded transport drain（主动断开）
 ```
 
-Diagnostics 只记录 envelope 类型、数量和状态，不打印完整 SDP credential、TURN password、Authorization 或 token。
+如果 DataChannel 已关闭，本地只能清状态并把远端标为 `UNKNOWN`；不能宣称远端已经收到 UP。
 
-Android 首先使用标准 TLS 验证和 HTTP/1.1 WebSocket Upgrade。不会因为 Apple 参考实现存在平台特定 TLS 处理，就直接在 Android 关闭证书验证。
-
-## WebRTC / H.264
-
-收到真实 Offer 后才创建 PeerConnection。
+## 输入状态分离
 
 ```text
-Offer
-↓
-确认 H.264 PT 存在
-↓
-修正明确的 0.0.0.0 / 127.0.0.1 media 地址占位（有真实 media IP 时）
-↓
-setRemoteDescription
-↓
-createAnswer
-↓
-只在 Answer 收敛 H.264 + RTX/FEC
-↓
-注入带宽 hint
-↓
-setLocalDescription
-↓
-提取本地 ICE ufrag / pwd / DTLS fingerprint
-↓
-构造 NVST SDP（bitDepth=8）
-↓
-发送 Answer
+physicalHeldKeys / physicalHeldMouseButtons
+remoteAssumedHeldKeys / remoteAssumedHeldMouseButtons
+uncertainRemoteKeys / uncertainRemoteMouseButtons
+
+RemoteState:
+ASSUMED_SYNCED
+RELEASING
+UNKNOWN
 ```
 
-v5.0 使用 `DefaultVideoDecoderFactory`。具体真机最终选到硬件还是软件 decoder，在拿到实际 WebRTC stats 前标记为“不确定”，不会预先宣称 MediaCodec 硬解。
+`DataChannel.send() == true` 只表示本地 WebRTC 接受 packet，不等价于远端游戏已经处理。
 
-## ICE=0 的处理
+## 全屏页面
 
-真实 Session 已观察到：
+全屏页隐藏系统栏，视频占满窗口。普通 `Esc` 继续发给远端游戏；本地 Overlay 使用 Android Back。Overlay 打开前先 `releaseAll(OverlayOpen)` 并释放 Pointer Capture；关闭后重新请求 Pointer Capture，只有 capture callback 真正确认后才恢复鼠标相对输入。
+
+## 验证边界
+
+当前环境没有 Android SDK，因此不能在这里声明完整 `assembleDebug` 已通过。已完成：
 
 ```text
-Server ICE entries = 0
+stream-input JVM 编译                         PASS
+GFN input packet / handshake fixture          PASS
+releaseAll / pointer-capture / UNKNOWN fixture PASS
+stream-webrtc API-shaped Kotlin 类型检查       PASS
+GfnStreamingController 类型检查               PASS
+模块边界 staged 编译                          PASS（针对 v5.1 变更链）
 ```
 
-v5 不把它直接解释成错误，也不自动塞公共 STUN。
+完整 `verify-core.sh` 在当前受限容器里仍会因累计编译耗时达到执行超时；最新一次到 `stream-core` compile start 为止均无 compiler error。v5.1 变更模块已另外逐个完成 targeted compile，因此不把全量超时冒充成 PASS。
 
-```text
-Server ICE entries  = CloudMatch 原始值
-Effective ICE       = 实际 PeerConnection 配置
-```
-
-当 Offer/Answer 完成后，客户端会基于真实 `ConnectionInfo` 和 Offer 的 video m-line 端口注入服务器 host candidate；优先级参考当前已实现行为：
-
-```text
-usage=2
-↓
-usage=17
-↓
-usage=14（最高有效端口 fallback）
-```
-
-是否需要额外 STUN/TURN fallback 必须由真机 ICE 结果决定。
-
-## v5 Diagnostics
-
-会话/诊断页新增：
-
-```text
-SIGNALING
-- WSS connected
-- endpoint host
-- RX/TX count
-- last RX/TX type
-- close code/reason
-
-SDP
-- Offer/Answer present
-- codec list
-- H.264 payload types
-- ICE ufrag/pwd 是否存在
-- DTLS fingerprint 是否存在
-
-ICE / PeerConnection
-- Server ICE entries
-- Effective ICE servers
-- fallback active
-- local/remote signaling candidates
-- injected host candidates
-- signaling/ICE/PC state
-
-VIDEO
-- Remote video track
-- First RTP packet
-- First surface frame
-- first-frame resolution
-- decoder path（未真机确认前不假设硬件）
-```
-
-## 依赖
-
-```text
-OkHttp                  5.3.0
-io.github.webrtc-sdk    android:144.7559.09
-```
-
-`stream-webrtc` 使用直接 libwebrtc API，不引入 LiveKit Room/服务端协议。
-
-## 当前验证
-
-```bash
-./verify-core.sh
-```
-
-纯 Kotlin fixture 已覆盖：
-
-```text
-v4 Create → Queue → Preparing → Ready → Claim → End
-v4 stale create cleanup
-v5 /nvst/sign_in URL
-v5 peer_info / ACK / heartbeat / offer / ICE envelope
-v5 H.264 Answer 收敛
-v5 NVST SDP
-Auth / Content 回归
-```
-
-另外，本环境执行了基于当前官方 WebRTC/OkHttp API 形状的 Android 媒体源码类型检查，以及 Compose Kotlin parser 检查。
-
-**限制：当前容器没有 Android SDK，也无法在这里完成最终 AGP + libwebrtc AAR + Compose APK 构建。完整 Android 编译和真实 WSS/WebRTC/First Frame 必须以联网 Android Studio + 真机为准。**
-
-## 下一步真机判定顺序
-
-```text
-1. WSS connected?
-2. RX peer_info / offer?
-3. Offer H.264 PT?
-4. Answer set/sent?
-5. ICE CHECKING → CONNECTED?
-6. First video RTP?
-7. Remote VideoTrack?
-8. FIRST FRAME?
-```
-
-这八层中的第一处失败点，就是下一轮需要分析的位置。
-
-## v5.0.2
-
-修复真机 WebRTC native `SIGABRT` 的 NetworkMonitor 权限链，并将 WebRTC AAR 改为 `api` 公共依赖。详见 `docs/V5_0_2_NATIVE_CRASH_FIX.md`。
+真机下一步只验证：键盘 W/A/S/D、Shift/Ctrl/Alt、鼠标左右中键、滚轮、Pointer Capture 相对移动，以及 pause/focus/overlay/disconnect 后不会出现“卡 W / 卡鼠标键”。

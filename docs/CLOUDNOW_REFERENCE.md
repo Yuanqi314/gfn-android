@@ -105,3 +105,25 @@ H.264 / SDR8 / 1080p60
 ```
 
 这些只由真机 Diagnostics 决定，不从 Apple 实现反推为 Android 必然行为。
+
+## v5.1 Input 参考
+
+当前 `CloudNow/Streaming/InputSender.swift` 用于取证 GFN 键鼠 wire format，而不是复制 Apple 输入框架。
+
+确认的 packet type：
+
+```text
+2 heartbeat
+3 keyDown
+4 keyUp
+7 mouseRel
+8 mouseBtnDown
+9 mouseBtnUp
+10 mouseWheel
+```
+
+确认 keyboard body 为 `u32 LE type + u16 BE vk + u16 BE modifiers + u16 BE Set-1 scan + u64 BE timestamp`；鼠标 move/button/wheel 使用对应固定布局。protocol >=3 对单事件和 pointer move 使用额外 wrapper。
+
+当前 `GFNStreamController` 还确认：`input_channel_v1` OPEN 后必须等待服务器 handshake；`0x020e` 形式从 bytes[2:3] 读取版本，另一形式以 `0x0e` 开头，客户端不 echo，只有 handshake 完成后才启动输入 sender。
+
+Android 只采用上述协议行为。`KeyEvent`/`MotionEvent`、Pointer Capture、lifecycle、ordered executor 与 releaseAll 状态机均为 Android 自己的实现。

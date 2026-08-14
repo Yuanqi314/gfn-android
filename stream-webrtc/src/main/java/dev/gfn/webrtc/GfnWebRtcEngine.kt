@@ -4,9 +4,12 @@ import android.content.Context
 import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionConnectionInfo
 import dev.gfn.core.model.SessionInfo
+import dev.gfn.input.GfnInputHandshake
+import dev.gfn.input.InputReleaseReason
 import dev.gfn.signaling.GfnSdpTools
 import dev.gfn.signaling.NvstSdpConfig
 import dev.gfn.stream.IceDiagnostics
+import dev.gfn.stream.InputDiagnostics
 import dev.gfn.stream.SdpDiagnostics
 import dev.gfn.stream.SignalingDiagnostics
 import dev.gfn.stream.StreamConfig
@@ -16,6 +19,7 @@ import dev.gfn.stream.StreamingEngine
 import dev.gfn.stream.VideoCodecPreference
 import dev.gfn.stream.VideoDiagnostics
 import java.net.URI
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
@@ -64,6 +68,8 @@ class GfnWebRtcEngine(
     private var videoOutput: GfnVideoSurfaceView? = null
     private val observedReceiverIds = mutableSetOf<String>()
     private val dataChannels = mutableListOf<DataChannel>()
+    private var inputDataChannel: DataChannel? = null
+    private var inputController: GfnKeyboardMouseInputController? = null
     private var partialReliableThresholdMs = 300
 
     override fun connect(session: SessionInfo, config: StreamConfig) {
@@ -73,7 +79,15 @@ class GfnWebRtcEngine(
             return
         }
 
-        disconnectInternal(emitClosed = false)
+        val hasExistingStream = synchronized(lock) {
+            peerConnection != null || signaling != null || inputController != null
+        }
+        if (hasExistingStream) {
+            disconnectWithReason(InputReleaseReason.SessionSwitch, emitClosed = false) {
+                connect(session, config)
+            }
+            return
+        }
         val resolvedSignalingUrl = session.signalingUrl?.takeIf { it.isNotBlank() }
             ?: run {
                 fail("Claimed Session 缺少 signalingUrl。")
@@ -101,6 +115,8 @@ class GfnWebRtcEngine(
             )
             state = StreamState.OpeningSignaling
         }
+        val keyboardMouse = createKeyboardMouseController(currentGeneration)
+        synchronized(lock) { inputController = keyboardMouse }
         emit()
 
         val client = GfnSignalingClient(
@@ -118,18 +134,53 @@ class GfnWebRtcEngine(
     }
 
     override fun disconnect() {
-        generation.incrementAndGet()
-        disconnectInternal(emitClosed = true)
+        disconnectWithReason(InputReleaseReason.UserDisconnect, emitClosed = true)
     }
+
+    fun prepareForSessionEnd(onDrained: () -> Unit) {
+        disconnectWithReason(InputReleaseReason.SessionEnd, emitClosed = true, onComplete = onDrained)
+    }
+
+    fun onActivityResumed() = synchronized(lock) { inputController }?.onActivityResumed()
+    fun onActivityPaused() = synchronized(lock) { inputController }?.onActivityPaused()
+    fun onActivityDestroy() = synchronized(lock) { inputController }?.onActivityDestroy()
+    fun onOverlayChanged(open: Boolean) = synchronized(lock) { inputController }?.onOverlayChanged(open)
+    fun onFullscreenExit() = synchronized(lock) { inputController }?.releaseForFullscreenExit()
 
     fun bindVideoOutput(output: GfnVideoSurfaceView?) {
         synchronized(lock) {
             if (videoOutput === output) return
-            videoOutput?.let { previous -> videoTrack?.removeSink(previous) }
+            videoOutput?.let { previous ->
+                videoTrack?.removeSink(previous)
+                previous.inputListener = null
+            }
             videoOutput = output
             if (output != null) {
                 output.onFirstFrame = ::onFirstFrameRendered
                 output.onResolutionChanged = ::onResolutionChanged
+                output.inputListener = object : GfnVideoSurfaceView.InputListener {
+                    override fun onKey(down: Boolean, keyCode: Int, metaState: Int): Boolean =
+                        synchronized(lock) { inputController }?.onKey(down, keyCode, metaState) == true
+
+                    override fun onMouseMove(dx: Float, dy: Float) {
+                        synchronized(lock) { inputController }?.onMouseMove(dx, dy)
+                    }
+
+                    override fun onMouseButton(down: Boolean, button: Int): Boolean =
+                        synchronized(lock) { inputController }?.onMouseButton(down, button) == true
+
+                    override fun onMouseWheel(verticalAxis: Float) {
+                        synchronized(lock) { inputController }?.onMouseWheel(verticalAxis)
+                    }
+
+                    override fun onWindowFocusChanged(focused: Boolean) {
+                        synchronized(lock) { inputController }?.onWindowFocusChanged(focused)
+                    }
+
+                    override fun onPointerCaptureChanged(captured: Boolean) {
+                        synchronized(lock) { inputController }?.onPointerCaptureChanged(captured)
+                    }
+                }
                 videoTrack?.addSink(output)
             }
         }
@@ -144,6 +195,15 @@ class GfnWebRtcEngine(
         config.fps != 60 -> "v5.0 当前固定 60 FPS。"
         config.audioChannels != 2 -> "v5.0 当前固定 Stereo。"
         else -> null
+    }
+
+    fun unbindVideoOutput(output: GfnVideoSurfaceView) {
+        synchronized(lock) {
+            if (videoOutput !== output) return
+            videoTrack?.removeSink(output)
+            output.inputListener = null
+            videoOutput = null
+        }
     }
 
     private fun handleSignalingEvent(event: GfnSignalingEvent, eventGeneration: Long) {
@@ -217,7 +277,7 @@ class GfnWebRtcEngine(
         val pc = createPeerConnection(currentSession, eventGeneration) ?: return
         synchronized(lock) { peerConnection = pc }
         partialReliableThresholdMs = GfnSdpTools.partialReliableThresholdMs(offerSdp)
-        createExpectedDataChannels(pc, partialReliableThresholdMs)
+        createExpectedDataChannels(pc, partialReliableThresholdMs, eventGeneration)
 
         val mediaIp = resolveMediaIp(currentSession)
         val fixedOffer = mediaIp?.let { GfnSdpTools.rewriteOfferConnectionAddresses(offerSdp, it) } ?: offerSdp
@@ -262,9 +322,17 @@ class GfnWebRtcEngine(
                     updateIce { it.copy(iceConnectionState = newState.name) }
                     when (newState) {
                         PeerConnection.IceConnectionState.CONNECTED,
-                        PeerConnection.IceConnectionState.COMPLETED -> setState(StreamState.Connected)
+                        PeerConnection.IceConnectionState.COMPLETED -> {
+                            synchronized(lock) { inputController }?.onStreamConnected(true)
+                            setState(StreamState.Connected)
+                        }
                         PeerConnection.IceConnectionState.CHECKING -> setState(StreamState.IceChecking)
-                        PeerConnection.IceConnectionState.FAILED -> fail("ICE connection FAILED")
+                        PeerConnection.IceConnectionState.DISCONNECTED,
+                        PeerConnection.IceConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
+                        PeerConnection.IceConnectionState.FAILED -> {
+                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            fail("ICE connection FAILED")
+                        }
                         else -> Unit
                     }
                 }
@@ -274,8 +342,16 @@ class GfnWebRtcEngine(
                 ifCurrent(eventGeneration) {
                     updateIce { it.copy(peerConnectionState = newState.name) }
                     when (newState) {
-                        PeerConnection.PeerConnectionState.CONNECTED -> setState(StreamState.Connected)
-                        PeerConnection.PeerConnectionState.FAILED -> fail("PeerConnection FAILED")
+                        PeerConnection.PeerConnectionState.CONNECTED -> {
+                            synchronized(lock) { inputController }?.onStreamConnected(true)
+                            setState(StreamState.Connected)
+                        }
+                        PeerConnection.PeerConnectionState.DISCONNECTED,
+                        PeerConnection.PeerConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
+                        PeerConnection.PeerConnectionState.FAILED -> {
+                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            fail("PeerConnection FAILED")
+                        }
                         else -> Unit
                     }
                 }
@@ -318,11 +394,14 @@ class GfnWebRtcEngine(
         }
     }
 
-    private fun createExpectedDataChannels(pc: PeerConnection, partialThresholdMs: Int) {
+    private fun createExpectedDataChannels(pc: PeerConnection, partialThresholdMs: Int, eventGeneration: Long) {
         pc.createDataChannel(
             "input_channel_v1",
             DataChannel.Init().apply { ordered = true },
-        )?.let(dataChannels::add)
+        )?.let { channel ->
+            dataChannels += channel
+            registerInputDataChannel(channel, eventGeneration)
+        }
         pc.createDataChannel(
             "input_channel_partially_reliable",
             DataChannel.Init().apply {
@@ -337,6 +416,65 @@ class GfnWebRtcEngine(
                 maxRetransmits = 0
             },
         )?.let(dataChannels::add)
+    }
+
+    private fun createKeyboardMouseController(eventGeneration: Long): GfnKeyboardMouseInputController =
+        GfnKeyboardMouseInputController(
+            packetSink = object : GfnKeyboardMouseInputController.PacketSink {
+                override fun sendBinary(packet: ByteArray): Boolean {
+                    val channel = synchronized(lock) { inputDataChannel }
+                    if (channel == null || channel.state() != DataChannel.State.OPEN) return false
+                    return channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true))
+                }
+
+                override fun isOpen(): Boolean =
+                    synchronized(lock) { inputDataChannel }?.state() == DataChannel.State.OPEN
+
+                override fun bufferedAmount(): Long =
+                    runCatching { synchronized(lock) { inputDataChannel }?.bufferedAmount() ?: 0L }.getOrDefault(0L)
+            },
+            onDiagnostics = { input ->
+                ifCurrent(eventGeneration) {
+                    updateDiagnostics { it.copy(input = input) }
+                }
+            },
+        )
+
+    private fun registerInputDataChannel(channel: DataChannel, eventGeneration: Long) {
+        synchronized(lock) { inputDataChannel = channel }
+        channel.registerObserver(
+            object : DataChannel.Observer {
+                override fun onBufferedAmountChange(previousAmount: Long) = Unit
+
+                override fun onStateChange() {
+                    if (generation.get() != eventGeneration) return
+                    // Native -> Java callback: never allow a Java/Kotlin exception to escape back into WebRTC JNI.
+                    runCatching {
+                        val open = channel.state() == DataChannel.State.OPEN
+                        synchronized(lock) { inputController }?.onDataChannelState(open)
+                    }
+                }
+
+                override fun onMessage(buffer: DataChannel.Buffer) {
+                    if (generation.get() != eventGeneration) return
+                    // CloudNow parses the handshake bytes regardless of DataChannel's text/binary flag.
+                    // Copy inside the callback because WebRTC owns buffer.data after this function returns.
+                    runCatching {
+                        val source = buffer.data.slice()
+                        val bytes = ByteArray(source.remaining())
+                        source.get(bytes)
+                        val version = GfnInputHandshake.parseProtocolVersion(bytes) ?: return@runCatching
+                        if (version < 2) return@runCatching
+                        val controller = synchronized(lock) { inputController }
+                        // 防御回调时序：即使 OPEN state callback 晚于第一条 handshake message，
+                        // 也以 DataChannel 当前真实 state 先同步 transport gate，再处理 protocolReady。
+                        controller?.onDataChannelState(channel.state() == DataChannel.State.OPEN)
+                        controller?.onProtocolReady(version)
+                    }
+                }
+            },
+        )
+        synchronized(lock) { inputController }?.onDataChannelState(channel.state() == DataChannel.State.OPEN)
     }
 
     private fun createAnswer(pc: PeerConnection, offerSdp: String, eventGeneration: Long) {
@@ -530,19 +668,23 @@ class GfnWebRtcEngine(
         return null
     }
 
-    private fun disconnectInternal(emitClosed: Boolean) {
+    private fun disconnectInternal(emitClosed: Boolean, inputAlreadyDrained: Boolean = false) {
         val oldTrack: VideoTrack?
         val oldOutput: GfnVideoSurfaceView?
         val oldPc: PeerConnection?
         val oldSignaling: GfnSignalingClient?
+        val oldInput: GfnKeyboardMouseInputController?
         val channels: List<DataChannel>
         synchronized(lock) {
             oldTrack = videoTrack
             oldOutput = videoOutput
             oldPc = peerConnection
             oldSignaling = signaling
+            oldInput = inputController
             channels = dataChannels.toList()
             dataChannels.clear()
+            inputDataChannel = null
+            inputController = null
             videoTrack = null
             peerConnection = null
             signaling = null
@@ -554,7 +696,11 @@ class GfnWebRtcEngine(
             observedReceiverIds.clear()
             partialReliableThresholdMs = 300
         }
-        if (oldTrack != null && oldOutput != null) runCatching { oldTrack.removeSink(oldOutput) }
+        if (oldTrack != null && oldOutput != null) runCatching {
+            oldTrack.removeSink(oldOutput)
+            oldOutput.inputListener = null
+        }
+        if (!inputAlreadyDrained) oldInput?.shutdownWithoutTransport()
         channels.forEach { channel -> runCatching { channel.close(); channel.dispose() } }
         oldSignaling?.disconnect()
         oldPc?.close()
@@ -581,12 +727,29 @@ class GfnWebRtcEngine(
         emit()
     }
 
+    private fun disconnectWithReason(
+        reason: InputReleaseReason,
+        emitClosed: Boolean,
+        onComplete: () -> Unit = {},
+    ) {
+        generation.incrementAndGet()
+        val input = synchronized(lock) { inputController }
+        if (input == null) {
+            disconnectInternal(emitClosed = emitClosed, inputAlreadyDrained = true)
+            onComplete()
+            return
+        }
+        input.prepareForDisconnect(reason) {
+            disconnectInternal(emitClosed = emitClosed, inputAlreadyDrained = true)
+            onComplete()
+        }
+    }
+
     private fun fail(reason: String) {
         if (state is StreamState.Failed) return
-        generation.incrementAndGet()
         state = StreamState.Failed(reason)
         emit()
-        disconnectInternal(emitClosed = false)
+        disconnectWithReason(InputReleaseReason.WebRtcDisconnect, emitClosed = false)
     }
 
     private fun updateDiagnostics(transform: (StreamDiagnostics) -> StreamDiagnostics) {

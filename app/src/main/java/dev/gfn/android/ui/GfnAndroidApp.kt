@@ -82,6 +82,7 @@ private enum class AppTab(val title: String, val glyph: String) {
 fun GfnAndroidApp() {
     var darkTheme by remember { mutableStateOf(true) }
     var tab by remember { mutableStateOf(AppTab.Home) }
+    var fullscreenStream by remember { mutableStateOf(false) }
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val transport = remember { UrlConnectionHttpTransport() }
@@ -142,8 +143,18 @@ fun GfnAndroidApp() {
     }
 
     GfnTheme(darkTheme = darkTheme) {
-        Scaffold(
-            bottomBar = {
+        val claimedForFullscreen = sessionState as? SessionUiState.Claimed
+        if (fullscreenStream && claimedForFullscreen != null && streamState !is StreamState.Idle && streamState !is StreamState.Closed) {
+            FullscreenStreamScreen(
+                controller = streamingController,
+                streamState = streamState,
+                diagnostics = streamDiagnostics,
+                onExitFullscreen = { fullscreenStream = false },
+                onEndSession = { sessionController.endSession(cancelledByUser = false) },
+            )
+        } else {
+            Scaffold(
+                bottomBar = {
                 NavigationBar {
                     AppTab.entries.forEach { item ->
                         NavigationBarItem(
@@ -202,13 +213,16 @@ fun GfnAndroidApp() {
                         onClaim = sessionController::claimCurrent,
                         onConnectStream = streamingController::connectClaimedSession,
                         onDisconnectStream = streamingController::disconnect,
+                        onEnterFullscreen = { fullscreenStream = true },
                         onEnd = {
-                            streamingController.disconnect()
-                            sessionController.endSession(cancelledByUser = false)
+                            streamingController.prepareForSessionEnd {
+                                sessionController.endSession(cancelledByUser = false)
+                            }
                         },
                         onCancel = {
-                            streamingController.disconnect()
-                            sessionController.endSession(cancelledByUser = true)
+                            streamingController.prepareForSessionEnd {
+                                sessionController.endSession(cancelledByUser = true)
+                            }
                         },
                         onForget = sessionController::forgetResumeRecord,
                     )
@@ -229,6 +243,7 @@ fun GfnAndroidApp() {
                     )
                 }
             }
+        }
         }
     }
 }
@@ -253,7 +268,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · 第四版",
+                "独立 Android GFN 客户端 · v5.1 全屏键鼠",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -586,6 +601,7 @@ private fun SessionScreen(
     onClaim: () -> Unit,
     onConnectStream: (SessionInfo) -> Unit,
     onDisconnectStream: () -> Unit,
+    onEnterFullscreen: () -> Unit,
     onEnd: () -> Unit,
     onCancel: () -> Unit,
     onForget: () -> Unit,
@@ -596,7 +612,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5.0 复用已 Claim 的 Session，只新增 WSS → SDP → ICE → H.264 第一帧。")
+            Text("v5.1 保持 v5.0 H.264 链冻结，只新增全屏硬件键盘 / 相对鼠标输入。")
         }
 
         if (resumeRecord != null) {
@@ -646,7 +662,10 @@ private fun SessionScreen(
                         is StreamState.Failed -> Button(onClick = { onConnectStream(state.session) }) {
                             Text("连接 WebRTC H.264")
                         }
-                        else -> OutlinedButton(onClick = onDisconnectStream) { Text("断开 WebRTC") }
+                        else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(onClick = onEnterFullscreen) { Text("进入全屏键鼠") }
+                            OutlinedButton(onClick = onDisconnectStream) { Text("断开 WebRTC") }
+                        }
                     }
                     OutlinedButton(onClick = onEnd) { Text("End Session") }
                 }
@@ -675,7 +694,7 @@ private fun StreamingVideoCard(
     DisposableEffect(videoView, controller) {
         controller.bindVideoOutput(videoView)
         onDispose {
-            controller.bindVideoOutput(null)
+            controller.unbindVideoOutput(videoView)
             videoView.releaseRenderer()
         }
     }
@@ -777,7 +796,7 @@ private fun DiagnosticsScreen(
     ) {
         item {
             Text("诊断", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5 分开观察 Session、WSS、SDP、ICE、PeerConnection 和第一帧。")
+            Text("v5.1 分开观察 Session、WSS、SDP、ICE、第一帧与键鼠输入状态。")
         }
         item {
             DiagnosticSection(
@@ -876,6 +895,28 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
+                "键鼠输入 v5.1",
+                listOf(
+                    "Reliable channel" to if (streamDiagnostics.input.dataChannelOpen) "OPEN" else "-",
+                    "Protocol ready" to streamDiagnostics.input.protocolReady.asYesNo(),
+                    "Protocol version" to (streamDiagnostics.input.protocolVersion?.toString() ?: "-"),
+                    "Window focus" to streamDiagnostics.input.windowFocused.asYesNo(),
+                    "Pointer capture" to streamDiagnostics.input.pointerCaptured.asYesNo(),
+                    "Keyboard active" to streamDiagnostics.input.keyboardActive.asYesNo(),
+                    "Mouse active" to streamDiagnostics.input.mouseActive.asYesNo(),
+                    "Epoch" to streamDiagnostics.input.inputEpoch.toString(),
+                    "Remote state" to streamDiagnostics.input.remoteState,
+                    "Held keys local/remote" to "${streamDiagnostics.input.physicalHeldKeys}/${streamDiagnostics.input.remoteHeldKeys}",
+                    "Held mouse local/remote" to "${streamDiagnostics.input.physicalHeldMouseButtons}/${streamDiagnostics.input.remoteHeldMouseButtons}",
+                    "Packets accepted/submitted" to "${streamDiagnostics.input.acceptedPackets}/${streamDiagnostics.input.submittedPackets}",
+                    "Dropped / stale" to "${streamDiagnostics.input.droppedPackets}/${streamDiagnostics.input.staleEventsDropped}",
+                    "releaseAll" to "${streamDiagnostics.input.releaseCount} · ${streamDiagnostics.input.lastReleaseReason ?: "-"}",
+                    "Last event" to (streamDiagnostics.input.lastEvent ?: "-"),
+                ),
+            )
+        }
+        item {
+            DiagnosticSection(
                 "视频",
                 listOf(
                     "Codec" to "H.264 / SDR8（v5.0 固定）",
@@ -954,8 +995,9 @@ private fun SettingsScreen(
                     )
                     Text("Session：${sessionStateLabel(sessionState)}")
                     Text("v4：CloudMatch / Claim 已进入 soft-freeze")
-                    Text("v5.0：WSS → SDP → ICE → H.264 First Frame")
-                    Text("后续：HEVC Main → Main10 → HDR10")
+                    Text("v5.0：WSS → SDP → ICE → H.264 First Frame · 真机通过")
+                    Text("v5.1：全屏键鼠 + releaseAll(reason) + ordered queue + epoch")
+                    Text("后续：Audio → Reconnect → HEVC Main → Main10 → HDR10")
                 }
             }
         }

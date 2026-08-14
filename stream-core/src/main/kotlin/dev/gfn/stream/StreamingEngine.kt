@@ -68,6 +68,35 @@ data class IceDiagnostics(
     val peerConnectionState: String = "NEW",
 )
 
+
+
+data class InputDiagnostics(
+    val dataChannelOpen: Boolean = false,
+    val protocolReady: Boolean = false,
+    val protocolVersion: Int? = null,
+    val windowFocused: Boolean = false,
+    val pointerCaptured: Boolean = false,
+    val overlayOpen: Boolean = false,
+    val keyboardActive: Boolean = false,
+    val mouseActive: Boolean = false,
+    val inputEpoch: Long = 1,
+    val remoteState: String = "ASSUMED_SYNCED",
+    val physicalHeldKeys: Int = 0,
+    val remoteHeldKeys: Int = 0,
+    val physicalHeldMouseButtons: Int = 0,
+    val remoteHeldMouseButtons: Int = 0,
+    val generatedPackets: Long = 0,
+    val submittedPackets: Long = 0,
+    val acceptedPackets: Long = 0,
+    val rejectedPackets: Long = 0,
+    val droppedPackets: Long = 0,
+    val staleEventsDropped: Long = 0,
+    val transportBufferedBytes: Long = 0,
+    val releaseCount: Long = 0,
+    val lastEvent: String? = null,
+    val lastReleaseReason: String? = null,
+)
+
 data class VideoDiagnostics(
     val remoteVideoTrackPresent: Boolean = false,
     val firstRtpPacketReceived: Boolean = false,
@@ -83,6 +112,7 @@ data class StreamDiagnostics(
     val answer: SdpDiagnostics = SdpDiagnostics(),
     val ice: IceDiagnostics = IceDiagnostics(),
     val video: VideoDiagnostics = VideoDiagnostics(),
+    val input: InputDiagnostics = InputDiagnostics(),
 )
 
 interface StreamingEngine {

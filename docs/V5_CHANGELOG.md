@@ -60,3 +60,19 @@
 - `GfnWebRtcRuntime` 在进入 native WebRTC 前校验最终安装包是否实际获得两项 normal permission，避免 WebRTC JNI `HandleException()` 把 Java 权限异常升级成 `SIGABRT`。
 - 根据真机 `tombstone_08`：崩溃线程为 `network_thread`，native fatal 位于 `sdk/android/src/jni/jvm.cc:81`，并出现 `android_network_monitor.cc` 证据。
 - 未修改 CloudMatch、Claim/RESUME、GFN signaling envelope、SDP、ICE 注入、H.264 codec 策略。
+
+## v5.1 — 全屏键鼠输入
+
+- 新增 `:stream-input` 纯 Kotlin 模块，隔离 GFN keyboard/mouse packet framing、input handshake parser、held-state/release plan 与 epoch gate。
+- 新增 `FullscreenStreamScreen`，只在全屏串流页启用键鼠捕获；系统栏隐藏，Android Back 控制本地 Overlay，普通 Esc 继续发给远端。
+- 新增 Android `KeyEvent.KEYCODE_* → Windows VK + Set-1 scan code` 映射，不直接复用 Android `scanCode`。
+- 新增键盘 DOWN/UP、modifier、鼠标左右/中键、滚轮、Pointer Capture 相对鼠标。
+- 相对鼠标消费 `MotionEvent` historical batched samples，减少高 polling mouse delta 丢失。
+- `input_channel_v1` OPEN 后等待 server handshake；协议版本解析完成、uncertain state neutralize 后才 `protocolReady=true`。
+- 新增统一 `releaseAll(reason)`：ordered queue + input epoch + remote UNKNOWN + deterministic UP ordering。
+- Pointer Capture lost 只释放鼠标，不推进全局 epoch，不破坏仍有焦点的键盘。
+- 主动 disconnect/Session End 先提交 release packet，再经过 queue barrier 和有界 `bufferedAmount` drain 后关闭 transport。
+- DataChannel 已关闭时不伪造远端已 neutral；本地清状态、远端标 UNKNOWN。
+- DataChannel native callback 增加异常隔离，避免 Kotlin 异常穿出 JNI observer。
+- 保持 `api("io.github.webrtc-sdk:android:144.7559.09")`，不回归成 `implementation`。
+- 未修改 CloudMatch、Claim/RESUME、GFN WSS envelope、SDP、ICE、H.264 解码/Surface 行为。

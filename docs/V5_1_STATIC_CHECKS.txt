@@ -1,0 +1,33 @@
+GFN Android v5.1 static/type checks
+====================================
+
+[PASS] :stream-input included
+[PASS] WebRTC public ABI remains api(...)
+[PASS] ACCESS_NETWORK_STATE retained
+[PASS] CHANGE_NETWORK_STATE retained
+[PASS] unified public releaseAll(reason)
+[PASS] ordered input executor
+[PASS] AtomicLong input epoch gate
+[PASS] Pointer Capture lost does not advance global epoch
+[PASS] protocolReady set after uncertain-state neutralization
+[PASS] DataChannel OPEN != protocolReady
+[PASS] no binary-flag hard filter on server handshake
+[PASS] DataChannel Observer callbacks contain exceptions before JNI boundary
+[PASS] active disconnect has release barrier + bounded local buffer drain
+[PASS] remote UNKNOWN when transport already unavailable
+[PASS] relative mouse consumes MotionEvent historical AXIS_RELATIVE_X/Y samples
+[PASS] Android KeyEvent is mapped to Windows VK + Set-1 scan code; Android scanCode is not forwarded directly
+[PASS] Esc remains a remote key; Android Back is local overlay trigger
+[PASS] no Gamepad/HEVC/Main10/HDR code added to v5.1 input scope
+
+Known limitations
+-----------------
+- Full Android/Compose build not executable here because Android SDK is unavailable.
+- Full cross-PeerConnection reconnect/resync is deferred to v5.3.
+- No application-level input acknowledgement exists in current implementation.
+- Relative mouse Y direction requires real-device/game verification.
+[PASS] server handshake callback re-syncs current DataChannel OPEN state before protocolReady
+[PASS] InputListener binding immediately syncs focus/pointer state
+[PASS] local Overlay opening freezes input before overlay state is exposed
+[PASS] releaseAll ordinary-key UP derives modifier mask from currently held modifiers
+[PASS] video output teardown is identity-based; stale View cannot unbind newer fullscreen View
