@@ -48,4 +48,8 @@ object GfnLocale {
             else -> "en_US"
         }
     }
+    /** GFN CloudMatch keyboardLayout 使用连字符格式。 */
+    fun keyboardLayoutCode(locale: Locale = Locale.getDefault()): String =
+        nvidiaCode(locale).replace('_', '-')
+
 }

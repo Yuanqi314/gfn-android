@@ -1,0 +1,34 @@
+=== GFN Android 第四版核心验证 ===
+
+[CloudMatch Session Lifecycle]
+identity=GFN-PC/windows
+headers={User-Agent=GFN-Android-Lab/fixture, Authorization=<已脱敏>, Accept=application/json, Content-Type=application/json, nv-browser-type=CHROME, nv-client-id=fixture-client, nv-client-streamer=NVIDIA-CLASSIC, nv-client-type=NATIVE, nv-client-version=fixture-version, nv-device-make=UNKNOWN, nv-device-model=UNKNOWN, nv-device-os=WINDOWS, nv-device-type=DESKTOP, x-device-id=<已脱敏>, Origin=https://play.geforcenow.com, Referer=https://play.geforcenow.com/}
+create=v4-session, queue=5
+poll status=1 -> Queued(5)
+poll status=1 -> Queued(2)
+poll status=1 -> Preparing(step=3)
+poll status=2 -> Preparing(step=4)
+poll status=2 -> Ready
+ready=v4-session, signaling=wss://80.84.170.152:443/nvst/
+claim=v4-session, status=2
+end=DELETE sent
+Create → Queue → Preparing → 双 Ready → Claim/Resume → End fixture 验证通过
+
+[Session race cleanup]
+Cancel while Creating → late create → DELETE cleanup 验证通过
+
+[Device Flow]
+userCode=ABCD-EFGH
+verificationUri=https://login.example.test
+token=<已脱敏>
+user=测试用户/ULTIMATE
+clientToken=已绑定
+deviceFlowRequests=8，Provider discovery + client_token re-bind 验证通过
+
+[登录态恢复]
+userinfo 401 → refresh → userinfo 重试 + Provider 恢复验证通过
+
+[Account / Subscription / Catalog / Library]
+vpc=NP-TST-01, membership=ULTIMATE, library=1, catalog=2
+gameDetail=Fixture HDR Game/Fixture Studio
+serverInfo → MES → Library → Catalog → Game Detail fixture 验证通过

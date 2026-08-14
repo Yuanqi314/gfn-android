@@ -14,6 +14,7 @@ import dev.gfn.network.Json.asBoolean
 import dev.gfn.network.Json.asObject
 import dev.gfn.network.Json.asString
 import dev.gfn.network.Json.boolean
+import dev.gfn.network.Json.int
 import dev.gfn.network.Json.obj
 import dev.gfn.network.Json.string
 import java.net.URLEncoder
@@ -25,6 +26,7 @@ sealed class GfnGamesException(message: String) : Exception(message) {
     class Unauthorized : GfnGamesException("GFN 游戏 API 拒绝了当前凭据")
     class Http(val code: Int, message: String) : GfnGamesException(message)
     class GraphQl(message: String) : GfnGamesException(message)
+    class ProtocolDrift(message: String) : GfnGamesException(message)
     class Protocol(message: String) : GfnGamesException(message)
 }
 
@@ -143,8 +145,10 @@ class GfnGamesClient(
         includeGenres: Boolean,
     ): List<GameSummary> {
         val games = mutableListOf<GameSummary>()
-        val seen = linkedSetOf<String>()
+        val seenGames = linkedSetOf<String>()
+        val seenCursors = linkedSetOf<String>()
         var cursor = ""
+        var expectedTotalCount: Int? = null
 
         for (pageIndex in 0 until maxPages) {
             val variables = linkedMapOf<String, Any?>(
@@ -174,36 +178,51 @@ class GfnGamesClient(
             requireSuccess(response, "获取游戏列表")
             val root = parseObject(response, "游戏列表")
             throwIfGraphQlError(root)
-            val apps = root.obj("data")?.obj("apps") ?: break
+            val apps = root.obj("data")?.obj("apps")
+                ?: throw GfnGamesException.Protocol("GraphQL 响应缺少 data.apps")
+
+            val totalCount = apps.obj("pageInfo")?.int("totalCount")
+            if (totalCount != null) {
+                if (totalCount < 0) throw GfnGamesException.Protocol("GraphQL totalCount 为负数")
+                if (expectedTotalCount == null) expectedTotalCount = totalCount
+                if (expectedTotalCount != totalCount) {
+                    throw GfnGamesException.Protocol("GraphQL totalCount 在分页过程中发生变化")
+                }
+            }
+
             for (value in apps.array("items").orEmpty()) {
                 val item = value.asObject() ?: continue
                 val game = browseItemToGame(item) ?: continue
-                if (seen.add(game.appId)) games += game
+                if (seenGames.add(game.appId)) games += game
             }
+
             val pageInfo = apps.obj("pageInfo")
-            val hasNext = pageInfo?.boolean("hasNextPage") == true
-            val next = pageInfo?.string("endCursor")
-            if (!hasNext || next.isNullOrBlank()) return games
-            if (next == cursor) throw GfnGamesException.Protocol("GraphQL 分页重复 cursor")
+                ?: throw GfnGamesException.Protocol("GraphQL 响应缺少 pageInfo")
+            val hasNext = pageInfo.boolean("hasNextPage")
+                ?: throw GfnGamesException.Protocol("GraphQL pageInfo 缺少 hasNextPage")
+            if (!hasNext) return games
+
+            val next = pageInfo.string("endCursor")
+                ?.takeIf { it.isNotBlank() }
+                ?: throw GfnGamesException.Protocol("hasNextPage=true 但 endCursor 为空")
+            if (!seenCursors.add(next)) {
+                throw GfnGamesException.Protocol("GraphQL 分页 cursor 循环：$next")
+            }
             cursor = next
+
+            if (pageIndex == maxPages - 1) {
+                throw GfnGamesException.Protocol(
+                    "GraphQL 分页达到安全上限 $maxPages，但服务端仍返回 hasNextPage=true",
+                )
+            }
         }
-        return games
+        error("不可达：分页循环未返回")
     }
 
     private fun browseItemToGame(item: Map<String, Json.Value>): GameSummary? {
         val id = scalarString(item["id"]) ?: return null
         val variantsRaw = item.array("variants").orEmpty()
-        val variants = variantsRaw.mapNotNull { value ->
-            val variant = value.asObject() ?: return@mapNotNull null
-            val variantId = scalarString(variant["id"]) ?: return@mapNotNull null
-            val store = variant.string("appStore")?.takeIf { it.isNotBlank() } ?: "unknown"
-            val library = variant.obj("gfn")?.obj("library")
-            GameVariant(
-                id = variantId,
-                appStore = store,
-                isOwned = isOwned(library?.string("status")),
-            )
-        }
+        val variants = parseVariants(variantsRaw)
         val features = parseFeatures(variantsRaw)
         val images = item.obj("images")
         val genres = item.array("genres").orEmpty().mapNotNull { it.asString() }.filter { it.isNotBlank() }
@@ -225,15 +244,7 @@ class GfnGamesClient(
         val id = scalarString(item["id"]) ?: fallbackId
         val images = item.obj("images")
         val variantsRaw = item.array("variants").orEmpty()
-        val variants = variantsRaw.mapNotNull { value ->
-            val variant = value.asObject() ?: return@mapNotNull null
-            val variantId = scalarString(variant["id"]) ?: return@mapNotNull null
-            GameVariant(
-                id = variantId,
-                appStore = variant.string("appStore") ?: "unknown",
-                isOwned = isOwned(variant.obj("gfn")?.obj("library")?.string("status")),
-            )
-        }
+        val variants = parseVariants(variantsRaw)
         val contentRating = item.obj("contentRatings")?.let { rating ->
             val type = rating.string("type")
             val category = rating.string("categoryKey")
@@ -258,6 +269,38 @@ class GfnGamesClient(
         )
     }
 
+    /**
+     * 与 CloudNow 当前启动选择保持一致：后端 selected variant 优先，其次 owned variant。
+     * 数值 variant id 记录为 CloudMatch appId；非数值时启动层回退到原始 id。
+     */
+    private fun parseVariants(values: List<Json.Value>): List<GameVariant> {
+        data class Candidate(val model: GameVariant, val selected: Boolean)
+        val candidates = values.mapNotNull { value ->
+            val variant = value.asObject() ?: return@mapNotNull null
+            val variantId = scalarString(variant["id"]) ?: return@mapNotNull null
+            val store = variant.string("appStore")?.takeIf { it.isNotBlank() } ?: "unknown"
+            val library = variant.obj("gfn")?.obj("library")
+            Candidate(
+                model = GameVariant(
+                    id = variantId,
+                    appStore = store,
+                    appId = variantId.takeIf(::isNumericId),
+                    isOwned = isOwned(library?.string("status")),
+                ),
+                selected = library?.boolean("selected") == true,
+            )
+        }.toMutableList()
+
+        val preferredIndex = candidates.indexOfFirst { it.selected }
+            .takeIf { it >= 0 }
+            ?: candidates.indexOfFirst { it.model.isOwned }.takeIf { it >= 0 }
+        if (preferredIndex != null && preferredIndex > 0) {
+            val preferred = candidates.removeAt(preferredIndex)
+            candidates.add(0, preferred)
+        }
+        return candidates.map { it.model }
+    }
+
     private fun parseFeatures(variants: List<Json.Value>): Set<String> {
         val result = linkedSetOf<String>()
         for (value in variants) {
@@ -277,6 +320,11 @@ class GfnGamesClient(
 
     private fun throwIfGraphQlError(root: Map<String, Json.Value>) {
         val messages = root.array("errors").orEmpty().mapNotNull { it.asObject()?.string("message") }
+        if (messages.any { it.contains("PersistedQueryNotFound", ignoreCase = true) }) {
+            throw GfnGamesException.ProtocolDrift(
+                "GFN persisted-query hash 已变化：${messages.joinToString("; ")}",
+            )
+        }
         if (messages.isNotEmpty() && root.obj("data")?.obj("apps") == null) {
             throw GfnGamesException.GraphQl(messages.joinToString("; "))
         }
@@ -340,6 +388,8 @@ class GfnGamesClient(
     }
 
     private fun isOwned(status: String?): Boolean = status?.uppercase() in OWNED_STATUSES
+
+    private fun isNumericId(value: String): Boolean = value.isNotEmpty() && value.all(Char::isDigit)
 
     private fun optimizeImageUrl(url: String?, width: Int): String? {
         if (url.isNullOrBlank()) return null

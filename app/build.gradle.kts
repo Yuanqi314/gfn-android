@@ -11,8 +11,8 @@ android {
         applicationId = "dev.gfn.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-dev"
+        versionCode = 4
+        versionName = "0.4.0-dev"
     }
 
     buildFeatures {
@@ -36,6 +36,8 @@ dependencies {
     implementation(project(":gfn-auth"))
     implementation(project(":gfn-account"))
     implementation(project(":gfn-games"))
+    implementation(project(":gfn-cloudmatch"))
+    implementation(project(":gfn-session"))
     implementation(project(":gfn-identity"))
     implementation(project(":diagnostics"))
     implementation(project(":stream-core"))

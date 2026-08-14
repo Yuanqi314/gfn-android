@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 sealed interface AuthUiState {
@@ -36,6 +38,7 @@ class AuthController(
     private var loginJob: Job? = null
     private var restored = false
     private var generation = 0L
+    private val refreshMutex = Mutex()
 
     fun currentSession(): AuthSession? = (_state.value as? AuthUiState.SignedIn)?.session
 
@@ -59,18 +62,26 @@ class AuthController(
         }
     }
 
-    /** 内容 API 明确收到 401/403 时调用一次。 */
-    suspend fun refreshForApi(): AuthSession? {
-        val current = currentSession() ?: return null
+    /**
+     * GFN API 明确收到 HTTP 401 时调用。
+     *
+     * Mutex + rejectedToken 检查形成 single-flight：多个并发请求同时 401 时，只有第一个真正
+     * refresh；后续请求进入临界区后如果发现 token 已变化，直接复用新 session。403 不走这里。
+     */
+    suspend fun refreshForApi(rejectedToken: String? = null): AuthSession? = refreshMutex.withLock {
+        val current = currentSession() ?: return@withLock null
+        if (rejectedToken != null && current.gfnToken != rejectedToken) {
+            return@withLock current
+        }
         val operation = generation
         val refreshed = withContext(Dispatchers.IO) { service.forceRefresh(current) }
-        if (operation != generation) return null
+        if (operation != generation) return@withLock null
         if (refreshed == null) {
             _state.value = AuthUiState.SignedOut
-            return null
+            return@withLock null
         }
         _state.value = AuthUiState.SignedIn(refreshed)
-        return refreshed
+        refreshed
     }
 
     fun startLogin() {

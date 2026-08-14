@@ -1,87 +1,123 @@
-# 第三版状态
+# 第四版状态
 
+## 已由真机确认的基础
 
-## v3.0.1 编译修复
-
-已修复 Compose `weight()` 编译错误：删除 `import androidx.compose.foundation.layout.weight`，保留 `Row {}` 内的 `Modifier.weight(1f)`，由 `RowScope.weight()` 公开 API 解析。
-
-全工程同类作用域 API 显式导入扫描结果：未发现 `weight / align / alignBy / alignByBaseline / matchParentSize` 的其他错误显式 import。
-
-## 真机已经确认
-
-以下来自当前 Android 真机测试：
+以下结果来自用户对 v2.1 / v3.0.1 的真实 Android 测试：
 
 ```text
-NVIDIA Device Flow 登录             通过
-用户名 / 邮箱显示                   通过
-AndroidKeyStore 保存                通过
-应用重启后登录态恢复                通过
+NVIDIA Device Flow 登录            ✅
+用户名 / 邮箱                      ✅
+AndroidKeyStore 保存               ✅
+重启恢复登录态                     ✅
+会员 / Subscription                ✅
+游戏库 Library                     ✅
+全部游戏 Catalog                   ✅
+服务端 Search                      ✅
+Game Detail                        ✅
 ```
 
-重启时会短暂显示恢复状态，随后正常进入已登录状态。
+因此 `gfn-auth` 与 `gfn-games/gfn-account` 当前为 soft-freeze。
 
-## 第三版已实现
+## v4 已实现
 
 ```text
-AuthSession 向内容层提供只读凭据快照
-Provider discovery 在重启恢复后重新建立
-GFN token 选择：id_token 优先，access_token 回退
-401 时允许一次认证 refresh 后重试
-
-serverInfo / VPC
-MES subscription
-Catalog GraphQL
-Library GraphQL
-Search GraphQL
-Game Detail persisted query
-
-首页内容概览
-真实 Library 页面
-真实 Catalog 页面
-服务端搜索
-真实 Game Detail
-内容服务诊断
+GameVariant launchAppId
+CloudMatch POST Create
+CloudMatch GET Poll
+Queue / Preparing
+双 Ready 确认
+resolved server re-poll
+Claim / Resume PUT
+DELETE End
+Session resume record
+稳定 x-device-id
+Session generation / stale cleanup
+401 single-flight refresh
+Queue Ad 不支持时的安全 cleanup
 ```
 
-## 当前核心 fixture 已通过
+## v4 内容层加固
 
 ```text
-Provider discovery
+GraphQL cursor cycle protection
+hasNextPage=true + 空 cursor → Protocol error
+达到 maxPages 且仍有下一页 → Protocol error
+分页 totalCount 中途变化 → Protocol error
+PersistedQueryNotFound → ProtocolDrift
+selected / owned GameVariant 优先
+数值 variant id → CloudMatch appId
+Provider 恢复时重新 discovery
+```
+
+## 核心 fixture 已通过
+
+最新输出：
+
+```text
+docs/V4_SMOKE_OUTPUT.txt
+```
+
+验证链：
+
+```text
+Create
+→ Queued(5)
+→ Queued(2)
+→ Preparing
+→ Ready #1
+→ Ready #2
+→ Claim / RESUME
+→ DELETE End
+```
+
+另外验证：
+
+```text
+Cancel while Creating
+→ create 迟到返回
+→ stale generation
+→ DELETE cleanup 一次
+```
+
+旧版回归仍通过：
+
+```text
 Device Flow
-authorization_pending
-OAuth token
-userinfo
-client_token
-main-client re-bind
-登录恢复 401 → refresh
-Provider 恢复
+client_token re-bind
+登录态 401 → refresh
+Provider restore
 serverInfo → VPC
-MES Subscription
+MES
 Library
 Catalog
 Game Detail
 ```
 
-最新输出：
+## 仍未真机验证
+
+以下是第 4 版新增行为，本环境没有 NVIDIA 实际网络凭据，因此不能标记成功：
 
 ```text
-docs/V3_SMOKE_OUTPUT.txt
+真实 CloudMatch Create              ⏳
+真实 Queue position                 ⏳
+真实 Preparing / seatSetupStep      ⏳
+真实连续 Ready                      ⏳
+真实 ConnectionInfo / ICE           ⏳
+真实 Claim / Resume                 ⏳
+真实 DELETE End                     ⏳
+冷启动 Session resume               ⏳
+取消期间的服务端 cleanup            ⏳
 ```
 
-## 尚未实现
+v3 内容层虽然真机功能已正常，但 v4 新加入的“严格 Catalog 完整性检查”仍需要一次真机回归确认。
+
+## v4 明确未实现
 
 ```text
-Library sync orchestration
-Catalog 本地缓存 / Room
-图像下载缓存
-Favorites
-Regions / ServerInfo UI
-NetTest
-CloudMatch Create
-Queue
-Ready / Claim / Resume / End
-WebRTC signaling
-H.264 video
+Queue Ad 播放 / 上报
+WebRTC PeerConnection
+SDP
+视频第一帧
 Audio
 Controller input
 HEVC
@@ -89,49 +125,21 @@ Main10
 HDR10
 ```
 
-## 不确定 / 需要真机验证
+Queue Ad 如果出现，v4 会明确停止该测试并 best-effort End Session，不会假装已经支持。
 
-第三版内容请求结构主要参考 CloudNow 当前公开实现，但以下仍必须由真实 GFN endpoint 结果确认：
-
-```text
-当前用户所在区域的 serverInfo 响应结构
-MES 在当前账号 / provider 下的实际字段
-GraphQL browse 在当前区域是否接受 500 page size
-当前 GraphQL 是否仍接受 genres 字段
-persisted-query metadata hash 是否仍有效
-id_token / access_token 在当前 API 上的实际接受范围
-```
-
-代码已经对部分兼容情况做保护：
+## 第四版成功 Gate
 
 ```text
-500 page size 无结果 / 特定 4xx → 200 page retry
-genres GraphQL error → 无 genres query retry
-401 → 认证层 refresh 一次后重试
-403 不自动当作 token 过期
+1. 选真实 GameVariant
+2. Create 成功并拿到 Session ID
+3. Queue 正确更新
+4. Preparing 正确更新
+5. 连续两次 Ready
+6. ConnectionInfo / ICE 可见
+7. Claim / Resume 成功
+8. End 后服务端会话被清理
+9. Cancel while Queue/Preparing 不留下孤儿 Session
+10. App 重启可识别并 Claim 一个仍有效的 Session
 ```
 
-## 下一版目标
-
-```text
-第四版：CloudMatch / Session lifecycle
-
-Regions
-ServerInfo
-CloudMatch Create
-Queue
-Ready
-Claim
-Resume
-End
-```
-
-第四版仍不要求 HDR；成功标准是：
-
-```text
-选择一个真实 Library 游戏
-→ 创建真实 session
-→ 正确显示排队位置
-→ 到 Ready
-→ 可以正常 End Session
-```
+这些完成后才进入 v5 WebRTC。

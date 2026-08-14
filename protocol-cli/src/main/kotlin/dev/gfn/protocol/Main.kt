@@ -10,9 +10,11 @@ import dev.gfn.account.GfnAccountClient
 import dev.gfn.account.GfnAccountContext
 import dev.gfn.games.GfnGamesClient
 import dev.gfn.games.GfnGamesContext
+import dev.gfn.cloudmatch.GfnCloudMatchClient
 import dev.gfn.cloudmatch.GfnRequestContext
 import dev.gfn.cloudmatch.SessionRequestFactory
 import dev.gfn.core.model.RequestedColorMode
+import dev.gfn.core.model.SessionClaimRequest
 import dev.gfn.core.model.SessionCreateRequest
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.identity.GfnClientIdentity
@@ -20,7 +22,6 @@ import dev.gfn.network.HttpRequest
 import dev.gfn.network.HttpResponse
 import dev.gfn.network.HttpTransport
 import dev.gfn.network.NetworkRedaction
-import dev.gfn.session.CloudMatchPort
 import dev.gfn.session.SessionOrchestrator
 import dev.gfn.session.SessionReadinessState
 import dev.gfn.session.SessionScheduler
@@ -31,27 +32,123 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 
-private class FixtureCloudMatchPort : CloudMatchPort {
-    private var pollCount = 0
-
-    override suspend fun createSession(request: SessionCreateRequest): SessionInfo = SessionInfo(
-        sessionId = "fixture-session",
-        status = 1,
-        queuePosition = 3,
-        clientId = GfnClientIdentity.WindowsDesktop.clientIdentification,
-        deviceId = request.deviceId,
+private class FixtureCloudMatchTransport : HttpTransport {
+    private val responses = ArrayDeque(
+        listOf(
+            // POST create -> queue
+            HttpResponse(
+                200,
+                body = """{"requestStatus":{"statusCode":1},"session":{"sessionId":"v4-session","status":1,"queuePosition":5,"seatSetupStep":1}}""".toByteArray(),
+            ),
+            // GET queue
+            HttpResponse(
+                200,
+                body = """{"requestStatus":{"statusCode":1},"session":{"sessionId":"v4-session","status":1,"queuePosition":2,"seatSetupStep":1}}""".toByteArray(),
+            ),
+            // GET preparing
+            HttpResponse(
+                200,
+                body = """{"requestStatus":{"statusCode":1},"session":{"sessionId":"v4-session","status":1,"queuePosition":1,"seatSetupStep":3,"seatSetupInfo":{"seatSetupEta":15000}}}""".toByteArray(),
+            ),
+            // GET provider endpoint -> ready and resolves concrete signaling host
+            readyResponse(),
+            // automatic re-poll through resolved host
+            readyResponse(),
+            // second consecutive ready observation
+            readyResponse(),
+            // claim preflight
+            readyResponse(),
+            // claim RESUME PUT
+            readyResponse(),
+            // DELETE end
+            HttpResponse(204),
+        ),
     )
 
-    override suspend fun pollSession(session: SessionInfo, token: String): SessionInfo {
-        pollCount += 1
-        return when (pollCount) {
-            1 -> session.copy(queuePosition = 1)
-            2 -> session.copy(status = 1, queuePosition = null)
-            else -> session.copy(status = 2, queuePosition = null)
-        }
+    val requests = mutableListOf<HttpRequest>()
+
+    override suspend fun execute(request: HttpRequest): HttpResponse {
+        requests += request
+        check(responses.isNotEmpty()) { "CloudMatch fixture 响应已耗尽：${request.method} ${request.url}" }
+        return responses.removeFirst()
     }
 
-    override suspend fun stopSession(session: SessionInfo, token: String) = Unit
+    private companion object {
+        fun readyResponse(): HttpResponse = HttpResponse(
+            200,
+            body = """{
+                "requestStatus":{"statusCode":1},
+                "session":{
+                    "sessionId":"v4-session",
+                    "status":2,
+                    "gpuType":"fixture-gpu",
+                    "queuePosition":1,
+                    "seatSetupStep":4,
+                    "connectionInfo":[
+                        {"usage":14,"ip":"80.84.170.152","port":443,"resourcePath":"/nvst/"},
+                        {"usage":2,"ip":"80.84.170.153","port":47998,"resourcePath":"/media/"}
+                    ],
+                    "sessionControlInfo":{"ip":"80.84.170.152"},
+                    "iceServerConfiguration":{"iceServers":[
+                        {"urls":["stun:fixture.example.test:19302"],"username":"fixture-user","credential":"fixture-credential"}
+                    ]},
+                    "streamingProfile":{"bitDepth":8,"hdrStreamingMode":"SDR"}
+                }
+            }""".trimIndent().toByteArray(),
+        )
+    }
+}
+
+
+private class StaleCreatePort : dev.gfn.session.CloudMatchPort {
+    lateinit var onCreateBeforeReturn: () -> Unit
+    var stopCalls = 0
+
+    override suspend fun createSession(request: SessionCreateRequest): SessionInfo {
+        onCreateBeforeReturn()
+        return SessionInfo(
+            sessionId = "stale-session",
+            status = 1,
+            streamingBaseUrl = request.streamingBaseUrl,
+            clientId = "stale-client",
+            deviceId = "stale-device",
+        )
+    }
+
+    override suspend fun pollSession(session: SessionInfo, token: String): SessionInfo = session
+
+    override suspend fun claimSession(request: SessionClaimRequest): SessionInfo = request.session
+
+    override suspend fun stopSession(session: SessionInfo, token: String) {
+        stopCalls += 1
+    }
+}
+
+private fun verifyStaleCreateCleanup() {
+    println("\n[Session race cleanup]")
+    val port = StaleCreatePort()
+    val orchestrator = SessionOrchestrator(
+        client = port,
+        scheduler = SessionScheduler { },
+        pollIntervalMillis = 0,
+    )
+    port.onCreateBeforeReturn = { orchestrator.cancelAttempt() }
+    runSynchronously {
+        val attempt = orchestrator.beginAttempt()
+        val result = runCatching {
+            orchestrator.createSession(
+                SessionCreateRequest(
+                    appId = "9001",
+                    token = "fixture-token",
+                    streamingBaseUrl = "https://stream.example.test",
+                ),
+                attempt,
+            )
+        }
+        check(result.isFailure)
+    }
+    check(port.stopCalls == 1) { "迟到 create 应 cleanup 一次，实际=${port.stopCalls}" }
+    println("Cancel while Creating → late create → DELETE cleanup 验证通过")
 }
 
 private class FixtureAuthTransport : HttpTransport {
@@ -143,18 +240,18 @@ private fun <T> runSynchronously(block: suspend () -> T): T {
 }
 
 fun main() {
-    println("=== GFN Android 第三版核心验证 ===")
-    verifyIdentityAndSession()
+    println("=== GFN Android 第四版核心验证 ===")
+    verifyV4CloudMatchLifecycle()
+    verifyStaleCreateCleanup()
     verifyDeviceFlow()
     verifySessionRestoreAfterUnauthorized()
     verifyContentApis()
 }
 
-private fun verifyIdentityAndSession() {
+private fun verifyV4CloudMatchLifecycle() {
+    println("\n[CloudMatch Session Lifecycle]")
     val identity = GfnClientIdentity.WindowsDesktop
-    println("\n[协议身份]")
     println("identity=${identity.clientIdentification}/${identity.clientPlatformName}")
-    identity.protocolHeaders().forEach { (name, value) -> println("$name=$value") }
 
     val requestContext = GfnRequestContext(
         token = "fixture-secret",
@@ -164,8 +261,9 @@ private fun verifyIdentityAndSession() {
         userAgent = "GFN-Android-Lab/fixture",
     )
     println("headers=${NetworkRedaction.headers(requestContext.headers())}")
-    val sessionRequest = SessionRequestFactory().create(
-        appId = "fixture-app",
+
+    val readableRequest = SessionRequestFactory().create(
+        appId = "9001",
         deviceId = "fixture-device",
         clientVersion = "30.0",
         width = 1920,
@@ -173,11 +271,17 @@ private fun verifyIdentityAndSession() {
         fps = 60,
         colorMode = RequestedColorMode.CompatibilitySdr,
     )
-    println("sessionRequest=$sessionRequest")
+    check(!readableRequest.streamingFeatures.tenBitRequested)
 
-    val port = FixtureCloudMatchPort()
+    val transport = FixtureCloudMatchTransport()
+    val cloudMatch = GfnCloudMatchClient(
+        transport = transport,
+        deviceId = { "fixture-stable-device" },
+        uuid = { UUID.fromString("00000000-0000-0000-0000-000000000004") },
+        timezoneOffsetMilliseconds = { 28_800_000 },
+    )
     val orchestrator = SessionOrchestrator(
-        client = port,
+        client = cloudMatch,
         scheduler = SessionScheduler { },
         nowMillis = object {
             var value = 0L
@@ -191,24 +295,83 @@ private fun verifyIdentityAndSession() {
 
     runSynchronously {
         val attempt = orchestrator.beginAttempt()
-        val request = SessionCreateRequest(
-            appId = "fixture-app",
-            token = "redacted-fixture-token",
-            deviceId = "fixture-device",
+        val createRequest = SessionCreateRequest(
+            appId = "9001",
+            token = "fixture-gfn-token",
+            streamingBaseUrl = "https://stream.example.test/",
+            width = 1920,
+            height = 1080,
+            fps = 60,
+            keyboardLayout = "zh-CN",
+            gameLanguage = "zh_CN",
+            requestedColorMode = RequestedColorMode.CompatibilitySdr,
+            persistInGameSettings = false,
+            appLaunchMode = 1,
         )
-        val created = orchestrator.createSession(request, attempt)
-        println("created=${created.sessionId}")
-        val ready = orchestrator.waitUntilReady(created, request.token, attempt) { session, state ->
-            val detail = when (state) {
-                is SessionReadinessState.InQueue -> "queue=${state.position}"
-                SessionReadinessState.Preparing -> "preparing"
-                SessionReadinessState.Ready -> "ready"
-                SessionReadinessState.TimedOut -> "timed-out"
+        val created = orchestrator.createSession(createRequest, attempt)
+        println("create=${created.sessionId}, queue=${created.queuePosition}")
+
+        val ready = orchestrator.waitUntilReady(created, createRequest.token, attempt) { session, state ->
+            val label = when (state) {
+                is SessionReadinessState.InQueue -> "Queued(${state.position})"
+                is SessionReadinessState.Preparing -> "Preparing(step=${state.step})"
+                SessionReadinessState.Ready -> "Ready"
+                SessionReadinessState.TimedOut -> "TimedOut"
             }
-            println("poll status=${session.status} $detail")
+            println("poll status=${session.status} -> $label")
         }
-        println("ready=${ready.sessionId}")
+        check(ready.isReadyStatus)
+        check(ready.serverIp == "80.84.170.152")
+        check(ready.signalingUrl == "wss://80.84.170.152:443/nvst/")
+        check(ready.iceServers.size == 1)
+        println("ready=${ready.sessionId}, signaling=${ready.signalingUrl}")
+
+        val claimed = orchestrator.claimSession(
+            SessionClaimRequest(
+                session = ready,
+                appId = "9001",
+                token = createRequest.token,
+                baseUrl = ready.streamingBaseUrl,
+                keyboardLayout = "zh-CN",
+                gameLanguage = "zh_CN",
+                persistInGameSettings = false,
+                appLaunchMode = 1,
+            ),
+            attempt,
+        )
+        check(claimed.isReadyStatus)
+        println("claim=${claimed.sessionId}, status=${claimed.status}")
+        orchestrator.stopOwnedSession()
+        println("end=DELETE sent")
     }
+
+    check(transport.requests.size == 9) { "实际 CloudMatch fixture 请求数=${transport.requests.size}" }
+    val create = transport.requests[0]
+    check(create.method == "POST")
+    check(create.url.startsWith("https://stream.example.test/v2/session?"))
+    check(create.headers["nv-device-os"] == "WINDOWS")
+    check(create.headers["nv-device-type"] == "DESKTOP")
+    check(create.headers["x-device-id"] == "fixture-stable-device")
+    val createBody = create.body!!.toString(Charsets.UTF_8)
+    check(createBody.contains("\"clientIdentification\":\"GFN-PC\""))
+    check(createBody.contains("\"clientPlatformName\":\"windows\""))
+    check(createBody.contains("\"appId\":\"9001\""))
+    check(createBody.contains("\"sdrHdrMode\":0"))
+    check(createBody.contains("\"bitDepth\":0"))
+    check(!createBody.contains("PreferHdr10"))
+
+    check(transport.requests[3].url == "https://stream.example.test/v2/session/v4-session")
+    check(transport.requests[4].url == "https://80.84.170.152/v2/session/v4-session")
+
+    val resume = transport.requests[7]
+    check(resume.method == "PUT")
+    val resumeBody = resume.body!!.toString(Charsets.UTF_8)
+    check(resumeBody.contains("\"action\":2"))
+    check(resumeBody.contains("\"data\":\"RESUME\""))
+    check(!resumeBody.contains("requestedStreamingFeatures"))
+    check(!resumeBody.contains("clientRequestMonitorSettings"))
+    check(transport.requests[8].method == "DELETE")
+    println("Create → Queue → Preparing → 双 Ready → Claim/Resume → End fixture 验证通过")
 }
 
 private fun verifyDeviceFlow() {
@@ -362,6 +525,7 @@ private fun verifyContentApis() {
         check(library.single().isInLibrary)
         check(library.single().supportsHdr)
         check(library.single().supportsRtx)
+        check(library.single().variants.first().launchAppId == "9001")
         val catalog = games.fetchCatalog(context)
         check(catalog.size == 2)
         check(catalog.any { it.appId == "202" && it.supportsReflex })

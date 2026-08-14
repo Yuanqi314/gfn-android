@@ -1,0 +1,37 @@
+GFN Android v4 交付前静态验证
+
+1. 纯 Kotlin 核心
+- 命令：./verify-core.sh
+- 结果：通过
+- 覆盖：CloudMatch Create / Queue / Preparing / 双 Ready / Claim / End / stale cleanup，以及 Auth / Content 回归。
+
+2. Session Android Controller 类型检查
+- GfnSessionController.kt + AndroidSessionPersistence.kt
+- 使用最小 android.content/android.util/kotlinx.coroutines 类型桩交给 Kotlin 编译器编译
+- 结果：通过
+- 目的：在当前没有 Android SDK 的环境中额外捕获参数、返回类型、suspend 边界和 sealed-state 类型错误。
+
+3. Auth / Content Controller 类型检查
+- AuthController.kt + GfnContentController.kt
+- 使用最小 Android/Coroutines 类型桩编译
+- 结果：通过
+- 本轮新增 single-flight 401 接口没有破坏 Controller 类型关系。
+
+4. Compose / Android 源码 parser 检查
+- Kotlin parser 级 syntax error：0
+- 非穷尽 sealed when：0
+- 错误显式 import androidx.compose.foundation.layout.weight：0
+- 空 onClick：0
+- Android Log 中直接输出 accessToken/refreshToken/clientToken/deviceCode/Authorization/gfnToken：0
+
+5. 当前环境限制
+- ANDROID_HOME：未设置
+- ANDROID_SDK_ROOT：未设置
+- 未发现 android.jar
+- 因此无法在此环境宣称完整 Android/Compose APK 编译通过。
+
+结论
+- v4 纯 Kotlin 协议/生命周期核心：已实际编译并回归通过。
+- Android Session/Auth/Content Controller：已做额外 Kotlin 类型检查通过。
+- Compose 源码：已做 parser 与已知作用域 import 回归检查。
+- 真实 NVIDIA CloudMatch 与完整 APK：必须由联网 Android Studio + 真机验证。

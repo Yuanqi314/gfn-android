@@ -200,7 +200,7 @@ class GfnContentController(
         } catch (error: Exception) {
             if (!error.isUnauthorized()) throw error
             Log.i(TAG, "GFN 内容 API 拒绝凭据，执行一次认证 refresh")
-            val refreshed = authController.refreshForApi() ?: throw error
+            val refreshed = authController.refreshForApi(initial.gfnToken) ?: throw error
             return block(refreshed)
         }
     }

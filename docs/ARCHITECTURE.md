@@ -1,11 +1,13 @@
-# 第三版架构
+# 第四版架构
 
-## 总原则
+## 总边界
 
 ```text
 Compose UI
 ≠
-GFN 内容 API
+Auth
+≠
+GFN Content
 ≠
 CloudMatch Session
 ≠
@@ -14,174 +16,264 @@ WebRTC
 MediaCodec
 ```
 
-任何一层失败都不应迫使其他层重写。
+第 4 版只新增 Session 层，不把媒体逻辑塞进 CloudMatch。
 
-## 当前调用链
+## 调用链
 
 ```text
 GfnAndroidApp
 │
-├── AuthController
+├── AuthController               [soft-freeze]
 │   └── AuthSessionService
-│       └── NvidiaAuthApi
 │
-└── GfnContentController
-    ├── GfnAccountClient
-    │   ├── provider streamingServiceUrl
-    │   ├── /v2/serverInfo
-    │   └── mes.geforcenow.com/v4/subscriptions
-    │
-    └── GfnGamesClient
-        ├── Catalog browse
-        ├── Library browse
-        ├── Search
-        └── Persisted-query Game Detail
+├── GfnContentController         [soft-freeze]
+│   ├── GfnAccountClient
+│   └── GfnGamesClient
+│
+└── GfnSessionController         [v4]
+    ├── AuthRefreshingCloudMatchPort
+    │   └── GfnCloudMatchClient
+    ├── SessionOrchestrator
+    ├── AndroidStableDeviceId
+    └── AndroidSessionRecordStore
 ```
 
-## Auth soft-freeze
+## Auth 与 401
 
-v2.1 已经完成真实登录和重启恢复，所以第三版不再重构认证流程。
-
-只新增两个内容层需要的边界：
+内容和 Session 都不能直接操作 refresh token。
 
 ```text
-AuthUiState.SignedIn
-    ↓
-只读 AuthSession
-
-内容 API HTTP 401
-    ↓
-AuthController.refreshForApi()
-    ↓
-最多一次重试
-```
-
-内容层不能读取或直接修改 refresh token。
-
-## GFN token
-
-当前与 CloudNow 的选择思路保持一致：
-
-```text
-id_token != null
-    → GFNJWT id_token
-否则
-    → GFNJWT access_token
-```
-
-真实 endpoint 如果证明某条 API 必须固定使用其中一种，再针对该 API 收窄。
-
-## Provider 与 VPC
-
-登录时 Provider discovery 已存在。
-
-重启恢复后第三版会重新做一次 Provider discovery，因为旧 TokenStore 只持久化 token，不持久化 Provider。
-
-之后：
-
-```text
-Provider.streamingServiceUrl
+API request(token=A)
 ↓
-/v2/serverInfo
+HTTP 401
 ↓
-requestStatus.serverId
+AuthController.refreshForApi(rejectedToken=A)
 ↓
-VPC ID
-```
-
-不采用 CloudNow 的固定欧洲 VPC fallback，避免在亚洲或合作运营商账号上引入错误区域假设。
-
-## Account / Subscription
-
-```text
-GET {streamingServiceUrl}/v2/serverInfo
+Mutex
+├─ token 仍是 A → 真正 refresh
+└─ token 已变 B → 直接复用 B
 ↓
-VPC
+request retry exactly once
+```
+
+403 不进入 refresh。
+
+## GameVariant 到 Session
+
+GraphQL 顶层 `GameSummary.appId` 不能直接假设等于 CloudMatch 启动 ID。
+
+```text
+GameDetail
 ↓
-GET https://mes.geforcenow.com/v4/subscriptions
-    serviceName=gfn_pc
-    languageCode=<device locale>
-    vpcId=<real VPC>
-    userId=<real user id>
-```
-
-解析：
-
-```text
-membershipTier
-subType
-remainingTimeInMinutes
-totalTimeInMinutes
-features.resolutions
-```
-
-## Catalog / Library
-
-参考 CloudNow 当前 `GamesClient`：
-
-```text
-POST https://games.geforce.com/graphql
-```
-
-Catalog：
-
-```text
-filters = {}
-```
-
-Library：
-
-```text
-variants.gfn.library.status.notEquals = NOT_OWNED
-```
-
-分页：
-
-```text
-500 / page
-↓
-必要时 200 / page retry
-```
-
-Library / Catalog 分开加载，UI 不再使用 fixture。
-
-## Game Detail
-
-使用 CloudNow 当前 metadata persisted query：
-
-```text
-requestType=appMetaData
-sha256Hash=cf8b620d...
-variables={vpcId, locale, appIds}
-```
-
-metadata 负责：
-
-```text
-title
-longDescription
-genres
-developer
-publisher
-contentRating
-images
 variants
+↓
+selected variant 优先
+否则 owned variant 优先
+↓
+variant.launchAppId
 ```
-
-HDR / RTX / Reflex feature 仍以 browse 结果为主，详情 metadata 不凭空推断 feature。
-
-## 下一阶段边界
-
-第四版新增：
 
 ```text
-gfn-cloudmatch
-    ↓
-真正 HTTP Client
-
-gfn-session
-    ↓
-create / queue / ready / stop
+launchAppId = variant.appId ?: variant.id
 ```
 
-此时 `gfn-games` 不承担任何 session 逻辑。
+当前 browse 中数值 variant id 会记录到 `appId`。
+
+## CloudMatch lifecycle identity
+
+每次新 Session：
+
+```text
+lifecycle clientId = random UUID
+x-device-id        = stable local UUID
+```
+
+Header 由 `GfnRequestContext` 集中构造：
+
+```text
+Authorization       GFNJWT <token>
+nv-client-id        <lifecycle UUID>
+nv-client-type      NATIVE
+nv-client-streamer  NVIDIA-CLASSIC
+nv-device-os        WINDOWS
+nv-device-type      DESKTOP
+nv-device-make      UNKNOWN
+nv-device-model     UNKNOWN
+x-device-id         <stable UUID>
+```
+
+Session JSON：
+
+```text
+clientIdentification = GFN-PC
+clientPlatformName    = windows
+```
+
+## Create
+
+```text
+POST {providerBase}/v2/session
+    ?keyboardLayout=...
+    &languageCode=...
+```
+
+v4 固定：
+
+```text
+1920x1080 以下的账号已授权分辨率
+<= 60 FPS
+SDR8
+stereo
+appLaunchMode = 1 (Default)
+```
+
+不把 CloudNow 的 tvOS Big Picture 默认值直接复制到 Android。
+
+## Queue 与 Ready
+
+`SessionReadinessTracker`：
+
+```text
+seatSetupStep == 1
+OR queuePosition > 1
+    → InQueue
+```
+
+Queue 中：
+
+```text
+不启动 180 秒 setup timeout
+连续 Ready 计数归零
+```
+
+离开 Queue 后：
+
+```text
+start setup clock
+↓
+status 2/3 连续出现 2 次
+↓
+Ready
+```
+
+## resolved server
+
+Provider endpoint 可能先返回具体 server host。
+
+```text
+poll provider base
+↓
+status 2/3 + resolved server
+↓
+再 GET https://<resolved-server>/v2/session/{id}
+↓
+取得最终 connectionInfo / ICE
+```
+
+## Claim / Resume
+
+恢复前先 GET 当前状态。
+
+仍在 Queue：
+
+```text
+返回 Queue 状态，不发送 RESUME
+```
+
+Ready status 2/3：
+
+```text
+PUT /v2/session/{id}
+{
+  action: 2,
+  data: "RESUME",
+  sessionRequestData: <minimal>
+}
+```
+
+Resume 不重新发送 monitor / HDR / requestedStreamingFeatures。
+
+## End / cleanup
+
+```text
+DELETE /v2/session/{id}
+```
+
+`SessionOrchestrator` 维护 owned session，并保证同一 Session 不重复 stop；DELETE 失败时撤销本地 stop 标记，以便再次重试。
+
+## stale result
+
+```text
+Attempt generation N
+↓
+用户取消
+↓
+generation N+1
+↓
+旧 create 返回 session S
+↓
+N 已 stale
+↓
+DELETE S
+↓
+拒绝 UI 更新
+```
+
+## 本地 resume 数据
+
+只保存非凭据数据：
+
+```text
+sessionId
+appId
+game/store
+status
+serverIp
+base/routingZone
+clientId/deviceId
+createdAt
+```
+
+文件位于 `noBackupFilesDir`。
+
+Token 永远由 Auth / AndroidKeyStore 管理，不写入 Session record。
+
+## Queue Ad
+
+CloudNow 已经实现 Queue Ad 播放与事件上报，但 v4 暂不引入这一层。
+
+当前策略：
+
+```text
+发现 sessionAdsRequired / isAdsRequired / queuePaused / ad payload
+↓
+抛出明确“不支持”状态
+↓
+best-effort DELETE
+```
+
+避免无限隐藏轮询或留下 Session。
+
+## v5 接口
+
+v4 Ready 后仅展示：
+
+```text
+server
+signalingUrl
+connectionInfo
+ICE
+streamingProfile
+```
+
+不会创建 PeerConnection。
+
+v5 再将 `SessionInfo` 交给：
+
+```text
+StreamingEngine
+↓
+WebRTC signaling / SDP
+↓
+H.264 First Frame
+```

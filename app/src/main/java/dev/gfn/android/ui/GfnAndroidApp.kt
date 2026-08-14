@@ -43,11 +43,19 @@ import dev.gfn.android.auth.AuthUiState
 import dev.gfn.android.content.ContentUiState
 import dev.gfn.android.content.GameDetailUiState
 import dev.gfn.android.content.GfnContentController
+import dev.gfn.android.session.AndroidSessionRecordStore
+import dev.gfn.android.session.AndroidStableDeviceId
+import dev.gfn.android.session.GfnSessionController
+import dev.gfn.android.session.PersistedSessionRecord
+import dev.gfn.android.session.SessionUiState
 import dev.gfn.auth.AuthSessionService
 import dev.gfn.auth.NvidiaAuthApi
 import dev.gfn.auth.NvidiaAuthReferenceDefaults
+import dev.gfn.cloudmatch.GfnCloudMatchClient
 import dev.gfn.core.model.GameDetail
 import dev.gfn.core.model.GameSummary
+import dev.gfn.core.model.GameVariant
+import dev.gfn.core.model.SessionInfo
 import dev.gfn.diagnostics.DiagnosticsSnapshot
 import dev.gfn.games.GfnGamesClient
 import dev.gfn.identity.GfnClientIdentity
@@ -58,6 +66,7 @@ private enum class AppTab(val title: String, val glyph: String) {
     Home("首页", "H"),
     Library("游戏库", "L"),
     Store("全部游戏", "G"),
+    Session("会话", "Q"),
     Diagnostics("诊断", "D"),
     Settings("设置", "S"),
 }
@@ -69,6 +78,7 @@ fun GfnAndroidApp() {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     val transport = remember { UrlConnectionHttpTransport() }
+
     val authController = remember(context, scope, transport) {
         val api = NvidiaAuthApi(
             transport = transport,
@@ -88,14 +98,38 @@ fun GfnAndroidApp() {
             scope = scope,
         )
     }
+    val sessionController = remember(authController, scope, transport, context) {
+        val stableDeviceId = AndroidStableDeviceId(context)
+        GfnSessionController(
+            authController = authController,
+            cloudMatchClient = GfnCloudMatchClient(
+                transport = transport,
+                deviceId = stableDeviceId::getOrCreate,
+            ),
+            recordStore = AndroidSessionRecordStore(context),
+            scope = scope,
+        )
+    }
 
     val authState by authController.state.collectAsState()
     val contentState by contentController.state.collectAsState()
     val searchResults by contentController.searchResults.collectAsState()
     val detailState by contentController.detailState.collectAsState()
+    val sessionState by sessionController.state.collectAsState()
+    val resumeRecord by sessionController.resumeRecord.collectAsState()
 
     LaunchedEffect(authController) { authController.restoreOnce() }
+    LaunchedEffect(sessionController) { sessionController.restoreResumeRecordOnce() }
     LaunchedEffect(authState) { contentController.onAuthStateChanged(authState) }
+
+    val startSession: (GameDetail, GameVariant) -> Unit = { detail, variant ->
+        val ready = contentState as? ContentUiState.Ready
+        if (ready != null) {
+            contentController.closeGameDetail()
+            sessionController.startGame(detail, variant, ready.subscription)
+            tab = AppTab.Session
+        }
+    }
 
     GfnTheme(darkTheme = darkTheme) {
         Scaffold(
@@ -112,27 +146,29 @@ fun GfnAndroidApp() {
                 }
             },
         ) { padding ->
-            Surface(
-                modifier = Modifier.fillMaxSize().padding(padding),
-            ) {
+            Surface(Modifier.fillMaxSize().padding(padding)) {
                 when (tab) {
                     AppTab.Home -> HomeScreen(
                         authState = authState,
                         contentState = contentState,
+                        sessionState = sessionState,
+                        resumeRecord = resumeRecord,
                         onLogin = authController::startLogin,
                         onCancelLogin = authController::cancelLogin,
                         onLogout = authController::signOut,
                         onRefreshContent = contentController::refresh,
+                        onOpenSession = { tab = AppTab.Session },
                     )
                     AppTab.Library -> GameListScreen(
                         title = "游戏库",
-                        subtitle = "来自当前 GFN 账号的真实 Library",
+                        subtitle = "当前 GFN 账号真实 Library",
                         authState = authState,
                         contentState = contentState,
                         games = (contentState as? ContentUiState.Ready)?.library.orEmpty(),
                         detailState = detailState,
                         onOpenGame = contentController::openGame,
                         onCloseDetail = contentController::closeGameDetail,
+                        onStartSession = startSession,
                         onRetry = contentController::refresh,
                     )
                     AppTab.Store -> CatalogScreen(
@@ -143,16 +179,29 @@ fun GfnAndroidApp() {
                         onSearch = contentController::search,
                         onOpenGame = contentController::openGame,
                         onCloseDetail = contentController::closeGameDetail,
+                        onStartSession = startSession,
                         onRetry = contentController::refresh,
+                    )
+                    AppTab.Session -> SessionScreen(
+                        state = sessionState,
+                        resumeRecord = resumeRecord,
+                        onResume = sessionController::resumePersisted,
+                        onClaim = sessionController::claimCurrent,
+                        onEnd = { sessionController.endSession(cancelledByUser = false) },
+                        onCancel = { sessionController.endSession(cancelledByUser = true) },
+                        onForget = sessionController::forgetResumeRecord,
                     )
                     AppTab.Diagnostics -> DiagnosticsScreen(
                         snapshot = DiagnosticsSnapshot(),
                         contentState = contentState,
+                        sessionState = sessionState,
+                        resumeRecord = resumeRecord,
                     )
                     AppTab.Settings -> SettingsScreen(
                         darkTheme = darkTheme,
                         authState = authState,
                         contentState = contentState,
+                        sessionState = sessionState,
                         onToggleTheme = { darkTheme = !darkTheme },
                     )
                 }
@@ -165,10 +214,13 @@ fun GfnAndroidApp() {
 private fun HomeScreen(
     authState: AuthUiState,
     contentState: ContentUiState,
+    sessionState: SessionUiState,
+    resumeRecord: PersistedSessionRecord?,
     onLogin: () -> Unit,
     onCancelLogin: () -> Unit,
     onLogout: () -> Unit,
     onRefreshContent: () -> Unit,
+    onOpenSession: () -> Unit,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(20.dp),
@@ -178,20 +230,20 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · 第三版",
+                "独立 Android GFN 客户端 · 第四版",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        item { AuthCard(authState, onLogin, onCancelLogin, onLogout) }
+        item { AccountContentCard(contentState, onRefreshContent) }
         item {
-            AuthCard(
-                state = authState,
-                onLogin = onLogin,
-                onCancel = onCancelLogin,
-                onLogout = onLogout,
+            SessionPreviewCard(
+                state = sessionState,
+                resumeRecord = resumeRecord,
+                onOpenSession = onOpenSession,
             )
         }
-        item { AccountContentCard(contentState, onRefreshContent) }
         item { DiagnosticPreviewCard() }
     }
 }
@@ -215,6 +267,7 @@ private fun AccountContentCard(state: ContentUiState, onRefresh: () -> Unit) {
                         compareBy({ it.width * it.height }, { it.fps }),
                     )
                     if (max != null) Text("最高已授权档位：${max.width}×${max.height} @ ${max.fps} FPS")
+                    Text("v3 真机：会员 / Library / Catalog / Search / Detail 已验证。")
                     Button(onClick = onRefresh) { Text("刷新 GFN 内容") }
                 }
                 is ContentUiState.Error -> {
@@ -269,6 +322,7 @@ private fun AuthCard(
                     state.user.email?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     state.user.membershipTier?.let { Text("登录 token 声明等级：$it") }
                     state.session.provider?.let { Text("Provider：${it.displayName}") }
+                    Text("重启恢复：已通过真机验证。")
                     OutlinedButton(onClick = onLogout) { Text("退出登录") }
                 }
                 is AuthUiState.Error -> {
@@ -285,6 +339,23 @@ private fun AuthCard(
 }
 
 @Composable
+private fun SessionPreviewCard(
+    state: SessionUiState,
+    resumeRecord: PersistedSessionRecord?,
+    onOpenSession: () -> Unit,
+) {
+    Card(shape = RoundedCornerShape(28.dp)) {
+        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("CloudMatch Session", style = MaterialTheme.typography.titleMedium)
+            Text(sessionStateLabel(state))
+            if (resumeRecord != null) Text("存在可恢复记录：${resumeRecord.gameTitle}")
+            Text("v4 只验证 Create / Queue / Ready / Claim / Resume / End，不启动视频。")
+            Button(onClick = onOpenSession) { Text("打开会话面板") }
+        }
+    }
+}
+
+@Composable
 private fun DiagnosticPreviewCard() {
     val identity = GfnClientIdentity.WindowsDesktop
     Card(shape = RoundedCornerShape(28.dp)) {
@@ -293,7 +364,7 @@ private fun DiagnosticPreviewCard() {
             Text("${identity.deviceOs} · ${identity.deviceType}")
             Text("${identity.clientIdentification} · ${identity.clientPlatformName}")
             Text(
-                "Android 本机运行环境保持真实；GFN 内容/会话协议使用 Windows Desktop 身份。",
+                "Android 本机保持真实；GFN 内容/会话协议使用 Windows Desktop 身份。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -310,6 +381,7 @@ private fun GameListScreen(
     detailState: GameDetailUiState,
     onOpenGame: (String) -> Unit,
     onCloseDetail: () -> Unit,
+    onStartSession: (GameDetail, GameVariant) -> Unit,
     onRetry: () -> Unit,
 ) {
     LazyColumn(
@@ -320,7 +392,7 @@ private fun GameListScreen(
             Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        item { DetailPanel(detailState, onCloseDetail) }
+        item { DetailPanel(detailState, onCloseDetail, onStartSession) }
         when {
             authState !is AuthUiState.SignedIn -> item { Text("请先在首页登录 GeForce NOW。") }
             contentState is ContentUiState.Loading -> item { CircularProgressIndicator() }
@@ -344,6 +416,7 @@ private fun CatalogScreen(
     onSearch: (String) -> Unit,
     onOpenGame: (String) -> Unit,
     onCloseDetail: () -> Unit,
+    onStartSession: (GameDetail, GameVariant) -> Unit,
     onRetry: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
@@ -369,7 +442,7 @@ private fun CatalogScreen(
                 Button(onClick = { onSearch(query) }) { Text("搜索") }
             }
         }
-        item { DetailPanel(detailState, onCloseDetail) }
+        item { DetailPanel(detailState, onCloseDetail, onStartSession) }
         when {
             authState !is AuthUiState.SignedIn -> item { Text("请先登录 GeForce NOW。") }
             contentState is ContentUiState.Loading -> item { CircularProgressIndicator() }
@@ -408,13 +481,17 @@ private fun GameCard(game: GameSummary, onOpenGame: (String) -> Unit) {
             if (game.variants.isNotEmpty()) {
                 Text("商店：${game.variants.map { it.appStore }.distinct().take(4).joinToString(" / ")}")
             }
-            Button(onClick = { onOpenGame(game.appId) }) { Text("查看详情") }
+            Button(onClick = { onOpenGame(game.appId) }) { Text("查看详情 / 建立会话") }
         }
     }
 }
 
 @Composable
-private fun DetailPanel(state: GameDetailUiState, onClose: () -> Unit) {
+private fun DetailPanel(
+    state: GameDetailUiState,
+    onClose: () -> Unit,
+    onStartSession: (GameDetail, GameVariant) -> Unit,
+) {
     when (state) {
         GameDetailUiState.Idle -> Unit
         GameDetailUiState.Loading -> Card(shape = RoundedCornerShape(24.dp)) {
@@ -429,12 +506,16 @@ private fun DetailPanel(state: GameDetailUiState, onClose: () -> Unit) {
                 OutlinedButton(onClick = onClose) { Text("关闭") }
             }
         }
-        is GameDetailUiState.Ready -> GameDetailCard(state.detail, onClose)
+        is GameDetailUiState.Ready -> GameDetailCard(state.detail, onClose, onStartSession)
     }
 }
 
 @Composable
-private fun GameDetailCard(detail: GameDetail, onClose: () -> Unit) {
+private fun GameDetailCard(
+    detail: GameDetail,
+    onClose: () -> Unit,
+    onStartSession: (GameDetail, GameVariant) -> Unit,
+) {
     Card(shape = RoundedCornerShape(28.dp)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(detail.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
@@ -451,22 +532,156 @@ private fun GameDetailCard(detail: GameDetail, onClose: () -> Unit) {
                 }.ifEmpty { listOf("标准 GFN") }.joinToString(" · "),
                 color = MaterialTheme.colorScheme.primary,
             )
-            Text("可用商店：${detail.variants.map { it.appStore }.distinct().joinToString(" / ").ifBlank { "未知" }}")
-            Text("启动串流：第 4 版开始接 CloudMatch / Queue", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("v4 会话测试固定 SDR8；HDR/Main10 不在这一版请求。")
+            if (detail.variants.isEmpty()) {
+                Text("当前详情没有可启动 variant。", color = MaterialTheme.colorScheme.error)
+            } else {
+                detail.variants.forEach { variant ->
+                    Button(onClick = { onStartSession(detail, variant) }) {
+                        Text(
+                            buildString {
+                                append("建立 ${variant.appStore} Session")
+                                if (variant.isOwned) append(" · 已拥有")
+                            },
+                        )
+                    }
+                }
+            }
             OutlinedButton(onClick = onClose) { Text("关闭详情") }
         }
     }
 }
 
 @Composable
-private fun DiagnosticsScreen(snapshot: DiagnosticsSnapshot, contentState: ContentUiState) {
+private fun SessionScreen(
+    state: SessionUiState,
+    resumeRecord: PersistedSessionRecord?,
+    onResume: () -> Unit,
+    onClaim: () -> Unit,
+    onEnd: () -> Unit,
+    onCancel: () -> Unit,
+    onForget: () -> Unit,
+) {
+    LazyColumn(
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Text("CloudMatch 会话", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
+            Text("第 4 版只验证 Session Lifecycle，不创建 WebRTC PeerConnection。")
+        }
+
+        if (resumeRecord != null) {
+            item {
+                Card(shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("可恢复 Session", style = MaterialTheme.typography.titleMedium)
+                        Text("${resumeRecord.gameTitle} · ${resumeRecord.appStore}")
+                        Text("Session ID：${resumeRecord.sessionId}")
+                        Text("Server：${resumeRecord.serverIp ?: "等待分配"}")
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(onClick = onResume) { Text("Claim / Resume") }
+                            OutlinedButton(onClick = onForget) { Text("仅清除本地记录") }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            SessionStateCard(state)
+        }
+
+        item {
+            when (state) {
+                is SessionUiState.Creating,
+                is SessionUiState.Queued,
+                is SessionUiState.Preparing -> Button(onClick = onCancel) { Text("取消并清理 Session") }
+
+                is SessionUiState.Ready -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onClaim) { Text("验证 Claim / Resume") }
+                    OutlinedButton(onClick = onEnd) { Text("End Session") }
+                }
+
+                is SessionUiState.Claimed -> OutlinedButton(onClick = onEnd) { Text("End Session") }
+                is SessionUiState.Error -> if (state.session != null || resumeRecord != null) {
+                    OutlinedButton(onClick = onEnd) { Text("尝试 End / Cleanup") }
+                }
+                is SessionUiState.Claiming,
+                is SessionUiState.Ending -> CircularProgressIndicator()
+                SessionUiState.Idle,
+                SessionUiState.Ended,
+                SessionUiState.Cancelled -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionStateCard(state: SessionUiState) {
+    Card(shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("状态：${sessionStateLabel(state)}", style = MaterialTheme.typography.titleMedium)
+            when (state) {
+                SessionUiState.Idle -> Text("在游戏详情选择一个商店 Variant 后开始。")
+                is SessionUiState.Creating -> Text("${state.gameTitle} · ${state.appStore}")
+                is SessionUiState.Queued -> SessionInfoRows(state.session)
+                is SessionUiState.Preparing -> SessionInfoRows(state.session)
+                is SessionUiState.Ready -> {
+                    Text("已连续确认 Ready；尚未启动视频。", color = MaterialTheme.colorScheme.primary)
+                    SessionInfoRows(state.session)
+                }
+                is SessionUiState.Claiming -> {
+                    Text("${state.gameTitle} · ${state.appStore}")
+                    Text("Session ID：${state.sessionId}")
+                }
+                is SessionUiState.Claimed -> {
+                    Text("RESUME PUT / Claim 已完成；尚未连接 WebRTC。", color = MaterialTheme.colorScheme.primary)
+                    SessionInfoRows(state.session)
+                }
+                is SessionUiState.Ending -> Text("正在发送 DELETE / 清理本地 resume 记录…")
+                SessionUiState.Ended -> Text("服务端 Session 已结束。")
+                SessionUiState.Cancelled -> Text("已取消并执行 best-effort cleanup。")
+                is SessionUiState.Error -> {
+                    Text(state.message, color = MaterialTheme.colorScheme.error)
+                    state.session?.let { SessionInfoRows(it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionInfoRows(session: SessionInfo) {
+    Text("Session ID：${session.sessionId}")
+    Text("status=${session.status} · queue=${session.queuePosition ?: "-"} · seatStep=${session.seatSetupStep ?: "-"}")
+    session.seatSetupEtaMs?.let { Text("服务器 setup ETA：${it / 1000.0}s") }
+    Text("GPU：${session.gpuType ?: "未报告"}")
+    Text("Server：${session.serverIp ?: session.sessionControlIp ?: "等待分配"}")
+    Text("ConnectionInfo：${session.connectionInfo.size} 条 · ICE：${session.iceServers.size} 条")
+    session.signalingUrl?.let { Text("Signaling：$it") }
+    if (session.profile.bitDepth != null || session.profile.colorMode.name != "Unknown") {
+        Text("Server profile：${session.profile.bitDepth ?: "?"}-bit · ${session.profile.colorMode}")
+    }
+    session.adRequirement?.let {
+        Text("Queue Ad：required=${it.required} paused=${it.queuePaused}", color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun DiagnosticsScreen(
+    snapshot: DiagnosticsSnapshot,
+    contentState: ContentUiState,
+    sessionState: SessionUiState,
+    resumeRecord: PersistedSessionRecord?,
+) {
     LazyColumn(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
             Text("诊断", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("第 3 版开始同时显示协议身份、内容服务和未来串流状态。")
+            Text("v4 增加 CloudMatch / Queue / Ready / Claim / Resume / End 观测。")
         }
         item {
             DiagnosticSection(
@@ -493,8 +708,26 @@ private fun DiagnosticsScreen(snapshot: DiagnosticsSnapshot, contentState: Conte
             DiagnosticSection("GFN 内容服务", rows)
         }
         item {
+            val info = sessionFromState(sessionState)
             DiagnosticSection(
-                "本地能力",
+                "CloudMatch Session",
+                buildList {
+                    add("状态" to sessionStateLabel(sessionState))
+                    add("Resume record" to if (resumeRecord == null) "无" else "有")
+                    if (info != null) {
+                        add("Session ID" to info.sessionId)
+                        add("Queue" to (info.queuePosition?.toString() ?: "-"))
+                        add("GPU" to (info.gpuType ?: "未报告"))
+                        add("Server" to (info.serverIp ?: "未报告"))
+                        add("ConnectionInfo" to info.connectionInfo.size.toString())
+                        add("ICE servers" to info.iceServers.size.toString())
+                    }
+                },
+            )
+        }
+        item {
+            DiagnosticSection(
+                "本地能力（媒体阶段尚未启用）",
                 listOf(
                     "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
                     "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
@@ -504,12 +737,12 @@ private fun DiagnosticsScreen(snapshot: DiagnosticsSnapshot, contentState: Conte
         }
         item {
             DiagnosticSection(
-                "串流（尚未连接）",
+                "媒体（v5 才开始）",
                 listOf(
-                    "协商色彩模式" to snapshot.negotiatedColorMode.name,
-                    "Codec" to (snapshot.decoder.codec ?: "未连接"),
-                    "Profile" to (snapshot.decoder.profile ?: "未知"),
-                    "Bit depth" to (snapshot.decoder.bitDepth?.toString() ?: "未知"),
+                    "Codec" to "未连接",
+                    "Profile" to "未协商",
+                    "Bit depth" to "未解码",
+                    "WebRTC" to "未创建 PeerConnection",
                 ),
             )
         }
@@ -536,6 +769,7 @@ private fun SettingsScreen(
     darkTheme: Boolean,
     authState: AuthUiState,
     contentState: ContentUiState,
+    sessionState: SessionUiState,
     onToggleTheme: () -> Unit,
 ) {
     LazyColumn(
@@ -555,25 +789,47 @@ private fun SettingsScreen(
         item {
             Card(shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("第三版状态", style = MaterialTheme.typography.titleMedium)
-                    Text(if (authState is AuthUiState.SignedIn) "真实 Device Flow：已连接" else "真实 Device Flow：等待登录")
+                    Text("第四版状态", style = MaterialTheme.typography.titleMedium)
+                    Text(if (authState is AuthUiState.SignedIn) "Auth：真机已验证" else "Auth：等待登录")
                     Text(
                         when (contentState) {
-                            is ContentUiState.Ready -> "Account / Subscription / Catalog / Library：已加载"
-                            ContentUiState.Loading -> "Account / Subscription / Catalog / Library：加载中"
-                            is ContentUiState.Error -> "Account / Subscription / Catalog / Library：错误"
-                            ContentUiState.WaitingForLogin -> "Account / Subscription / Catalog / Library：等待登录"
+                            is ContentUiState.Ready -> "Content：会员 / Library / Catalog / Search / Detail 已加载"
+                            ContentUiState.Loading -> "Content：加载中"
+                            is ContentUiState.Error -> "Content：错误"
+                            ContentUiState.WaitingForLogin -> "Content：等待登录"
                         },
                     )
-                    Text("下一阶段：Regions / CloudMatch Create / Queue / Ready")
-                    Text("串流里程碑 1：H.264 SDR 1080p60")
-                    Text("串流里程碑 2：HEVC Main SDR8")
-                    Text("串流里程碑 3：HEVC Main10 SDR10")
-                    Text("串流里程碑 4：HDR10 · BT.2020 · ST2084")
+                    Text("Session：${sessionStateLabel(sessionState)}")
+                    Text("v4：CloudMatch Create → Queue → Ready → Claim / Resume → End")
+                    Text("v5：WebRTC Signaling → SDP → H.264 First Frame")
+                    Text("后续：HEVC Main → Main10 → HDR10")
                 }
             }
         }
     }
+}
+
+private fun sessionStateLabel(state: SessionUiState): String = when (state) {
+    SessionUiState.Idle -> "Idle"
+    is SessionUiState.Creating -> "Creating"
+    is SessionUiState.Queued -> "Queued(${state.session.queuePosition ?: "?"})"
+    is SessionUiState.Preparing -> "Preparing(step=${state.session.seatSetupStep ?: "?"})"
+    is SessionUiState.Ready -> "Ready"
+    is SessionUiState.Claiming -> "Claiming"
+    is SessionUiState.Claimed -> "Claimed"
+    is SessionUiState.Ending -> "Ending"
+    SessionUiState.Ended -> "Ended"
+    SessionUiState.Cancelled -> "Cancelled"
+    is SessionUiState.Error -> "Failed"
+}
+
+private fun sessionFromState(state: SessionUiState): SessionInfo? = when (state) {
+    is SessionUiState.Queued -> state.session
+    is SessionUiState.Preparing -> state.session
+    is SessionUiState.Ready -> state.session
+    is SessionUiState.Claimed -> state.session
+    is SessionUiState.Error -> state.session
+    else -> null
 }
 
 private fun Boolean.asYesNo(): String = if (this) "是" else "否"
