@@ -1,5 +1,6 @@
 package dev.gfn.android.ui
 
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,7 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,35 +40,22 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import dev.gfn.account.GfnAccountClient
-import dev.gfn.android.auth.AndroidKeystoreTokenStore
-import dev.gfn.android.auth.AuthController
+import dev.gfn.android.GfnAppRuntimeViewModel
 import dev.gfn.android.auth.AuthUiState
 import dev.gfn.android.content.ContentUiState
 import dev.gfn.android.content.GameDetailUiState
-import dev.gfn.android.content.GfnContentController
-import dev.gfn.android.session.AndroidSessionRecordStore
-import dev.gfn.android.session.AndroidStableDeviceId
-import dev.gfn.android.session.GfnSessionController
 import dev.gfn.android.session.PersistedSessionRecord
 import dev.gfn.android.session.SessionUiState
 import dev.gfn.android.stream.GfnStreamingController
-import dev.gfn.auth.AuthSessionService
-import dev.gfn.auth.NvidiaAuthApi
-import dev.gfn.auth.NvidiaAuthReferenceDefaults
-import dev.gfn.cloudmatch.GfnCloudMatchClient
 import dev.gfn.core.model.GameDetail
 import dev.gfn.core.model.GameSummary
 import dev.gfn.core.model.GameVariant
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.diagnostics.DiagnosticsSnapshot
-import dev.gfn.games.GfnGamesClient
 import dev.gfn.identity.GfnClientIdentity
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
 import dev.gfn.webrtc.GfnVideoSurfaceView
-import dev.gfn.network.UrlConnectionHttpTransport
-import kotlinx.coroutines.delay
 
 private enum class AppTab(val title: String, val glyph: String) {
     Home("首页", "H"),
@@ -79,46 +67,16 @@ private enum class AppTab(val title: String, val glyph: String) {
 }
 
 @Composable
-fun GfnAndroidApp() {
-    var darkTheme by remember { mutableStateOf(true) }
-    var tab by remember { mutableStateOf(AppTab.Home) }
-    var fullscreenStream by remember { mutableStateOf(false) }
-    val context = LocalContext.current.applicationContext
-    val scope = rememberCoroutineScope()
-    val transport = remember { UrlConnectionHttpTransport() }
+fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
+    var darkTheme by rememberSaveable { mutableStateOf(true) }
+    var tabName by rememberSaveable { mutableStateOf(AppTab.Home.name) }
+    var fullscreenStream by rememberSaveable { mutableStateOf(false) }
+    val tab = AppTab.entries.firstOrNull { it.name == tabName } ?: AppTab.Home
 
-    val authController = remember(context, scope, transport) {
-        val api = NvidiaAuthApi(
-            transport = transport,
-            config = NvidiaAuthReferenceDefaults.config.copy(displayName = "Android"),
-            sleepSeconds = { seconds -> delay(seconds * 1_000L) },
-        )
-        AuthController(
-            service = AuthSessionService(api, AndroidKeystoreTokenStore(context)),
-            scope = scope,
-        )
-    }
-    val contentController = remember(authController, scope, transport) {
-        GfnContentController(
-            authController = authController,
-            accountClient = GfnAccountClient(transport),
-            gamesClient = GfnGamesClient(transport),
-            scope = scope,
-        )
-    }
-    val sessionController = remember(authController, scope, transport, context) {
-        val stableDeviceId = AndroidStableDeviceId(context)
-        GfnSessionController(
-            authController = authController,
-            cloudMatchClient = GfnCloudMatchClient(
-                transport = transport,
-                deviceId = stableDeviceId::getOrCreate,
-            ),
-            recordStore = AndroidSessionRecordStore(context),
-            scope = scope,
-        )
-    }
-    val streamingController = remember(context) { GfnStreamingController(context) }
+    val authController = runtime.authController
+    val contentController = runtime.contentController
+    val sessionController = runtime.sessionController
+    val streamingController = runtime.streamingController
 
     val authState by authController.state.collectAsState()
     val contentState by contentController.state.collectAsState()
@@ -132,19 +90,34 @@ fun GfnAndroidApp() {
     LaunchedEffect(authController) { authController.restoreOnce() }
     LaunchedEffect(sessionController) { sessionController.restoreResumeRecordOnce() }
     LaunchedEffect(authState) { contentController.onAuthStateChanged(authState) }
+    LaunchedEffect(tabName, fullscreenStream, sessionState, streamState) {
+        Log.i(
+            "GfnNav",
+            "route=$tabName fullscreen=$fullscreenStream session=${sessionState.javaClass.simpleName} stream=${streamState.javaClass.simpleName}",
+        )
+    }
+    LaunchedEffect(sessionState, streamState) {
+        if (sessionState is SessionUiState.Ended || streamState is StreamState.SessionEnded) {
+            fullscreenStream = false
+            tabName = AppTab.Session.name
+        }
+    }
 
     val startSession: (GameDetail, GameVariant) -> Unit = { detail, variant ->
         val ready = contentState as? ContentUiState.Ready
         if (ready != null) {
             contentController.closeGameDetail()
             sessionController.startGame(detail, variant, ready.subscription)
-            tab = AppTab.Session
+            tabName = AppTab.Session.name
         }
     }
 
     GfnTheme(darkTheme = darkTheme) {
         val claimedForFullscreen = sessionState as? SessionUiState.Claimed
-        if (fullscreenStream && claimedForFullscreen != null && streamState !is StreamState.Idle && streamState !is StreamState.Closed) {
+        if (
+            fullscreenStream && claimedForFullscreen != null &&
+            streamState !is StreamState.Idle && streamState !is StreamState.Closed && streamState !is StreamState.SessionEnded
+        ) {
             FullscreenStreamScreen(
                 controller = streamingController,
                 streamState = streamState,
@@ -159,7 +132,7 @@ fun GfnAndroidApp() {
                     AppTab.entries.forEach { item ->
                         NavigationBarItem(
                             selected = tab == item,
-                            onClick = { tab = item },
+                            onClick = { tabName = item.name },
                             icon = { Text(item.glyph, fontWeight = FontWeight.Bold) },
                             label = { Text(item.title) },
                         )
@@ -178,7 +151,7 @@ fun GfnAndroidApp() {
                         onCancelLogin = authController::cancelLogin,
                         onLogout = authController::signOut,
                         onRefreshContent = contentController::refresh,
-                        onOpenSession = { tab = AppTab.Session },
+                        onOpenSession = { tabName = AppTab.Session.name },
                     )
                     AppTab.Library -> GameListScreen(
                         title = "游戏库",
@@ -662,6 +635,7 @@ private fun SessionScreen(
                         is StreamState.Failed -> Button(onClick = { onConnectStream(state.session) }) {
                             Text("连接 WebRTC H.264")
                         }
+                        StreamState.SessionEnded -> Text("服务端已结束当前游戏会话。")
                         else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(onClick = onEnterFullscreen) { Text("进入全屏键鼠") }
                             OutlinedButton(onClick = onDisconnectStream) { Text("断开 WebRTC") }
@@ -796,7 +770,7 @@ private fun DiagnosticsScreen(
     ) {
         item {
             Text("诊断", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5.1 分开观察 Session、WSS、SDP、ICE、第一帧与键鼠输入状态。")
+            Text("v5.1.1 分开观察 Session、WSS、SDP、ICE、音频、控制通道、第一帧与键鼠输入状态。")
         }
         item {
             DiagnosticSection(
@@ -890,6 +864,26 @@ private fun DiagnosticsScreen(
                     "ICE gathering" to streamDiagnostics.ice.iceGatheringState,
                     "ICE connection" to streamDiagnostics.ice.iceConnectionState,
                     "Peer connection" to streamDiagnostics.ice.peerConnectionState,
+                ),
+            )
+        }
+        item {
+            DiagnosticSection(
+                "Audio",
+                listOf(
+                    "Remote audio track" to streamDiagnostics.audio.remoteAudioTrackPresent.asYesNo(),
+                    "Audio track enabled" to streamDiagnostics.audio.remoteAudioTrackEnabled.asYesNo(),
+                    "First audio RTP" to streamDiagnostics.audio.firstRtpPacketReceived.asYesNo(),
+                ),
+            )
+        }
+        item {
+            DiagnosticSection(
+                "Control Channel",
+                listOf(
+                    "control_channel" to streamDiagnostics.control.controlChannelPresent.asYesNo(),
+                    "State" to streamDiagnostics.control.controlChannelState,
+                    "exitMessage" to streamDiagnostics.control.exitMessageSeen.asYesNo(),
                 ),
             )
         }
@@ -997,7 +991,7 @@ private fun SettingsScreen(
                     Text("v4：CloudMatch / Claim 已进入 soft-freeze")
                     Text("v5.0：WSS → SDP → ICE → H.264 First Frame · 真机通过")
                     Text("v5.1：全屏键鼠 + releaseAll(reason) + ordered queue + epoch")
-                    Text("后续：Audio → Reconnect → HEVC Main → Main10 → HDR10")
+                    Text("后续：Audio quality/stereo → Reconnect → HEVC Main → Main10 → HDR10")
                 }
             }
         }
@@ -1035,6 +1029,7 @@ private fun streamStateLabel(state: StreamState): String = when (state) {
     StreamState.IceChecking -> "ICE Checking"
     StreamState.Connected -> "Connected"
     StreamState.FirstFrame -> "FIRST FRAME"
+    StreamState.SessionEnded -> "Session Ended"
     is StreamState.Failed -> "Failed"
     StreamState.Closed -> "Closed"
 }

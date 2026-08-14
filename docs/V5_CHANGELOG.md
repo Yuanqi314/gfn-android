@@ -1,3 +1,17 @@
+# v5.1.1 — 真机问题修正版
+
+- Android 真机 wheel direction：取消 v5.1 对 `AXIS_VSCROLL` 的额外负号；保持倍率/accumulator/packet framing 不变。
+- 新增 `GfnAppRuntimeViewModel`，把 Auth/Content/Session/WebRTC runtime 提升到 Activity configuration recreation 之外。
+- `MainActivity` 增加 Activity instance/orientation 生命周期日志。
+- 全屏使用 `SENSOR_LANDSCAPE` best-effort、immersive system bars、真实窗口边界与 first-frame aspect ratio 居中显示。
+- 恢复 remote WebRTC `AudioTrack`：从旧版 `setEnabled(false)` 改为 `setEnabled(true)`；不引入新 ADM/5.1/麦克风。
+- 实现 server-created `control_channel`，解析 top-level `exitMessage`。
+- `exitMessage` 加 generation + channel identity + terminal idempotence，先 releaseAll/drain 再进入 `SessionEnded`。
+- 服务端终态会 `detachOwnedSession()` 并清除本地 resume record，避免对已结束 Session 再执行错误 DELETE。
+- ICE/PeerConnection/control channel 异常关闭增加 CloudMatch reconcile；当前仅 HTTP 404/410 判终态，其他状态只记录。
+- Auth persistence 仅增加 restore/cleanup reason diagnostics，不修改存储/清理策略。
+- 不修改 CloudMatch Create/Claim/RESUME、GFN WSS、SDP、ICE、H.264。
+
 ## v5.0.1 — GFN WebSocket Upgrade 修复
 
 - 修复真实真机 `Expected HTTP 101 response but was 400 Bad Request`。
@@ -76,3 +90,19 @@
 - DataChannel native callback 增加异常隔离，避免 Kotlin 异常穿出 JNI observer。
 - 保持 `api("io.github.webrtc-sdk:android:144.7559.09")`，不回归成 `implementation`。
 - 未修改 CloudMatch、Claim/RESUME、GFN WSS envelope、SDP、ICE、H.264 解码/Surface 行为。
+
+## v5.1.1 — 真机问题修正版
+
+- 根据真机结果修复 Android wheel sign：`-AXIS_VSCROLL * 3` → `AXIS_VSCROLL * 3`，GFN packet framing 不变。
+- 修复 v5.1 无声音：删除 remote `AudioTrack.setEnabled(false)` 视频-only 冻结开关，收到 audio receiver 后启用 track，并增加 Audio RTP/track diagnostics。
+- 根据上传 logcat 确认“手动横屏→回主页”这一例发生 Activity recreation；新增 `GfnAppRuntimeViewModel`，将 Auth/Content/Session/Streaming runtime owner 从 Composable `remember` 提升到 configuration-surviving ViewModel。
+- `tabName/fullscreenStream` 改为 `rememberSaveable`，rotation 后 UI 重新 attach 到现存 runtime；显式加入 `androidx.lifecycle:lifecycle-viewmodel:2.11.0`。
+- Fullscreen 新增 `SENSOR_LANDSCAPE` best-effort；实际 layout 继续以 Window bounds 为准，视频继续 `SCALE_ASPECT_FIT`。
+- old/new fullscreen Surface 切换使用 identity-safe unbind，旧 View 不能误解绑新 View。
+- 新增 `control_channel` server-created DataChannel 处理；检测顶层 `exitMessage`，使用 connection generation + channel identity + terminal idempotence 防旧连接污染。
+- server exit 后执行 input SessionEnd release，Stream/Session 进入 Ended，清理本地 resume record，不再次 DELETE 已由服务器结束的 Session。
+- transport 异常时增加保守 Session reconcile：复用现有 `pollSession`，只把 HTTP 404/410 作为 Session 已不存在的终态证据，其他 status/API code 不推断。
+- #4 登录记录偶发消失暂不改变存储策略，只新增 `CredentialRestore/CredentialCleanup` reason-only logs。
+- 新增 Activity/Nav/Stream correlation logs，便于以后捕捉未复现的突发 Home-return。
+- 保持 WebRTC 依赖 `api("io.github.webrtc-sdk:android:144.7559.09")`。
+- 未修改 CloudMatch wire body、GFN WSS envelope、SDP H.264、ICE host candidate 或 H.264 renderer。

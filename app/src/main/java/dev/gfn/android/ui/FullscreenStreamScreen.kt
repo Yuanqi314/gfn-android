@@ -3,6 +3,7 @@ package dev.gfn.android.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.os.Build
 import android.view.View
 import android.view.WindowInsets
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -85,6 +87,9 @@ fun FullscreenStreamScreen(
         val window = activity?.window
         val decor = window?.decorView
         val oldVisibility = decor?.systemUiVisibility
+        if (activity != null && activity.requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+            runCatching { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
+        }
         if (window != null && decor != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 window.insetsController?.apply {
@@ -113,6 +118,9 @@ fun FullscreenStreamScreen(
                     run { decor.systemUiVisibility = oldVisibility }
                 }
             }
+            if (activity != null && !activity.isChangingConfigurations) {
+                runCatching { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+            }
         }
     }
 
@@ -135,10 +143,22 @@ fun FullscreenStreamScreen(
         setLocalOverlay(!overlayOpen)
     }
 
+    val videoAspectRatio = diagnostics.video.firstFrameWidth
+        ?.takeIf { it > 0 }
+        ?.let { width ->
+            diagnostics.video.firstFrameHeight
+                ?.takeIf { it > 0 }
+                ?.let { height -> width.toFloat() / height.toFloat() }
+        }
+        ?: (16f / 9f)
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { videoView },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .aspectRatio(videoAspectRatio)
+                .fillMaxSize(),
             update = { view ->
                 if (!overlayOpen && !view.hasPointerCapture()) {
                     view.requestFocus()
@@ -206,6 +226,11 @@ private fun InputDebugHud(
             color = Color.White,
         )
         Text(
+            "Audio=${if (diagnostics.audio.remoteAudioTrackEnabled) "ON" else "OFF"} RTP=${if (diagnostics.audio.firstRtpPacketReceived) "YES" else "-"} " +
+                "CTRL=${diagnostics.control.controlChannelState}",
+            color = Color.White,
+        )
+        Text(
             "held K ${input.physicalHeldKeys}/${input.remoteHeldKeys} · M ${input.physicalHeldMouseButtons}/${input.remoteHeldMouseButtons}",
             color = Color.White,
         )
@@ -226,6 +251,7 @@ private fun streamStateLabelV51(state: StreamState): String = when (state) {
     StreamState.IceChecking -> "ICE"
     StreamState.Connected -> "Connected"
     StreamState.FirstFrame -> "FIRST FRAME"
+    StreamState.SessionEnded -> "Session Ended"
     is StreamState.Failed -> "Failed"
     StreamState.Closed -> "Closed"
 }

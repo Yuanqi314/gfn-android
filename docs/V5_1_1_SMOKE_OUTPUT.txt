@@ -1,0 +1,32 @@
+GFN Android v5.1.1 targeted validation
+
+V511_STATIC_GUARDS=PASS
+V511_INPUT_CONTROLLER_COMPILE=PASS
+V511_WHEEL_DIRECTION_FIXTURE=PASS delta=3
+V511_ENGINE_CURRENT_SOURCE_COMPILE=PASS
+V511_SESSION_CONTROLLER_COMPILE=PASS
+V511_STREAMING_CONTROLLER_COMPILE=PASS
+V511_RUNTIME_MAIN_COMPILE=PASS
+V511_UI_PARSE_ERRORS=0
+
+Core staged regression:
+core-model PASS
+core-network PASS
+gfn-identity PASS
+gfn-auth PASS
+gfn-account PASS
+gfn-games PASS
+gfn-session PASS
+diagnostics PASS
+stream-core PASS
+stream-input PASS
+stream-signaling PASS
+gfn-cloudmatch PASS
+protocol-cli compile PASS
+protocol-cli run PASS
+V511_CORE_REGRESSION=PASS
+
+Note:
+- A single verify-core.sh invocation produced a transient staged-output/classpath failure after earlier modules reported PASS. That execution is not counted as a full PASS.
+- The same modules were subsequently compiled individually with output existence checks, then protocol-cli was compiled/run successfully.
+- Android SDK/AGP/Compose full APK build is unavailable in this container and is not claimed.

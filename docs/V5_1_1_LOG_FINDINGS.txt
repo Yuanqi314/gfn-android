@@ -1,0 +1,23 @@
+GFN Android v5.1.1 uploaded log findings
+Source: 14_08-13-27-19_719.log
+
+[Orientation / Activity]
+Observed two different MainActivity object identities around manual rotation.
+Portrait window: 1264x2780, rotation=0.
+Landscape window after recreation: 2780x1264, rotation=1.
+Conclusion: manual-rotation home-return path has Activity recreation evidence.
+Do NOT generalize this to unrelated random home returns that were not reproduced.
+
+[Audio]
+JavaAudioDeviceModule created.
+WebRtcAudioTrack initPlayout: 48000 Hz, 1 channel.
+startPlayout succeeded.
+Audio mode MODE_NORMAL.
+On stop: 5,286,240 frames delivered; underrun count 0.
+Source inspection separately confirmed v5.1 explicitly disabled the remote AudioTrack.
+
+[Control channel]
+Old build did not log/handle server control_channel, so absence of control_channel text in this log is not evidence that the server never created it.
+
+[Security]
+No token/credential material copied into this findings file.

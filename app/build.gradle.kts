@@ -11,8 +11,8 @@ android {
         applicationId = "dev.gfn.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.5.1-dev"
+        versionCode = 9
+        versionName = "0.5.1.1-dev"
     }
 
     buildFeatures {
@@ -45,6 +45,7 @@ dependencies {
     implementation(project(":stream-webrtc"))
 
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
     implementation("androidx.compose.material3:material3:1.5.0-alpha25")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     debugImplementation("androidx.compose.ui:ui-tooling:1.12.0-rc01")

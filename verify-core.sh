@@ -1,5 +1,8 @@
 #!/usr/bin/env sh
 set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
+export TERM="${TERM:-xterm}"
 
 
 # v5.0.2 Android/WebRTC static ABI + manifest guards.
@@ -44,23 +47,49 @@ if grep -Fq '!buffer.binary' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRt
 grep -Fq 'getHistoricalAxisValue(MotionEvent.AXIS_RELATIVE_X' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoSurfaceView.kt || { echo 'ERROR: 相对鼠标必须消费 batched historical samples' >&2; exit 1; }
 grep -Fq 'FullscreenStreamScreen' app/src/main/java/dev/gfn/android/ui/GfnAndroidApp.kt || { echo 'ERROR: v5.1 缺少全屏串流页面' >&2; exit 1; }
 echo 'V51_RELEASE_ALL_GUARDS=PASS'
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# v5.1.1 true-device fixes and lifecycle/session-end guards.
+grep -Fq 'pendingWheel += verticalAxis * 3.0' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: Android true-device wheel sign fix missing' >&2; exit 1; }
+if grep -Fq 'pendingWheel += -verticalAxis' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt; then echo 'ERROR: wheel sign regressed to pre-v5.1.1 inversion' >&2; exit 1; fi
+grep -Fq 'track.setEnabled(true)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: remote AudioTrack still disabled' >&2; exit 1; }
+if grep -Fq 'is AudioTrack -> track.setEnabled(false)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt; then echo 'ERROR: remote AudioTrack regressed to video-only mute' >&2; exit 1; fi
+grep -Fq 'label != "control_channel"' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: control_channel registration missing' >&2; exit 1; }
+grep -Fq 'json.has("exitMessage")' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: exitMessage parser missing' >&2; exit 1; }
+grep -Fq 'controlDataChannel !== channel || serverEnded' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: control_channel identity/idempotence guard missing' >&2; exit 1; }
+grep -Fq 'orchestrator.detachOwnedSession()' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: server-end must detach owned Session' >&2; exit 1; }
+grep -Fq 'error.code == 404 || error.code == 410' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: conservative terminal reconcile guard missing' >&2; exit 1; }
+grep -Fq 'androidx.lifecycle:lifecycle-viewmodel:2.11.0' app/build.gradle.kts || { echo 'ERROR: explicit lifecycle-viewmodel dependency missing' >&2; exit 1; }
+grep -Fq 'class GfnAppRuntimeViewModel' app/src/main/java/dev/gfn/android/GfnAppRuntimeViewModel.kt || { echo 'ERROR: retained runtime ViewModel missing' >&2; exit 1; }
+grep -Fq 'ViewModelProvider(this)' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: stream/session runtime is not retained across Activity recreation' >&2; exit 1; }
+grep -Fq 'GfnAndroidApp(runtime)' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: retained runtime not passed into Compose root' >&2; exit 1; }
+grep -Fq 'rememberSaveable { mutableStateOf(false) }' app/src/main/java/dev/gfn/android/ui/GfnAndroidApp.kt || { echo 'ERROR: fullscreen route not saveable across recreation' >&2; exit 1; }
+grep -Fq 'SCREEN_ORIENTATION_SENSOR_LANDSCAPE' app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt || { echo 'ERROR: fullscreen landscape policy missing' >&2; exit 1; }
+grep -Fq '.aspectRatio(videoAspectRatio)' app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt || { echo 'ERROR: fullscreen aspect-fit bounds policy missing' >&2; exit 1; }
+grep -Fq 'if (videoOutput !== output) return' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: fullscreen surface switch lacks identity-safe unbind' >&2; exit 1; }
+grep -Fq 'CredentialRestore:FAILED' app/src/main/java/dev/gfn/android/auth/AndroidKeystoreTokenStore.kt || { echo 'ERROR: auth restore reason diagnostics missing' >&2; exit 1; }
+grep -Fq 'CredentialCleanup:reason=RESTORE_FAILED' app/src/main/java/dev/gfn/android/auth/AndroidKeystoreTokenStore.kt || { echo 'ERROR: auth cleanup reason diagnostics missing' >&2; exit 1; }
+echo 'V511_TRUE_DEVICE_FIX_GUARDS=PASS'
 BUILD="$ROOT/build"
 MODULES="$BUILD/module-check"
 rm -rf "$MODULES"
 mkdir -p "$MODULES"
 
 compile_module() {
-  name=$1
-  echo "COMPILE_START=$name"
-  cp=$2
-  src=$3
-  if [ -n "$cp" ]; then
-    kotlinc -J-Dfile.encoding=UTF-8 -classpath "$cp" $(find "$src" -name '*.kt' -print) -d "$MODULES/$name.jar"
+  module_name=$1
+  classpath_value=$2
+  source_dir=$3
+  output_jar="$MODULES/$module_name.jar"
+  echo "COMPILE_START=$module_name"
+  if [ -n "$classpath_value" ]; then
+    kotlinc -J-Dfile.encoding=UTF-8 -classpath "$classpath_value" $(find "$source_dir" -name '*.kt' -print) -d "$output_jar"
   else
-    kotlinc -J-Dfile.encoding=UTF-8 $(find "$src" -name '*.kt' -print) -d "$MODULES/$name.jar"
+    kotlinc -J-Dfile.encoding=UTF-8 $(find "$source_dir" -name '*.kt' -print) -d "$output_jar"
   fi
-  echo "COMPILE_PASS=$name"
+  if [ ! -s "$output_jar" ]; then
+    echo "ERROR: compiler returned without output jar: $module_name" >&2
+    exit 1
+  fi
+  echo "COMPILE_PASS=$module_name"
 }
 
 compile_module core-model "" "$ROOT/core-model/src/main/kotlin"

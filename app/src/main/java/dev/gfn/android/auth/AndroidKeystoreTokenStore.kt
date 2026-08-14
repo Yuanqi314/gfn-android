@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import dev.gfn.auth.AuthTokens
 import dev.gfn.auth.TokenStore
 import java.io.ByteArrayInputStream
@@ -26,7 +27,10 @@ class AndroidKeystoreTokenStore(context: Context) : TokenStore {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     override suspend fun load(): AuthTokens? {
-        val encoded = prefs.getString(KEY_BLOB, null) ?: return null
+        val encoded = prefs.getString(KEY_BLOB, null) ?: run {
+            Log.i(TAG, "CredentialRestore:BLOB_MISSING")
+            return null
+        }
         return runCatching {
             val blob = Base64.decode(encoded, Base64.NO_WRAP)
             val encryptedBlob = decodeEncryptedBlob(blob)
@@ -37,8 +41,12 @@ class AndroidKeystoreTokenStore(context: Context) : TokenStore {
                 GCMParameterSpec(TAG_BITS, encryptedBlob.iv),
             )
             decodeTokens(cipher.doFinal(encryptedBlob.ciphertext))
-        }.getOrElse {
-            // 当前项目尚处开发期；旧格式、损坏数据或 KeyStore 失效时直接清理，要求重新登录。
+        }.onSuccess {
+            Log.i(TAG, "CredentialRestore:OK")
+        }.getOrElse { error ->
+            // Keep current cleanup behavior unchanged; add reason-only diagnostics without token material.
+            Log.w(TAG, "CredentialRestore:FAILED error=${error::class.simpleName}")
+            Log.w(TAG, "CredentialCleanup:reason=RESTORE_FAILED")
             prefs.edit().remove(KEY_BLOB).apply()
             null
         }
@@ -60,6 +68,7 @@ class AndroidKeystoreTokenStore(context: Context) : TokenStore {
     }
 
     override suspend fun clear() {
+        Log.i(TAG, "CredentialCleanup:reason=EXPLICIT_CLEAR")
         prefs.edit().remove(KEY_BLOB).apply()
     }
 
@@ -205,5 +214,6 @@ class AndroidKeystoreTokenStore(context: Context) : TokenStore {
         const val MAX_IV_BYTES = 64
         const val MAX_BLOB_BYTES = 8 * 1_048_576
         const val MAX_FIELD_BYTES = 1_048_576
+        const val TAG = "GfnCredential"
     }
 }

@@ -28,6 +28,7 @@ sealed interface StreamState {
     data object IceChecking : StreamState
     data object Connected : StreamState
     data object FirstFrame : StreamState
+    data object SessionEnded : StreamState
     data class Failed(val reason: String) : StreamState
     data object Closed : StreamState
 }
@@ -97,6 +98,21 @@ data class InputDiagnostics(
     val lastReleaseReason: String? = null,
 )
 
+data class AudioDiagnostics(
+    val remoteAudioTrackPresent: Boolean = false,
+    val remoteAudioTrackEnabled: Boolean = false,
+    val firstRtpPacketReceived: Boolean = false,
+    val requestedChannels: Int = 2,
+)
+
+data class ControlDiagnostics(
+    val controlChannelPresent: Boolean = false,
+    val controlChannelState: String = "NONE",
+    val rxCount: Int = 0,
+    val exitMessageSeen: Boolean = false,
+    val lastEvent: String? = null,
+)
+
 data class VideoDiagnostics(
     val remoteVideoTrackPresent: Boolean = false,
     val firstRtpPacketReceived: Boolean = false,
@@ -112,6 +128,8 @@ data class StreamDiagnostics(
     val answer: SdpDiagnostics = SdpDiagnostics(),
     val ice: IceDiagnostics = IceDiagnostics(),
     val video: VideoDiagnostics = VideoDiagnostics(),
+    val audio: AudioDiagnostics = AudioDiagnostics(),
+    val control: ControlDiagnostics = ControlDiagnostics(),
     val input: InputDiagnostics = InputDiagnostics(),
 )
 

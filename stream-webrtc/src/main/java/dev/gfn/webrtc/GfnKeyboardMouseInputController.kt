@@ -147,8 +147,9 @@ class GfnKeyboardMouseInputController(
                 dropped += 1
                 return@enqueue
             }
-            // 与当前参考实现一致：垂直滚轮方向取反并乘 3；这里只做离散 accumulator，不做加速度。
-            pendingWheel += -verticalAxis * 3.0
+            // Android AXIS_VSCROLL is already in the direction expected by the current GFN session.
+            // Real-device v5.1 evidence showed the previous Apple-derived sign inversion was backwards.
+            pendingWheel += verticalAxis * 3.0
         }
     }
 

@@ -1,8 +1,4 @@
-# v5.1 真机测试指南
-
-## 前提
-
-v5.0 H.264 画面已经真机成功。v5.1 只判断输入，不重新调整 CloudMatch/WSS/SDP/ICE/H.264。
+# v5.1.1 真机测试指南
 
 ## 1. 构建
 
@@ -11,133 +7,117 @@ Android Studio：
 ```text
 Sync
 → :app assembleDebug
-→ 真机安装
+→ 安装真机
 ```
 
-如果失败，只保留第一条 Kotlin/Java compiler error。
+当前交付环境没有 Android SDK，因此如果 Android Studio 有编译错误，只保留**第一条真实 Kotlin/Java compiler error**即可。
 
-## 2. 进入全屏
+## 2. Audio
 
-真实 Session 到可播放状态后进入：
+进入真实串流后先验证：
 
 ```text
-进入全屏键鼠
+画面继续正常
+Audio Track = present/enabled
+Audio RTP = yes（有数据后）
+游戏有声音
 ```
 
-期望：系统栏隐藏、视频继续播放；Input HUD 能看到 DataChannel / Protocol / Pointer Capture / RemoteState。
+如果仍无声，请提供 Diagnostics Audio 行和 logcat 中 `WebRtcAudioTrackExternal / AudioTrack`；不要先改 SDP/codec。
 
-## 3. DataChannel handshake
+## 3. Wheel
+
+同一游戏菜单/列表中测试：
+
+```text
+滚轮向上 → 内容向预期方向移动
+滚轮向下 → 反方向
+```
+
+v5.1.1 只改变 Android sign，倍率仍为 3。
+
+## 4. Fullscreen / landscape
+
+从正常串流点击进入全屏键鼠：
 
 期望：
 
 ```text
-input_channel_v1 = OPEN
-Protocol = v2 或 v3（以服务器实际为准）
-protocolReady = true
+自动 best-effort 横屏
+system bars 隐藏
+视频保持比例（允许黑边，不允许拉伸）
+Session/WebRTC 不重建
 ```
 
-如果只有 OPEN 而 Protocol 未出现，不应发送键鼠；提供 Input HUD 状态即可。
+随后手动旋转 portrait ↔ landscape 一次。期望仍留在当前 Session/stream UI，不回 Home；视频可通过新的 Surface 重新 attach。
 
-## 4. Keyboard
-
-依次测试：
+若再次回 Home，请抓完整 logcat，重点看：
 
 ```text
-W A S D
-Space
-Enter
-Esc
-Shift
-Ctrl
-Alt
-Tab
-Arrow Keys
+GfnActivity Activity#
+GfnNav route/fullscreen
+GfnStream state/ice/pc
+GfnSession
+GfnAuth
 ```
 
-验证 DOWN/UP 都能在远端产生对应动作。Esc 应传给游戏，不用于本地 Overlay。
-
-## 5. releaseAll 防卡键
-
-在远端持续按住 W，分别触发：
+## 5. releaseAll 回归
 
 ```text
-Activity pause
-Window focus lost
-打开本地 Overlay
-主动退出全屏
-WebRTC disconnect（可控场景）
-Session End
+W DOWN → 打开 Overlay
+W DOWN → Home/后台
+W DOWN → Window focus lost
+Mouse Left DOWN → Pointer Capture lost
 ```
 
-期望：远端角色停止，不出现永久向前。
+不得出现卡 W/卡 Ctrl/卡鼠标键。Pointer Capture lost 单独发生时只释放鼠标，不应无条件 W UP。
 
-HUD 应看到 held keys 归零；如果 DataChannel 已经先关闭，允许 `RemoteState=UNKNOWN`，不能要求假装 ASSUMED_SYNCED。
+## 6. 游戏主动退出 / Session End
 
-## 6. Pointer Capture
-
-鼠标捕获后测试相对移动。然后在仍保持窗口焦点时主动失去 Pointer Capture：
+测试两种真实退出方式之一并说明是哪种：
 
 ```text
-鼠标按钮必须 release
-relative motion / wheel accumulator 清空
-KeyboardActive 仍可继续
+游戏菜单 → Exit/Quit
+Steam → Exit Game
 ```
 
-例如 W 保持按下时失去 Pointer Capture，不应立即产生 W UP；之后 Window focus lost 才应释放 W。
-
-## 7. Mouse
-
-验证：
+期望：
 
 ```text
-Left / Right / Middle
-Wheel Up / Down
-Relative X/Y
+server opens control_channel
+→ exitMessage
+→ StreamState SessionEnded
+→ releaseAll(SessionEnd)
+→ SessionUiState Ended
+→ 本地 resume record 清理
+→ 全屏退出
 ```
 
-如果 Y 方向反了，请只回报“上下反向”，不要改 GFN packet framing；修正应局限在 Android mouse mapper。
+不应再需要手动点 Claim 才发现会话结束。
 
-## 8. 重复 lifecycle 幂等
+如果没有自动结束，请保留退出前 20 秒到退出后 20 秒完整 logcat；尤其需要 DataChannel label/state、control RX、ICE/PC state、Session reconcile。
+
+## 7. Auth persistence
+
+本轮不修登录偶发丢失。如果再次发生，只需保留：
 
 ```text
-W DOWN
-→ onPause
-→ focus lost
-→ pointer capture lost
+GfnCredential CredentialRestore:...
+GfnCredential CredentialCleanup:reason=...
+GfnAuth ...
 ```
 
-不应产生重复有效 W UP，也不应闪退。
+日志不应包含 token/ciphertext/key；不要上传凭据本身。
 
-## 9. 主动 End
-
-按住 W 后执行 End Session：
+## 8. 成功标准
 
 ```text
-freeze input
-→ W UP submitted
-→ local DataChannel drain/barrier
-→ End Session
-```
-
-没有 application-level ACK，因此只能验证本地 packet submission/drain 和远端实际行为，不能仅靠 `send=true` 宣称服务器已处理。
-
-## 建议回报
-
-```text
-Protocol v?
-DataChannel OPEN/CLOSED
-KeyboardActive
-MouseActive
-PointerCapture
-RemoteState
-Physical Held / Remote Assumed
-Generated / Submitted / Rejected / Dropped
-最后输入事件
-最后 release reason
-
-以及真机：
-WASD 是否生效
-鼠标按钮/滚轮是否生效
-鼠标 X/Y 是否方向正确
-pause/focus/overlay 后是否有卡键
+H.264 视频                   ✅ 保持
+键鼠                         ✅ 保持
+滚轮方向                     ✅
+声音                         ✅
+全屏自动横屏/比例             ✅
+旋转不回主页                 ✅
+游戏退出自动 Session End      ✅
+releaseAll 无卡键             ✅
 ```

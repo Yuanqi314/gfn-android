@@ -1,6 +1,6 @@
-# 当前状态 · v5.1
+# 当前状态 · v5.1.1
 
-## 真机已确认
+## 真机已确认（本轮前）
 
 ```text
 Auth / restart restore             ✅
@@ -15,96 +15,42 @@ Offer / Answer / NVST SDP          ✅
 ICE / PeerConnection               ✅
 H.264 RTP                          ✅
 H.264 Decode / Surface             ✅
+Keyboard / Mouse 基础输入          ✅ 用户已进入真实串流测试阶段
 ```
 
-v5.0 H.264 First Frame 已成为真实设备里程碑，媒体链进入 soft-freeze。
-
-## v5.1 已实现，待真机输入验证
+## 最新真机问题与 v5.1.1 状态
 
 ```text
-Fullscreen stream page             ✅ 源码
-input_channel_v1 handshake gate    ✅ 源码/fixture
-Keyboard mapper                    ✅ 源码/fixture
-Keyboard DOWN/UP                   ✅ 源码/fixture
-Mouse buttons                      ✅ 源码/fixture
-Mouse wheel                        ✅ 源码/fixture
-Relative mouse / Pointer Capture   ✅ 源码/类型检查
-releaseAll(reason)                 ✅ 状态机 fixture
-ordered input queue                ✅
-input epoch stale rejection        ✅
-remote UNKNOWN handling            ✅
-active-disconnect local drain      ✅
-JNI callback exception containment ✅
-
-远端游戏实际响应                   ⏳ 真机
+鼠标滚轮方向反                  ✅ 源码已修；待复测
+全屏未自动横屏/旋转回主页        ✅ ownership/orientation 已修；待复测
+偶发无故回主页                   ⚠️ 本次日志只证明“手动旋转”发生 Activity recreation；其他突发情况仍需日志
+游戏退出不自动感知               ✅ control_channel/exitMessage 已补；待真机
+无声音                           ✅ remote AudioTrack disable 根因已修；待真机
+登录记录偶发消失                 ⏸ 暂缓，仅加 diagnostics
 ```
 
-## v5.1 安全状态机
+## 日志已确认
 
-KeyboardActive：
+手动旋转这一例：旧 MainActivity Window 被销毁，新的横屏 MainActivity/DecorView 在同一进程创建，随后再次执行 auth restore。因此“手动横屏后回主页”的 captured case 与 Activity recreation + v5.1 UI/Controller ownership 不持久高度吻合。
 
-```text
-streamConnected
-&& lifecycleResumed
-&& windowFocused
-&& dataChannelOpen
-&& protocolReady
-&& inputEnabled
-&& !overlayOpen
-```
+音频这一例：WebRTC Android AudioTrack 已成功 `initPlayout/startPlayout`，48 kHz，退出时 underrun=0 且已经 delivery 多帧；与此同时 v5.1 源码对 remote `AudioTrack` 调用 `setEnabled(false)`。本轮只把该 track 恢复 enabled。
 
-MouseActive：
+## v5.1.1 不变量
 
-```text
-KeyboardActive
-&& pointerCaptured
-```
+- Activity/Compose recreation 不再拥有/销毁 Session 与 WebRTC runtime；owner 提升到 `GfnAppRuntimeViewModel`。
+- `fullscreenStream/tab` 使用 saveable UI state；rotation 后重新 attach 到现存 runtime。
+- Fullscreen 请求 landscape 只是 UX policy；实际 Window bounds 是布局真值；视频仍 aspect-fit。
+- `control_channel` 的 observer callback 不允许异常穿出 JNI。
+- `exitMessage` 只有当前 generation + 当前 channel 才可触发 terminal transition；重复 terminal event no-op。
+- transport reconcile 只把 404/410 当 terminal；其他 response 不推测。
+- #4 Auth persistence 不改清理行为，只记录 restore/cleanup reason，不记录 token/ciphertext/key。
 
-因此 Pointer Capture 丢失不自动释放键盘。
-
-## releaseAll 语义
-
-全量冻结事件会同步推进 `inputEpoch`，再进入同一个 ordered executor 释放远端假定仍按下的输入。旧 epoch 的迟到事件进入队列后会被丢弃，避免：
+## 暂未宣称
 
 ```text
-W DOWN(epoch N)
-→ releaseAll / epoch N+1
-→ W UP
-→ 迟到的旧 W DOWN
-```
-
-重新让远端变成按下状态。
-
-如果 transport 已关闭：
-
-```text
-clear physical state
-remote assumed -> uncertain
-RemoteState = UNKNOWN
-```
-
-不会伪造“release 成功”。
-
-## protocolReady
-
-DataChannel OPEN 后不立即放行输入。服务器 handshake 解析到 protocol version 后，在 ordered queue 中先处理 uncertain-state neutralization，最后才设置 `protocolReady=true`。
-
-## 当前限制
-
-- 键鼠尚未在远端游戏完成真机动作验证。
-- 完整跨 PeerConnection 自动 reconnect/resync 仍属于后续 v5.3；v5.1 只保证同一输入控制器重新握手时 uncertain state 会先 neutralize。
-- 没有 application-level input ACK，因此 `DataChannel.send=true` / `bufferedAmount=0` 不等于远端游戏已处理。
-- 相对鼠标 Y 方向仍以真机实际游戏行为为最终证据；如方向不符，只修 Android mapper，不改 GFN packet framing。
-- 当前容器没有 Android SDK，不能声明完整 APK/Compose Gradle build 通过。
-
-## 后续路线
-
-```text
-v5.0 H.264 First Frame       ✅ soft-freeze
-v5.1 Keyboard + Mouse        ← 当前
-v5.2 Audio
-v5.3 Reconnect / lifecycle
-HEVC Main SDR8
-Main10 SDR10
-HDR10
+v5.1.1 真机声音修复               ⏳
+v5.1.1 自动横屏/rotation survival ⏳
+v5.1.1 server exitMessage          ⏳
+HEVC / Main10 / HDR                ⏳
+Gamepad / Touch                    ⏳
 ```

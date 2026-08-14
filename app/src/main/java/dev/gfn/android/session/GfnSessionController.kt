@@ -109,6 +109,7 @@ class GfnSessionController(
     private var restored = false
     private var operationGeneration = 0L
     private var activeJob: Job? = null
+    private var reconcileJob: Job? = null
     private var activeGame: ActiveGame? = null
 
     private data class ActiveGame(
@@ -329,6 +330,92 @@ class GfnSessionController(
                 failure != null -> SessionUiState.Error(failure.userFacing("结束 Session 失败"), current)
                 cancelledByUser -> SessionUiState.Cancelled
                 else -> SessionUiState.Ended
+            }
+        }
+    }
+
+    /**
+     * Server-originated terminal event. Do not DELETE again: the server already ended this session.
+     * Session identity + terminal idempotence protect a new session from stale control-channel events.
+     */
+    fun onServerSessionEnded(sessionId: String, source: String) {
+        val knownId = currentSession()?.sessionId ?: _resumeRecord.value?.sessionId
+        if (knownId != sessionId) {
+            Log.w(TAG, "Ignore stale server-end event source=$source")
+            return
+        }
+        when (_state.value) {
+            SessionUiState.Ended, SessionUiState.Cancelled -> return
+            else -> Unit
+        }
+
+        operationGeneration += 1
+        orchestrator.cancelAttempt()
+        orchestrator.detachOwnedSession()
+        Log.i(TAG, "Server ended current session source=$source")
+        _state.value = SessionUiState.Ended
+
+        val job = activeJob
+        if (job == null || !job.isActive) {
+            activeJob = null
+        } else {
+            job.invokeOnCompletion {
+                scope.launch { if (activeJob === job) activeJob = null }
+            }
+        }
+        activeGame = null
+        scope.launch {
+            withContext(Dispatchers.IO) { recordStore.clear() }
+            _resumeRecord.value = null
+        }
+    }
+
+    /**
+     * WebRTC/control transport 异常断开后的保守服务端复核。
+     * 只把 HTTP 404/410 当作“当前 Session 已不存在”的终态证据；其他返回不猜 NVIDIA 语义。
+     */
+    fun reconcileAfterStreamDisconnect(sessionId: String, source: String) {
+        if (reconcileJob?.isActive == true) {
+            Log.i(TAG, "Session reconcile coalesced source=$source")
+            return
+        }
+        val current = currentSession()
+        if (current == null || current.sessionId != sessionId) {
+            Log.i(TAG, "Session reconcile skipped stale source=$source")
+            return
+        }
+        val auth = authController.currentSession()
+        if (auth == null) {
+            Log.w(TAG, "Session reconcile skipped: auth unavailable source=$source")
+            return
+        }
+
+        val job = scope.launch {
+            try {
+                val polled = port.pollSession(current, auth.gfnToken)
+                if (currentSession()?.sessionId != sessionId) return@launch
+                Log.i(
+                    TAG,
+                    "Session reconcile active source=$source status=${polled.status} queue=${polled.queuePosition}",
+                )
+            } catch (error: CloudMatchException.Http) {
+                if (error.code == 404 || error.code == 410) {
+                    Log.i(TAG, "Session reconcile terminal source=$source http=${error.code}")
+                    onServerSessionEnded(sessionId, "reconcile.http.${error.code}")
+                } else {
+                    Log.w(TAG, "Session reconcile HTTP source=$source code=${error.code}")
+                }
+            } catch (error: CloudMatchException.ApiStatus) {
+                Log.w(TAG, "Session reconcile API source=$source code=${error.code}")
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.w(TAG, "Session reconcile failed source=$source error=${error::class.simpleName}")
+            }
+        }
+        reconcileJob = job
+        job.invokeOnCompletion {
+            scope.launch {
+                if (reconcileJob === job) reconcileJob = null
             }
         }
     }

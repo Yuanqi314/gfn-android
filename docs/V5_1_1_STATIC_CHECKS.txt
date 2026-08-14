@@ -1,0 +1,33 @@
+GFN Android v5.1.1 static checks
+
+WebRTC dependency public ABI: api(io.github.webrtc-sdk:android:144.7559.09) PASS
+ACCESS_NETWORK_STATE app/library PASS
+CHANGE_NETWORK_STATE app/library PASS
+remote AudioTrack setEnabled(true) present PASS
+legacy AudioTrack setEnabled(false) pattern 0 PASS
+Android wheel negative sign pattern 0 PASS
+control_channel present PASS
+exitMessage parser present PASS
+control generation/channel/idempotence guard present PASS
+GfnAppRuntimeViewModel present PASS
+lifecycle-viewmodel 2.11.0 explicit dependency PASS
+rememberSaveable fullscreen route present PASS
+SENSOR_LANDSCAPE policy present PASS
+video output identity-safe unbind present PASS
+Auth diagnostics reason-only present PASS
+empty onClick 0 PASS
+sensitive token logging pattern 0 PASS
+GfnSessionController authController constructor parameter count 1 PASS
+UI Kotlin parse error count 0 PASS
+
+Frozen module diff vs v5.1:
+core-model UNCHANGED
+core-network UNCHANGED
+gfn-auth UNCHANGED
+gfn-account UNCHANGED
+gfn-games UNCHANGED
+gfn-cloudmatch UNCHANGED
+gfn-identity UNCHANGED
+gfn-session UNCHANGED
+stream-input UNCHANGED
+stream-signaling UNCHANGED

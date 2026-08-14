@@ -8,6 +8,8 @@ import dev.gfn.input.GfnInputHandshake
 import dev.gfn.input.InputReleaseReason
 import dev.gfn.signaling.GfnSdpTools
 import dev.gfn.signaling.NvstSdpConfig
+import dev.gfn.stream.AudioDiagnostics
+import dev.gfn.stream.ControlDiagnostics
 import dev.gfn.stream.IceDiagnostics
 import dev.gfn.stream.InputDiagnostics
 import dev.gfn.stream.SdpDiagnostics
@@ -33,6 +35,7 @@ import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.json.JSONObject
 import org.webrtc.VideoTrack
 
 /** v5.0: Claimed Session -> GFN WSS -> SDP -> ICE -> H.264 -> SurfaceViewRenderer。 */
@@ -42,6 +45,8 @@ class GfnWebRtcEngine(
 ) : StreamingEngine {
     interface Listener {
         fun onUpdated(state: StreamState, diagnostics: StreamDiagnostics)
+        fun onServerSessionEnded(sessionId: String, source: String)
+        fun onTransportNeedsReconcile(sessionId: String, source: String)
     }
 
     private val factory: PeerConnectionFactory = GfnWebRtcRuntime.factory(context)
@@ -69,8 +74,10 @@ class GfnWebRtcEngine(
     private val observedReceiverIds = mutableSetOf<String>()
     private val dataChannels = mutableListOf<DataChannel>()
     private var inputDataChannel: DataChannel? = null
+    private var controlDataChannel: DataChannel? = null
     private var inputController: GfnKeyboardMouseInputController? = null
     private var partialReliableThresholdMs = 300
+    private var serverEnded = false
 
     override fun connect(session: SessionInfo, config: StreamConfig) {
         val failure = validate(session, config)
@@ -103,6 +110,8 @@ class GfnWebRtcEngine(
             pendingLocalIce.clear()
             observedReceiverIds.clear()
             partialReliableThresholdMs = 300
+            serverEnded = false
+            controlDataChannel = null
             diagnostics = StreamDiagnostics(
                 signaling = SignalingDiagnostics(
                     endpointHost = runCatching { URI(resolvedSignalingUrl).host }.getOrNull(),
@@ -112,6 +121,7 @@ class GfnWebRtcEngine(
                     effectiveIceServers = session.iceServers.size,
                     fallbackActive = false,
                 ),
+                audio = AudioDiagnostics(requestedChannels = config.audioChannels),
             )
             state = StreamState.OpeningSignaling
         }
@@ -327,10 +337,14 @@ class GfnWebRtcEngine(
                             setState(StreamState.Connected)
                         }
                         PeerConnection.IceConnectionState.CHECKING -> setState(StreamState.IceChecking)
-                        PeerConnection.IceConnectionState.DISCONNECTED,
+                        PeerConnection.IceConnectionState.DISCONNECTED -> {
+                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            requestSessionReconcile(eventGeneration, "ice.DISCONNECTED")
+                        }
                         PeerConnection.IceConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
                         PeerConnection.IceConnectionState.FAILED -> {
                             synchronized(lock) { inputController }?.onStreamConnected(false)
+                            requestSessionReconcile(eventGeneration, "ice.FAILED")
                             fail("ICE connection FAILED")
                         }
                         else -> Unit
@@ -346,10 +360,14 @@ class GfnWebRtcEngine(
                             synchronized(lock) { inputController }?.onStreamConnected(true)
                             setState(StreamState.Connected)
                         }
-                        PeerConnection.PeerConnectionState.DISCONNECTED,
+                        PeerConnection.PeerConnectionState.DISCONNECTED -> {
+                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            requestSessionReconcile(eventGeneration, "pc.DISCONNECTED")
+                        }
                         PeerConnection.PeerConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
                         PeerConnection.PeerConnectionState.FAILED -> {
                             synchronized(lock) { inputController }?.onStreamConnected(false)
+                            requestSessionReconcile(eventGeneration, "pc.FAILED")
                             fail("PeerConnection FAILED")
                         }
                         else -> Unit
@@ -378,15 +396,17 @@ class GfnWebRtcEngine(
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
             override fun onAddStream(stream: MediaStream) = Unit
             override fun onRemoveStream(stream: MediaStream) = Unit
-            override fun onDataChannel(dataChannel: DataChannel) = Unit
+            override fun onDataChannel(dataChannel: DataChannel) {
+                ifCurrent(eventGeneration) { runCatching { registerServerDataChannel(dataChannel, eventGeneration) } }
+            }
             override fun onRenegotiationNeeded() = Unit
 
             override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
-                ifCurrent(eventGeneration) { attachReceiver(receiver) }
+                ifCurrent(eventGeneration) { runCatching { attachReceiver(receiver) } }
             }
 
             override fun onTrack(transceiver: RtpTransceiver) {
-                ifCurrent(eventGeneration) { attachReceiver(transceiver.receiver) }
+                ifCurrent(eventGeneration) { runCatching { attachReceiver(transceiver.receiver) } }
             }
         }
         return factory.createPeerConnection(rtc, observer).also {
@@ -475,6 +495,77 @@ class GfnWebRtcEngine(
             },
         )
         synchronized(lock) { inputController }?.onDataChannelState(channel.state() == DataChannel.State.OPEN)
+    }
+
+    private fun registerServerDataChannel(channel: DataChannel, eventGeneration: Long) {
+        val label = runCatching { channel.label() }.getOrNull() ?: return
+        if (label != "control_channel") return
+        synchronized(lock) {
+            if (generation.get() != eventGeneration) return
+            if (controlDataChannel === channel) return
+            controlDataChannel = channel
+            if (!dataChannels.contains(channel)) dataChannels += channel
+        }
+        updateControl { it.copy(controlChannelPresent = true, controlChannelState = runCatching { channel.state().name }.getOrDefault("UNKNOWN")) }
+        channel.registerObserver(object : DataChannel.Observer {
+            override fun onBufferedAmountChange(previousAmount: Long) = Unit
+
+            override fun onStateChange() {
+                if (generation.get() != eventGeneration) return
+                runCatching {
+                    if (!isCurrentControlChannel(channel)) return@runCatching
+                    val channelState = channel.state().name
+                    updateControl { it.copy(controlChannelState = channelState) }
+                    if (channelState == DataChannel.State.CLOSED.name) {
+                        requestSessionReconcile(eventGeneration, "control_channel.CLOSED")
+                    }
+                }
+            }
+
+            override fun onMessage(buffer: DataChannel.Buffer) {
+                if (generation.get() != eventGeneration) return
+                runCatching {
+                    if (!isCurrentControlChannel(channel)) return@runCatching
+                    val source = buffer.data.slice()
+                    val bytes = ByteArray(source.remaining())
+                    source.get(bytes)
+                    val json = JSONObject(bytes.toString(Charsets.UTF_8))
+                    val hasExitMessage = json.has("exitMessage")
+                    updateControl {
+                        it.copy(
+                            rxCount = it.rxCount + 1,
+                            lastEvent = if (hasExitMessage) "exitMessage" else "json",
+                        )
+                    }
+                    if (hasExitMessage) handleServerSessionEnded(channel, eventGeneration)
+                }
+            }
+        })
+    }
+
+    private fun isCurrentControlChannel(channel: DataChannel): Boolean =
+        synchronized(lock) { controlDataChannel === channel }
+
+    private fun handleServerSessionEnded(channel: DataChannel, eventGeneration: Long) {
+        val sessionId = synchronized(lock) {
+            if (generation.get() != eventGeneration || controlDataChannel !== channel || serverEnded) return
+            serverEnded = true
+            session?.sessionId
+        } ?: return
+        updateControl { it.copy(exitMessageSeen = true, lastEvent = "exitMessage") }
+        disconnectWithReason(InputReleaseReason.SessionEnd, emitClosed = false) {
+            state = StreamState.SessionEnded
+            emit()
+            listener.onServerSessionEnded(sessionId, "control_channel.exitMessage")
+        }
+    }
+
+    private fun requestSessionReconcile(eventGeneration: Long, source: String) {
+        val sessionId = synchronized(lock) {
+            if (generation.get() != eventGeneration || serverEnded) return
+            session?.sessionId
+        } ?: return
+        listener.onTransportNeedsReconcile(sessionId, source)
     }
 
     private fun createAnswer(pc: PeerConnection, offerSdp: String, eventGeneration: Long) {
@@ -614,14 +705,24 @@ class GfnWebRtcEngine(
         if (!observedReceiverIds.add(id)) return
         receiver.SetObserver(object : RtpReceiver.Observer {
             override fun onFirstPacketReceived(mediaType: MediaStreamTrack.MediaType) {
-                if (mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO) {
-                    updateVideo { it.copy(firstRtpPacketReceived = true) }
+                when (mediaType) {
+                    MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO -> updateVideo { it.copy(firstRtpPacketReceived = true) }
+                    MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO -> updateAudio { it.copy(firstRtpPacketReceived = true) }
+                    else -> Unit
                 }
             }
         })
         when (val track = receiver.track()) {
             is VideoTrack -> attachVideoTrack(track)
-            is AudioTrack -> track.setEnabled(false) // v5.0 先只验证视频第一帧；音频放到 v5.x。
+            is AudioTrack -> {
+                val enabled = runCatching { track.setEnabled(true) }.getOrDefault(false)
+                updateAudio {
+                    it.copy(
+                        remoteAudioTrackPresent = true,
+                        remoteAudioTrackEnabled = enabled,
+                    )
+                }
+            }
         }
     }
 
@@ -684,6 +785,7 @@ class GfnWebRtcEngine(
             channels = dataChannels.toList()
             dataChannels.clear()
             inputDataChannel = null
+            controlDataChannel = null
             inputController = null
             videoTrack = null
             peerConnection = null
@@ -765,6 +867,12 @@ class GfnWebRtcEngine(
 
     private fun updateVideo(transform: (VideoDiagnostics) -> VideoDiagnostics) =
         updateDiagnostics { it.copy(video = transform(it.video)) }
+
+    private fun updateAudio(transform: (AudioDiagnostics) -> AudioDiagnostics) =
+        updateDiagnostics { it.copy(audio = transform(it.audio)) }
+
+    private fun updateControl(transform: (ControlDiagnostics) -> ControlDiagnostics) =
+        updateDiagnostics { it.copy(control = transform(it.control)) }
 
     private fun emit() {
         listener.onUpdated(state, diagnostics)
