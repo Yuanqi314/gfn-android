@@ -3,10 +3,12 @@ package dev.gfn.webrtc
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.audio.JavaAudioDeviceModule
 
 internal object GfnWebRtcRuntime {
     private val lock = Any()
@@ -27,12 +29,30 @@ internal object GfnWebRtcRuntime {
             )
             initialized = true
         }
-        val created = PeerConnectionFactory.builder()
-            .setVideoEncoderFactory(
-                DefaultVideoEncoderFactory(eglContext(), true, false),
+        // GFN 是游戏媒体播放，不是 VoIP。libwebrtc 默认使用
+        // USAGE_VOICE_COMMUNICATION，部分 Android/OEM 会因此路由到听筒并挂到
+        // STREAM_VOICE_CALL。显式使用 GAME/MUSIC 让系统按媒体播放策略选择扬声器/耳机/蓝牙。
+        // 不强制指定 built-in speaker，避免覆盖用户真实连接的有线/蓝牙输出设备。
+        val adm = JavaAudioDeviceModule.builder(context.applicationContext)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build(),
             )
-            .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglContext()))
-            .createPeerConnectionFactory()
+            .createAudioDeviceModule()
+        val created = try {
+            PeerConnectionFactory.builder()
+                .setAudioDeviceModule(adm)
+                .setVideoEncoderFactory(
+                    DefaultVideoEncoderFactory(eglContext(), true, false),
+                )
+                .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglContext()))
+                .createPeerConnectionFactory()
+        } finally {
+            // PeerConnectionFactory 在创建时取得 ADM 的 native 引用；调用方释放自己的引用。
+            adm.release()
+        }
         factory = created
         created
     }

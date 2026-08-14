@@ -2,6 +2,7 @@ package dev.gfn.android
 
 import android.content.res.Configuration
 import android.os.Bundle
+import android.media.AudioManager
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,6 +20,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logLifecycle("onCreate", "saved=${savedInstanceState != null}")
+        volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge()
         setContent {
             GfnAndroidApp(runtime)

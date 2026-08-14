@@ -78,6 +78,15 @@ class InputStateTracker {
 
     fun recordPhysicalKeyUp(key: GfnKey): HeldKey? = physicalHeldKeys.remove(key.id)
 
+    /**
+     * 远端 modifier 真值只来自我们实际接收并维护的 modifier DOWN/UP。
+     * 不直接信任 Android KeyEvent.metaState，避免 OEM/键盘把系统 Meta 状态
+     * 附带到普通字母事件后变成远端 Win+字母快捷键。
+     */
+    fun currentPhysicalModifierMask(): Int = physicalHeldKeys.values.fold(0) { mask, held ->
+        mask or held.key.modifierBit
+    }
+
     fun recordPhysicalMouseDown(button: Int): Boolean = physicalHeldMouseButtons.add(button)
 
     fun recordPhysicalMouseUp(button: Int): Boolean = physicalHeldMouseButtons.remove(button)

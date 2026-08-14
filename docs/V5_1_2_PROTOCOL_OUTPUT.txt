@@ -1,0 +1,40 @@
+=== GFN Android ??????? ===
+
+[CloudMatch Session Lifecycle]
+identity=GFN-PC/windows
+headers={User-Agent=GFN-Android-Lab/fixture, Authorization=<???>, Accept=application/json, Content-Type=application/json, nv-browser-type=CHROME, nv-client-id=fixture-client, nv-client-streamer=NVIDIA-CLASSIC, nv-client-type=NATIVE, nv-client-version=fixture-version, nv-device-make=UNKNOWN, nv-device-model=UNKNOWN, nv-device-os=WINDOWS, nv-device-type=DESKTOP, x-device-id=<???>, Origin=https://play.geforcenow.com, Referer=https://play.geforcenow.com/}
+create=v4-session, queue=5
+poll status=1 -> Queued(5)
+poll status=1 -> Queued(2)
+poll status=1 -> Preparing(step=3)
+poll status=2 -> Preparing(step=4)
+poll status=2 -> Ready
+ready=v4-session, signaling=wss://80.84.170.152:443/nvst/
+claim=v4-session, status=2
+end=DELETE sent
+Create ? Queue ? Preparing ? ? Ready ? Claim/Resume ? End fixture ????
+
+[v5 Signaling / SDP]
+WSS sign_in + session subprotocol ? peer envelope ? H.264 Answer ? NVST SDP fixture ????
+
+[v5.1 Keyboard / Mouse]
+Handshake ? packet framing ? tracked modifier truth ? release ?? ? epoch stale rejection ????
+
+[Session race cleanup]
+Cancel while Creating ? late create ? DELETE cleanup ????
+
+[Device Flow]
+userCode=ABCD-EFGH
+verificationUri=https://login.example.test
+token=<???>
+user=????/ULTIMATE
+clientToken=???
+deviceFlowRequests=8?Provider discovery + client_token re-bind ????
+
+[?????]
+userinfo 401 ? refresh ? userinfo ?? + Provider ??????
+
+[Account / Subscription / Catalog / Library]
+vpc=NP-TST-01, membership=ULTIMATE, library=1, catalog=2
+gameDetail=Fixture HDR Game/Fixture Studio
+serverInfo ? MES ? Library ? Catalog ? Game Detail fixture ????

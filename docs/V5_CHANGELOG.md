@@ -106,3 +106,17 @@
 - 新增 Activity/Nav/Stream correlation logs，便于以后捕捉未复现的突发 Home-return。
 - 保持 WebRTC 依赖 `api("io.github.webrtc-sdk:android:144.7559.09")`。
 - 未修改 CloudMatch wire body、GFN WSS envelope、SDP H.264、ICE host candidate 或 H.264 renderer。
+
+
+## v5.1.2 — Android 音频路由 / 键盘 modifier 真值
+
+- 真机确认 v5.1.1：声音、滚轮、自动横屏/适配、`control_channel exitMessage` 自动 Session End 均成功。
+- 根据 `31.log`：Android `AudioTrack` 停止日志显示 `stream 0`，与系统通话音量/听筒现象一致。
+- `GfnWebRtcRuntime` 改为显式 `JavaAudioDeviceModule`，AudioAttributes 使用 `USAGE_GAME + CONTENT_TYPE_MUSIC`；不强制 built-in speaker，保留有线/蓝牙正常系统路由。
+- `MainActivity.volumeControlStream = STREAM_MUSIC`，前台硬件音量键控制媒体音量。
+- 键盘 wire packet 的 VK / Set-1 scan code / GFN framing 不变。
+- 普通键的 modifier mask 不再直接信任 `KeyEvent.metaState`；只使用 `InputStateTracker` 实际收到并持有的 Shift/Ctrl/Alt/Meta。
+- Android `metaState` 仍保留为 diagnostics；若 Android-reported mask 与 tracked mask 不同，记录 `GfnInput modifier mismatch`。
+- 新增 Input diagnostics：raw keyCode/metaState、Android modifier mask、tracked modifier mask、mismatch count。
+- 未修改 CloudMatch、GFN WSS、SDP、ICE、H.264、mouse packet framing、control_channel、releaseAll/epoch/ordered queue。
+- 自定义 `JavaAudioDeviceModule` 在 `PeerConnectionFactory` 创建后立即 `adm.release()` 释放调用方持有的 native ref；Factory 保留自己的引用，避免 ADM 生命周期泄漏。

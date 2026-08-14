@@ -1,32 +1,71 @@
 GFN Android v5.1.1 targeted validation
 
-V511_STATIC_GUARDS=PASS
-V511_INPUT_CONTROLLER_COMPILE=PASS
-V511_WHEEL_DIRECTION_FIXTURE=PASS delta=3
-V511_ENGINE_CURRENT_SOURCE_COMPILE=PASS
-V511_SESSION_CONTROLLER_COMPILE=PASS
-V511_STREAMING_CONTROLLER_COMPILE=PASS
-V511_RUNTIME_MAIN_COMPILE=PASS
-V511_UI_PARSE_ERRORS=0
+[Static guards]
+V5_WEBRTC_PUBLIC_ABI=PASS
+V5_WEBRTC_NETWORK_PERMISSIONS=PASS
+V51_INPUT_ARCHITECTURE=PASS
+V51_RELEASE_ALL_GUARDS=PASS
+V511_TRUE_DEVICE_FIX_GUARDS=PASS
 
-Core staged regression:
-core-model PASS
-core-network PASS
-gfn-identity PASS
-gfn-auth PASS
-gfn-account PASS
-gfn-games PASS
-gfn-session PASS
-diagnostics PASS
-stream-core PASS
-stream-input PASS
-stream-signaling PASS
-gfn-cloudmatch PASS
-protocol-cli compile PASS
-protocol-cli run PASS
+[Changed module compile/typecheck]
+TARGET_PURE_MODULES=PASS
+  core-model
+  stream-core
+  stream-input
+  core-network
+  stream-signaling
+V511_WEBRTC_ENGINE_TYPECHECK=PASS
+V511_SESSION_CONTROLLER_TYPECHECK=PASS
+V511_STREAMING_CONTROLLER_TYPECHECK=PASS
+V511_RUNTIME_VIEWMODEL_TYPECHECK=PASS
+V511_MAINACTIVITY_TYPECHECK=PASS
+V511_APP_SYNTAX_SCAN=PASS
+
+[True-device-derived wheel fixture]
+V511_WHEEL_TRUE_DEVICE_DIRECTION_FIXTURE=PASS delta=3
+  AXIS_VSCROLL +1 -> GFN wheel delta +3
+
+[Core regression]
+protocol-cli fresh compile=PASS
+protocol-cli run exit=0
+Covered fixtures:
+  CloudMatch Create -> Queue -> Preparing -> Ready -> Claim/Resume -> End
+  v5 sign_in/session subprotocol/peer envelope/H.264 Answer/NVST SDP
+  v5.1 input handshake/packet framing/release ordering/epoch stale rejection
+  stale create cleanup
+  Device Flow/provider/client_token
+  restore 401 refresh
+  account/subscription/library/catalog/detail
 V511_CORE_REGRESSION=PASS
 
-Note:
-- A single verify-core.sh invocation produced a transient staged-output/classpath failure after earlier modules reported PASS. That execution is not counted as a full PASS.
-- The same modules were subsequently compiled individually with output existence checks, then protocol-cli was compiled/run successfully.
-- Android SDK/AGP/Compose full APK build is unavailable in this container and is not claimed.
+[Frozen source boundary]
+core-model SOURCE_FROZEN=PASS
+core-network SOURCE_FROZEN=PASS
+gfn-auth SOURCE_FROZEN=PASS
+gfn-account SOURCE_FROZEN=PASS
+gfn-games SOURCE_FROZEN=PASS
+gfn-cloudmatch SOURCE_FROZEN=PASS
+gfn-identity SOURCE_FROZEN=PASS
+gfn-session SOURCE_FROZEN=PASS
+stream-input SOURCE_FROZEN=PASS
+stream-signaling SOURCE_FROZEN=PASS
+
+[Full verify-core.sh]
+The monolithic verify-core.sh invocation hit the container execution timeout after:
+  core-model PASS
+  core-network PASS
+  gfn-identity PASS
+  gfn-auth PASS
+  gfn-account PASS
+  gfn-games PASS
+  gfn-session PASS
+and while starting diagnostics compile.
+No Kotlin compiler error was emitted before timeout.
+This monolithic execution is NOT claimed as a full PASS.
+The changed v5.1.1 chain and protocol-cli were separately compiled/run as listed above.
+
+[Environment limit]
+ANDROID_HOME is empty.
+ANDROID_SDK_ROOT is empty.
+No android.jar was found in the checked SDK roots.
+Therefore a real AGP + Android SDK + Compose + libwebrtc AAR assembleDebug is NOT claimed in this container.

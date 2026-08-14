@@ -1,8 +1,27 @@
-# GFN Android Lab · v5.1.1 真机修正版
+# GFN Android Lab · v5.1.2 音频路由 / 键盘 modifier 修正版
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
+
+
+## v5.1.2 本轮新增
+
+真机 v5.1.1 已确认：声音恢复、滚轮方向正确、全屏自动横屏/旋转保持、游戏退出自动 Session End 均通过。当前新增两项：
+
+```text
+1. Android 音频当前走听筒 + 通话音量
+2. 普通字母键可能触发远端 Windows 窗口最小化
+```
+
+v5.1.2 只修这两层：
+
+```text
+AudioDeviceModule: VOICE_COMMUNICATION → GAME/MUSIC
+Keyboard modifier truth: Android metaState → InputStateTracker 实际 held modifier
+```
+
+CloudMatch / WSS / SDP / ICE / H.264 / control_channel / releaseAll packet framing 均保持不变。
 
 ## v5.1.1 本轮范围
 
@@ -97,7 +116,7 @@ core protocol staged compile + protocol-cli           PASS
 static safety guards                                  PASS
 ```
 
-完整单脚本回归曾因验证脚本运行环境里的 staged-output 异常失败，因此不把该次执行计为 PASS；同一批模块已逐模块重新编译并实际运行 protocol-cli 成功，详见 `docs/V5_1_1_SMOKE_OUTPUT.txt`。
+完整 `verify-core.sh` 单次执行在当前容器中于 `diagnostics` 编译开始处达到执行超时；超时前没有 Kotlin compiler error，因此不把这次单脚本执行计为完整 PASS。v5.1.1 实际变更链已逐模块重新编译，`protocol-cli` 也已实际运行成功，详见 `docs/V5_1_1_SMOKE_OUTPUT.txt`。
 
 ## 下一次真机重点
 

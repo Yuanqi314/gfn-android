@@ -1,6 +1,7 @@
-GFN Android v5.1.1 static checks
+GFN Android v5.1.1 static / type checks
 
 WebRTC dependency public ABI: api(io.github.webrtc-sdk:android:144.7559.09) PASS
+WebRTC implementation(...) regression count 0 PASS
 ACCESS_NETWORK_STATE app/library PASS
 CHANGE_NETWORK_STATE app/library PASS
 remote AudioTrack setEnabled(true) present PASS
@@ -9,25 +10,32 @@ Android wheel negative sign pattern 0 PASS
 control_channel present PASS
 exitMessage parser present PASS
 control generation/channel/idempotence guard present PASS
+server terminal detachOwnedSession present PASS
+transport reconcile terminal inference limited to HTTP 404/410 PASS
 GfnAppRuntimeViewModel present PASS
 lifecycle-viewmodel 2.11.0 explicit dependency PASS
 rememberSaveable fullscreen route present PASS
 SENSOR_LANDSCAPE policy present PASS
+fullscreen video aspect-ratio constraint present PASS
 video output identity-safe unbind present PASS
 Auth diagnostics reason-only present PASS
-empty onClick 0 PASS
-sensitive token logging pattern 0 PASS
+AudioDiagnostics declaration count 1 PASS
+ControlDiagnostics declaration count 1 PASS
+empty onClick count 0 PASS
+sensitive token/Authorization/ciphertext direct log pattern count 0 PASS
 GfnSessionController authController constructor parameter count 1 PASS
-UI Kotlin parse error count 0 PASS
+V511_RUNTIME_VIEWMODEL_TYPECHECK PASS
+V511_MAINACTIVITY_TYPECHECK PASS
+V511_APP_SYNTAX_SCAN PASS
 
-Frozen module diff vs v5.1:
-core-model UNCHANGED
-core-network UNCHANGED
-gfn-auth UNCHANGED
-gfn-account UNCHANGED
-gfn-games UNCHANGED
-gfn-cloudmatch UNCHANGED
-gfn-identity UNCHANGED
-gfn-session UNCHANGED
-stream-input UNCHANGED
-stream-signaling UNCHANGED
+Frozen protocol/session source compared with v5.1:
+core-model PASS
+core-network PASS
+gfn-auth PASS
+gfn-account PASS
+gfn-games PASS
+gfn-cloudmatch PASS
+gfn-identity PASS
+gfn-session PASS
+stream-input PASS
+stream-signaling PASS

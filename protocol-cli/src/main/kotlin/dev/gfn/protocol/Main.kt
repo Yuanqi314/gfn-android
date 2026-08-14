@@ -289,6 +289,15 @@ private fun verifyV51KeyboardMouseProtocol() {
     check((mouse[10].toInt() and 0xff) == 0 && (mouse[11].toInt() and 0xff) == 22)
     check(mouse.sliceArray(12..15).contentEquals(byteArrayOf(7, 0, 0, 0)))
 
+    val physicalModifierTracker = InputStateTracker()
+    check(physicalModifierTracker.currentPhysicalModifierMask() == 0)
+    physicalModifierTracker.recordPhysicalKeyDown(HeldKey(ctrl, 0x0002))
+    check(physicalModifierTracker.currentPhysicalModifierMask() == 0x0002)
+    physicalModifierTracker.recordPhysicalKeyDown(HeldKey(w, 0x0002))
+    check(physicalModifierTracker.currentPhysicalModifierMask() == 0x0002)
+    physicalModifierTracker.recordPhysicalKeyUp(ctrl)
+    check(physicalModifierTracker.currentPhysicalModifierMask() == 0)
+
     val tracker = InputStateTracker()
     val ctrlHeld = HeldKey(ctrl, 0x0002)
     // 模拟 W 先按下、随后 Ctrl 才按下；releaseAll 时 W UP 仍必须携带当前 Ctrl mask。
@@ -314,7 +323,7 @@ private fun verifyV51KeyboardMouseProtocol() {
     check(!epoch.isCurrent(old))
     check(epoch.isCurrent(11L))
 
-    println("Handshake → packet framing → release 顺序 → epoch stale rejection 验证通过")
+    println("Handshake → packet framing → tracked modifier truth → release 顺序 → epoch stale rejection 验证通过")
 }
 
 private fun verifyV5SignalingAndSdp() {

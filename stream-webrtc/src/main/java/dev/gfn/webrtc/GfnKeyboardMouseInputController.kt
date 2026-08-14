@@ -8,6 +8,7 @@ import dev.gfn.input.InputReleaseReason
 import dev.gfn.input.InputStateTracker
 import dev.gfn.input.ReleaseCommand
 import dev.gfn.stream.InputDiagnostics
+import android.util.Log
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
@@ -64,6 +65,11 @@ class GfnKeyboardMouseInputController(
     private var releaseCount = 0L
     private var lastEvent: String? = null
     private var lastReleaseReason: InputReleaseReason? = null
+    private var lastRawKeyCode: Int? = null
+    private var lastRawMetaState: Int? = null
+    private var lastAndroidReportedModifierMask: Int? = null
+    private var lastTrackedModifierMask: Int? = null
+    private var modifierMismatchCount = 0L
     private var lastHeartbeatNanos = System.nanoTime()
     private var lastDiagnosticNanos = 0L
 
@@ -75,7 +81,7 @@ class GfnKeyboardMouseInputController(
     fun onKey(down: Boolean, keyCode: Int, metaState: Int): Boolean {
         val key = AndroidKeyboardMapper.map(keyCode) ?: return false
         val eventEpoch = externallyVisibleEpoch.get()
-        val modifiers = AndroidKeyboardMapper.modifiers(metaState)
+        val androidReportedModifiers = AndroidKeyboardMapper.modifiers(metaState)
         enqueue {
             if (!gate.isCurrent(eventEpoch)) {
                 staleDropped += 1
@@ -86,7 +92,29 @@ class GfnKeyboardMouseInputController(
                 dropped += 1
                 return@enqueue
             }
-            if (down) handleKeyDown(key, modifiers) else handleKeyUp(key, modifiers)
+
+            val heldModifierMaskBeforeEvent = tracker.currentPhysicalModifierMask()
+            val trackedModifiersForEvent = if (down && key.isModifier) {
+                heldModifierMaskBeforeEvent or key.modifierBit
+            } else {
+                heldModifierMaskBeforeEvent
+            }
+            lastRawKeyCode = keyCode
+            lastRawMetaState = metaState
+            lastAndroidReportedModifierMask = androidReportedModifiers
+            lastTrackedModifierMask = trackedModifiersForEvent
+            if (androidReportedModifiers != trackedModifiersForEvent) {
+                modifierMismatchCount += 1
+                Log.w(
+                    "GfnInput",
+                    "modifier mismatch keyCode=$keyCode down=$down rawMeta=0x${metaState.toString(16)} " +
+                        "androidMask=0x${androidReportedModifiers.toString(16)} trackedMask=0x${trackedModifiersForEvent.toString(16)}",
+                )
+            }
+
+            // 远端只使用本状态机实际持有的 modifier。Android metaState 只做诊断。
+            if (down) handleKeyDown(key, trackedModifiersForEvent)
+            else handleKeyUp(key, trackedModifiersForEvent)
         }
         return true
     }
@@ -485,6 +513,11 @@ class GfnKeyboardMouseInputController(
                 droppedPackets = dropped,
                 staleEventsDropped = staleDropped,
                 transportBufferedBytes = if (packetSink.isOpen()) packetSink.bufferedAmount().coerceAtLeast(0L) else 0L,
+                lastRawKeyCode = lastRawKeyCode,
+                lastRawMetaState = lastRawMetaState,
+                lastAndroidReportedModifierMask = lastAndroidReportedModifierMask,
+                lastTrackedModifierMask = lastTrackedModifierMask,
+                modifierMismatchCount = modifierMismatchCount,
                 releaseCount = releaseCount,
                 lastEvent = lastEvent,
                 lastReleaseReason = lastReleaseReason?.name,

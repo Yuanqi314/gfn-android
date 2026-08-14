@@ -1,0 +1,45 @@
+GFN Android v5.1.2 静态/边界检查
+================================
+
+[PASS] WebRTC 依赖仍为 api("io.github.webrtc-sdk:android:144.7559.09")
+[PASS] ACCESS_NETWORK_STATE / CHANGE_NETWORK_STATE 保留
+[PASS] remote AudioTrack enable 保留
+[PASS] WebRTC playout 使用自定义 JavaAudioDeviceModule
+[PASS] AudioAttributes.USAGE_GAME
+[PASS] AudioAttributes.CONTENT_TYPE_MUSIC
+[PASS] 自定义 ADM 注入 PeerConnectionFactory
+[PASS] caller-owned ADM ref 在 factory 创建后 adm.release()
+[PASS] Activity volumeControlStream = STREAM_MUSIC
+[PASS] 未出现实际 .setUsage(USAGE_VOICE_COMMUNICATION) 调用
+[PASS] 不强制 built-in speaker，保留系统耳机/蓝牙路由
+
+[PASS] 字母 VK / Windows Set-1 scan code 映射未改
+[PASS] GFN keyboard packet framing 未改
+[PASS] Android metaState 只保留 diagnostics，不作为远端 modifier 真值
+[PASS] 远端 modifier 来自 InputStateTracker 实际 held modifier
+[PASS] 真实 META DOWN 仍能产生 modifier 0x0008
+[PASS] phantom Android META 不会附着到普通字母 packet
+[PASS] raw keyCode/metaState + android/tracked modifier + mismatch count diagnostics
+
+[PASS] releaseAll(reason) 架构未改
+[PASS] ordered input queue / AtomicLong epoch 未改
+[PASS] Pointer Capture lost 与 KeyboardActive 分离未改
+[PASS] control_channel / SessionEnded 链未改
+[PASS] wheel sign 修复未改
+[PASS] fullscreen / recreation-safe ownership 未改
+
+Frozen module diff against v5.1.1:
+[PASS] core-model UNCHANGED
+[PASS] core-network UNCHANGED
+[PASS] gfn-auth UNCHANGED
+[PASS] gfn-account UNCHANGED
+[PASS] gfn-games UNCHANGED
+[PASS] gfn-cloudmatch UNCHANGED
+[PASS] gfn-identity UNCHANGED
+[PASS] gfn-session UNCHANGED
+[PASS] stream-signaling UNCHANGED
+
+Known uncertainty:
+- 31.log 没有原始 Android KeyEvent/metaState，因此“phantom modifier”是当前最高证据假设，不标记为真机已证实根因。
+- v5.1.2 的扬声器/媒体音量路由和普通字母行为需要真机复测。
+- 当前环境无 Android SDK，完整 AGP assembleDebug 未执行。

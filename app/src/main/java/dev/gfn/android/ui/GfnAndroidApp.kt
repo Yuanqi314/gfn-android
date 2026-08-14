@@ -874,6 +874,9 @@ private fun DiagnosticsScreen(
                     "Remote audio track" to streamDiagnostics.audio.remoteAudioTrackPresent.asYesNo(),
                     "Audio track enabled" to streamDiagnostics.audio.remoteAudioTrackEnabled.asYesNo(),
                     "First audio RTP" to streamDiagnostics.audio.firstRtpPacketReceived.asYesNo(),
+                    "Android audio usage" to streamDiagnostics.audio.androidUsage,
+                    "Android content type" to streamDiagnostics.audio.androidContentType,
+                    "Volume stream" to streamDiagnostics.audio.volumeStream,
                 ),
             )
         }
@@ -898,6 +901,11 @@ private fun DiagnosticsScreen(
                     "Pointer capture" to streamDiagnostics.input.pointerCaptured.asYesNo(),
                     "Keyboard active" to streamDiagnostics.input.keyboardActive.asYesNo(),
                     "Mouse active" to streamDiagnostics.input.mouseActive.asYesNo(),
+                    "Last raw keyCode" to (streamDiagnostics.input.lastRawKeyCode?.toString() ?: "-"),
+                    "Last raw metaState" to (streamDiagnostics.input.lastRawMetaState?.let { "0x${it.toString(16)}" } ?: "-"),
+                    "Android modifier mask" to (streamDiagnostics.input.lastAndroidReportedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"),
+                    "Tracked modifier mask" to (streamDiagnostics.input.lastTrackedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"),
+                    "Modifier mismatches" to streamDiagnostics.input.modifierMismatchCount.toString(),
                     "Epoch" to streamDiagnostics.input.inputEpoch.toString(),
                     "Remote state" to streamDiagnostics.input.remoteState,
                     "Held keys local/remote" to "${streamDiagnostics.input.physicalHeldKeys}/${streamDiagnostics.input.remoteHeldKeys}",

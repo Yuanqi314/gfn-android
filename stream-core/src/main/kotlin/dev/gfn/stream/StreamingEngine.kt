@@ -93,6 +93,11 @@ data class InputDiagnostics(
     val droppedPackets: Long = 0,
     val staleEventsDropped: Long = 0,
     val transportBufferedBytes: Long = 0,
+    val lastRawKeyCode: Int? = null,
+    val lastRawMetaState: Int? = null,
+    val lastAndroidReportedModifierMask: Int? = null,
+    val lastTrackedModifierMask: Int? = null,
+    val modifierMismatchCount: Long = 0,
     val releaseCount: Long = 0,
     val lastEvent: String? = null,
     val lastReleaseReason: String? = null,
@@ -103,6 +108,9 @@ data class AudioDiagnostics(
     val remoteAudioTrackEnabled: Boolean = false,
     val firstRtpPacketReceived: Boolean = false,
     val requestedChannels: Int = 2,
+    val androidUsage: String = "USAGE_GAME",
+    val androidContentType: String = "CONTENT_TYPE_MUSIC",
+    val volumeStream: String = "STREAM_MUSIC",
 )
 
 data class ControlDiagnostics(

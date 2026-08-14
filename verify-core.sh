@@ -69,6 +69,19 @@ grep -Fq 'if (videoOutput !== output) return' stream-webrtc/src/main/java/dev/gf
 grep -Fq 'CredentialRestore:FAILED' app/src/main/java/dev/gfn/android/auth/AndroidKeystoreTokenStore.kt || { echo 'ERROR: auth restore reason diagnostics missing' >&2; exit 1; }
 grep -Fq 'CredentialCleanup:reason=RESTORE_FAILED' app/src/main/java/dev/gfn/android/auth/AndroidKeystoreTokenStore.kt || { echo 'ERROR: auth cleanup reason diagnostics missing' >&2; exit 1; }
 echo 'V511_TRUE_DEVICE_FIX_GUARDS=PASS'
+
+# v5.1.2 audio routing + keyboard modifier truth guards.
+grep -Fq 'JavaAudioDeviceModule.builder' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt || { echo 'ERROR: custom game/media AudioDeviceModule missing' >&2; exit 1; }
+grep -Fq '.setUsage(AudioAttributes.USAGE_GAME)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt || { echo 'ERROR: WebRTC playout must use USAGE_GAME' >&2; exit 1; }
+grep -Fq '.setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt || { echo 'ERROR: WebRTC playout content type must be MUSIC' >&2; exit 1; }
+grep -Fq '.setAudioDeviceModule(adm)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt || { echo 'ERROR: custom AudioDeviceModule not attached to PeerConnectionFactory' >&2; exit 1; }
+grep -Fq 'adm.release()' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt || { echo 'ERROR: caller-owned AudioDeviceModule native ref is not released after PeerConnectionFactory creation' >&2; exit 1; }
+grep -Fq 'volumeControlStream = AudioManager.STREAM_MUSIC' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: Activity volume buttons not bound to media stream' >&2; exit 1; }
+grep -Fq 'currentPhysicalModifierMask()' stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt || { echo 'ERROR: tracked modifier truth missing' >&2; exit 1; }
+grep -Fq 'val androidReportedModifiers = AndroidKeyboardMapper.modifiers(metaState)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: raw Android modifier diagnostics missing' >&2; exit 1; }
+grep -Fq 'handleKeyDown(key, trackedModifiersForEvent)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: keyboard DOWN still trusts Android metaState instead of tracked modifier state' >&2; exit 1; }
+grep -Fq 'modifierMismatchCount' stream-core/src/main/kotlin/dev/gfn/stream/StreamingEngine.kt || { echo 'ERROR: modifier mismatch diagnostics missing' >&2; exit 1; }
+echo 'V512_AUDIO_KEYBOARD_GUARDS=PASS'
 BUILD="$ROOT/build"
 MODULES="$BUILD/module-check"
 rm -rf "$MODULES"

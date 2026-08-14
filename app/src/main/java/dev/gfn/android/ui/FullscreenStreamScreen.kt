@@ -239,6 +239,12 @@ private fun InputDebugHud(
                 "stale=${input.staleEventsDropped} buf=${input.transportBufferedBytes}B",
             color = Color.White,
         )
+        Text(
+            "mods android=${input.lastAndroidReportedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"} " +
+                "tracked=${input.lastTrackedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"} " +
+                "mismatch=${input.modifierMismatchCount}",
+            color = Color.White,
+        )
         Text(input.lastEvent ?: "点击画面捕获鼠标", color = Color.White)
     }
 }

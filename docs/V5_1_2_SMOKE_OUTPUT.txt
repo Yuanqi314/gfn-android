@@ -1,0 +1,76 @@
+GFN Android v5.1.2 定向回归结果
+================================
+
+[上传真机日志 31.log]
+AUDIO_LOG_EVIDENCE=PASS
+- WebRtcAudioTrackExternal stopPlayout
+- underrun count = 0
+- AudioTrack prior state = STATE_ACTIVE
+- AudioTrack stream = 0
+- frames delivered = 9456480
+
+REMOTE_WINDOW_EVIDENCE=PASS
+- 问题观察期间 GfnStream 持续 FirstFrame / ICE CONNECTED / PC CONNECTED
+- Android Activity 没有因“远端窗口最小化”进入后台
+- 最终 SessionEnded 来自 control_channel.exitMessage
+
+[v5.1.2 Audio]
+V512_AUDIO_RUNTIME_API_SHAPE_COMPILE=PASS
+V512_AUDIO_RUNTIME_RELEASE_COMPILE=PASS
+- JavaAudioDeviceModule.Builder.setAudioAttributes(...)
+- AudioAttributes.USAGE_GAME
+- AudioAttributes.CONTENT_TYPE_MUSIC
+- PeerConnectionFactory.Builder.setAudioDeviceModule(adm)
+- adm.release() after factory creation
+- MainActivity volumeControlStream = STREAM_MUSIC
+
+[v5.1.2 Keyboard modifier truth]
+CORE_STREAM_INPUT_COMPILE=PASS
+V512_TRACKED_MODIFIER_FIXTURE=PASS
+V512_INPUT_CONTROLLER_COMPILE=PASS
+V512_CONTROLLER_MODIFIER_TRUTH_FIXTURE=PASS
+
+Fixture A:
+Android metaState 报 META，但没有真实 META DOWN
+→ 普通 D packet modifier = 0
+→ PASS
+
+Fixture B:
+真实 META_LEFT DOWN
+→ D packet modifier = 0x0008
+→ PASS
+
+[静态 guards]
+V5_WEBRTC_PUBLIC_ABI=PASS
+V5_WEBRTC_NETWORK_PERMISSIONS=PASS
+V51_INPUT_ARCHITECTURE=PASS
+V51_RELEASE_ALL_GUARDS=PASS
+V511_TRUE_DEVICE_FIX_GUARDS=PASS
+V512_AUDIO_KEYBOARD_GUARDS=PASS
+
+[纯 Kotlin 模块边界]
+core-model=PASS
+core-network=PASS
+gfn-identity=PASS
+gfn-auth=PASS
+gfn-account=PASS
+gfn-games=PASS
+gfn-session=PASS
+diagnostics=PASS
+stream-core=PASS
+stream-input=PASS
+stream-signaling=PASS
+gfn-cloudmatch=PASS
+protocol-cli=PASS
+protocol-cli runtime fixtures=PASS
+
+[完整 verify-core.sh]
+PARTIAL_ENVIRONMENT_TIMEOUT
+- guards 及 core-model/core-network/gfn-identity/gfn-auth/gfn-account/gfn-games/gfn-session 已 PASS
+- 在 diagnostics 开始前后达到受限容器整体验证时限
+- 无 Kotlin compiler error
+- 后续模块已用逐模块方式补齐并 PASS
+
+[环境边界]
+FULL_ANDROID_AGP_BUILD=NOT_EXECUTED
+原因：当前容器没有 Android SDK / android.jar，不能把 API-shaped compile 冒充真实 assembleDebug。

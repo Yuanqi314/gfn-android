@@ -1,4 +1,4 @@
-# 当前状态 · v5.1.1
+# 当前状态 · v5.1.2
 
 ## 真机已确认（本轮前）
 
@@ -18,15 +18,19 @@ H.264 Decode / Surface             ✅
 Keyboard / Mouse 基础输入          ✅ 用户已进入真实串流测试阶段
 ```
 
-## 最新真机问题与 v5.1.1 状态
+## 最新真机状态与 v5.1.2 问题
 
 ```text
-鼠标滚轮方向反                  ✅ 源码已修；待复测
-全屏未自动横屏/旋转回主页        ✅ ownership/orientation 已修；待复测
-偶发无故回主页                   ⚠️ 本次日志只证明“手动旋转”发生 Activity recreation；其他突发情况仍需日志
-游戏退出不自动感知               ✅ control_channel/exitMessage 已补；待真机
-无声音                           ✅ remote AudioTrack disable 根因已修；待真机
-登录记录偶发消失                 ⏸ 暂缓，仅加 diagnostics
+v5.1.1 游戏声音恢复               ✅ 真机
+v5.1.1 鼠标滚轮方向               ✅ 真机
+v5.1.1 自动横屏/画面适配           ✅ 真机
+v5.1.1 游戏退出自动 Session End    ✅ 真机
+偶发无故回主页                     ⚠️ 除手动旋转 case 外仍未复现
+登录记录偶发消失                   ⏸ 暂缓，仅 diagnostics
+
+新问题：
+音频走听筒 / 通话音量              ✅ 根因已确认，v5.1.2 已改 GAME/MUSIC；待真机
+普通字母可能最小化远端游戏窗口       ⚠️ 高度怀疑 phantom modifier；v5.1.2 改 tracked modifier truth + diagnostics；待真机
 ```
 
 ## 日志已确认
@@ -48,9 +52,9 @@ Keyboard / Mouse 基础输入          ✅ 用户已进入真实串流测试阶�
 ## 暂未宣称
 
 ```text
-v5.1.1 真机声音修复               ⏳
-v5.1.1 自动横屏/rotation survival ⏳
-v5.1.1 server exitMessage          ⏳
+v5.1.2 扬声器/媒体音量路由         ⏳ 待真机
+v5.1.2 普通字母不再触发远端系统快捷键 ⏳ 待真机
+偶发非旋转 Home-return             ⏳ 未复现
 HEVC / Main10 / HDR                ⏳
 Gamepad / Touch                    ⏳
 ```
