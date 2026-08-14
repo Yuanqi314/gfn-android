@@ -28,8 +28,23 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Install Android SDK 37
-        run: |
-          sdkmanager "platforms;android-37" "build-tools;36.0.0"
+  run: |
+    yes | sdkmanager --licenses >/dev/null || true
+
+    echo "Available Android 37 packages:"
+    sdkmanager --list --channel=3 | grep -E "platforms;android-37|build-tools;37" || true
+
+    BUILD_TOOLS=$(sdkmanager --list --channel=3 \
+      | awk -F'|' '/build-tools;37\./ {
+          gsub(/^[ \t]+|[ \t]+$/, "", $1)
+          print $1
+        }' \
+      | sort -V \
+      | tail -1)
+
+    echo "Build tools: $BUILD_TOOLS"
+
+    sdkmanager "platforms;android-37" "$BUILD_TOOLS" --channel=3
 
       - name: Make Gradle executable
         run: chmod +x gradlew
