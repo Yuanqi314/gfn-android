@@ -29,7 +29,8 @@ class AuthSessionService(
             tokenStore.save(usable)
             api.userInfo(usable.accessToken)
         }
-        return AuthSession(tokens = usable, user = user)
+        val provider = runCatching { api.fetchProviders().firstOrNull() }.getOrNull()
+        return AuthSession(tokens = usable, user = user, provider = provider)
     }
 
     suspend fun beginDeviceAuthorization(idpId: String? = null): DeviceAuthorization {
@@ -73,6 +74,21 @@ class AuthSessionService(
 
         tokenStore.save(finalTokens)
         return AuthSession(finalTokens, user, authorization.provider)
+    }
+
+    /**
+     * 供 Account / Catalog 等 GFN API 在明确收到 401/403 后进行一次强制凭据刷新。
+     * 不改变正常恢复/定时刷新路径。
+     */
+    suspend fun forceRefresh(session: AuthSession): AuthSession? {
+        val refreshed = refreshStoredTokens(session.tokens) ?: return null
+        tokenStore.save(refreshed)
+        val user = api.userInfo(refreshed.accessToken)
+        return AuthSession(
+            tokens = refreshed,
+            user = user,
+            provider = session.provider ?: runCatching { api.fetchProviders().firstOrNull() }.getOrNull(),
+        )
     }
 
     suspend fun signOut() {

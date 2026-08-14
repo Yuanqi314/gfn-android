@@ -15,6 +15,8 @@ dependencies {
     implementation(project(":core-model"))
     implementation(project(":core-network"))
     implementation(project(":gfn-auth"))
+    implementation(project(":gfn-account"))
+    implementation(project(":gfn-games"))
     implementation(project(":gfn-identity"))
     implementation(project(":gfn-session"))
     implementation(project(":gfn-cloudmatch"))

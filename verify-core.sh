@@ -7,6 +7,8 @@ SOURCES=$(find \
   "$ROOT/core-model/src/main/kotlin" \
   "$ROOT/core-network/src/main/kotlin" \
   "$ROOT/gfn-auth/src/main/kotlin" \
+  "$ROOT/gfn-account/src/main/kotlin" \
+  "$ROOT/gfn-games/src/main/kotlin" \
   "$ROOT/gfn-identity/src/main/kotlin" \
   "$ROOT/gfn-session/src/main/kotlin" \
   "$ROOT/gfn-cloudmatch/src/main/kotlin" \

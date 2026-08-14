@@ -48,7 +48,11 @@ data class AuthSession(
     val tokens: AuthTokens,
     val user: AuthUser,
     val provider: LoginProvider? = null,
-)
+) {
+    /** CloudNow 当前 GFN API 选择规则：优先 id_token，缺失时回退 access_token。 */
+    val gfnToken: String
+        get() = tokens.idToken ?: tokens.accessToken
+}
 
 interface AuthApi {
     suspend fun fetchProviders(): List<LoginProvider>

@@ -32,8 +32,8 @@ object NvidiaAuthReferenceDefaults {
         userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 " +
             "NVIDIACEFClient/HEAD/debb5919f6 GFN-PC/2.0.86.124",
-        // 暂时保持 CloudNow 已验证的 Device Flow display_name，减少认证阶段变量。
-        displayName = "Apple TV",
+        // Android 客户端在 OAuth 页面只声明真实的登录设备名称；与后续 GFN Windows streaming identity 分离。
+        displayName = "Android",
     )
 }
 

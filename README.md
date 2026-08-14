@@ -1,157 +1,143 @@
-# GFN Android Lab
+# GFN Android Lab · 第三版
 
-这是一个独立实现的 Android GeForce NOW 实验客户端。正式路线不是继续修改 NVIDIA 官方 APK，而是逐步完成自己的 Android 客户端：
+这是一个独立的 Android GeForce NOW 客户端实验工程。
 
-```text
-NVIDIA Device Flow 登录
-→ Account / Catalog / Library
-→ CloudMatch / Queue / Session
-→ WebRTC H.264 SDR
-→ HEVC Main
-→ HEVC Main10 SDR10
-→ HDR10（BT.2020 + ST2084/PQ）
-```
-
-## 第二版目标
-
-第二版只聚焦一件事：**把第一版只有 UI 的登录入口接成真实的认证链路**。
-
-已经实现：
-
-- 首页“登录 GeForce NOW”按钮有真实行为；
-- 请求 `serviceUrls` 并按优先级选择登录 Provider；
-- 请求 NVIDIA Device Flow 登录码；
-- 显示登录码并打开 NVIDIA 授权页面；
-- 按服务端 interval 轮询 token；
-- 处理 `authorization_pending`、`slow_down`、`expired_token`、`access_denied`；
-- 获取账号 `/userinfo`；
-- 获取 `client_token`；
-- 参考 CloudNow 当前流程，使用 `client_token grant` 将 Device Flow 凭据重新绑定到主 GFN client ID；
-- 如果 re-bind 响应没有新的 refresh/id token，会保留 Device Flow 阶段的原值；
-- AndroidKeyStore + AES-GCM 加密持久化 OAuth 凭据；
-- 重启后恢复登录态；如果 `/userinfo` 返回 401，会 refresh 后重试；
-- 登录取消/退出使用 generation 防止旧异步任务回写登录态；
-- 网络日志层默认脱敏 Authorization、Cookie、x-device-id；
-- 首页、游戏库、诊断、设置文本已统一为中文。
-
-## 尚未完成
-
-第二版**没有**声称以下功能已经完成：
-
-- Provider discovery；
-- 真实 Catalog / Library；
-- Subscription / Account capability；
-- CloudMatch Create / Poll / Stop；
-- Queue 真实页面；
-- WebRTC signaling；
-- H.264 第一帧；
-- 音频与手柄；
-- HEVC / Main10 / HDR10。
-
-当前游戏库仍是 fixture，并在 UI 中明确标记“真实 API 待接入”。
-
-## 第二版认证链
+当前路线不再修改 NVIDIA 官方 APK，而是把官方客户端作为协议行为参考，把 CloudNow 作为已实现的第三方客户端架构/协议参考，在 Android 上重新实现：
 
 ```text
-Compose 首页
-    ↓
-AuthController
-    ↓
-AuthSessionService
-    ↓
-NvidiaAuthApi
-    ↓
-/device/authorize
-    ↓
-/token（device_code grant）
-    ↓
-/userinfo
-    ↓
-/client_token
-    ↓
-/token（client_token grant，re-bind 到主 client ID）
-    ↓
-AndroidKeyStore AES-GCM
+真实 Android runtime
++ Kotlin / Jetpack Compose / Material 3 Expressive
++ NVIDIA Device Flow
++ Windows / GFN-PC 协议身份
++ 独立 Account / Subscription / Catalog / Library
++ 后续 CloudMatch / WebRTC / MediaCodec
 ```
 
-## CloudNow 参考原则
+> 本项目仅使用用户自己的合法 GeForce NOW 账号，不修改订阅等级、账号 entitlement 或服务端授权。
 
-CloudNow 是当前最重要的已实现参考，但本项目采用 clean-room 方式：参考公开协议行为、状态机和模块边界，不逐行翻译 Swift。
+## 第三版新增
 
-第二版主要参考：
+第三版在 v2.1 已经真机验证的登录与重启恢复基础上，新增真实内容 API：
 
-- `CloudNow/Auth/NVIDIAAuthAPI.swift`：Device Flow、refresh、userinfo、client_token；
-- `CloudNow/Auth/AuthManager.swift`：client_token re-bind、credential generation、登录态生命周期；
-- `CloudNow/Session/CloudMatchClient.swift`：后续 Windows/GFN-PC headers 与 SessionRequest；
-- `CloudNow/Session/SessionOrchestrator.swift`：后续 Create → Queue → Ready → Teardown；
-- `CloudNow/Streaming/GFNVideoDecoderFactory.swift`：后续 Main10 `profile-id=2` 参考。
-
-Android App 现在在 Device Flow 中使用 `display_name = Android`。CloudNow 的 `Apple TV` 仅保留为协议参考值，不再发送给 NVIDIA。
-
-## 构建
-
-要求：
-
-- JDK 17；
-- Android Studio / Android SDK 37；
-- 首次构建需要访问 Google Maven、Maven Central 和 Gradle 分发站点。
-
-Linux/macOS：
-
-```bash
-./gradlew :app:assembleDebug
+```text
+登录 / 恢复
+↓
+Provider streamingServiceUrl
+↓
+/v2/serverInfo
+↓
+VPC ID
+↓
+┌─────────────────────────────┐
+│ MES /v4/subscriptions       │
+│ games.geforce.com/graphql   │
+└─────────────────────────────┘
+↓
+Subscription
+Library
+Catalog
+Search
+Game Detail
 ```
 
-Windows：
+UI 中：
 
-```powershell
-.\gradlew.bat :app:assembleDebug
+- 首页显示真实会员、VPC、Library/Catalog 数量；
+- 游戏库页使用真实账号 Library；
+- “全部游戏”页使用真实 GFN GraphQL Catalog；
+- 搜索走服务端 GraphQL；
+- 游戏详情走 CloudNow 当前使用的 persisted-query metadata 请求；
+- 诊断页显示内容服务状态；
+- 尚未实现 CloudMatch Create / Queue / WebRTC 串流。
+
+## 模块
+
+```text
+gfn-android
+├── app                 Android / Compose UI 与 controller
+├── core-model          跨模块数据模型
+├── core-network        HTTP 抽象、脱敏、纯 Kotlin JSON
+├── gfn-auth            Device Flow / refresh / client_token / re-bind
+├── gfn-account         serverInfo / VPC / MES Subscription
+├── gfn-games           Catalog / Library / Search / Game Detail
+├── gfn-identity        Windows / GFN-PC 协议身份与协议常量
+├── gfn-cloudmatch      SessionRequest 模型（下一阶段继续扩展）
+├── gfn-session         Session lifecycle 状态机
+├── diagnostics         诊断模型
+├── stream-core         串流抽象
+└── protocol-cli        脱敏 fixture / 回归验证
 ```
 
-项目中的 `gradlew` / `gradlew.ps1` 是自包含的 Gradle 9.5.0 启动器：首次执行会下载 Gradle，并使用项目内固定的 SHA-256 校验分发包，不依赖 `gradle-wrapper.jar`。
+## 第三版当前验证状态
 
-## 核心离线验证
+已经在当前构建环境真实执行：
 
-如果本机有 `kotlinc` 和 JDK，可不依赖 Android SDK运行协议 smoke test：
-
-```bash
+```text
 ./verify-core.sh
 ```
 
-它会验证：
+并验证：
 
 ```text
-Windows/GFN-PC identity
-→ Session fixture queue/ready 状态机
-→ Device Flow pending
-→ token
-→ userinfo
-→ client_token
-→ 主 client ID re-bind
-→ 登录态 userinfo 401 后 refresh 恢复
+Device Flow fixture
+Provider discovery
+client_token re-bind
+登录态 401 → refresh → userinfo retry
+Provider 恢复
+serverInfo → VPC
+MES Subscription
+GraphQL Library
+GraphQL Catalog
+Persisted-query Game Detail
 ```
 
-## 当前验证边界
+Android APK 在本环境无法完整编译，因为容器无法解析 `services.gradle.org`，无法下载 Gradle 9.5.0；因此 Android/Compose 最终编译仍需要在联网 Android Studio 环境完成。
 
-本环境已经真实完成纯 Kotlin 编译和 fixture smoke test；但是当前容器没有 Android SDK，也不能从容器发起真实 NVIDIA 登录请求，因此：
+## 真机优先验证
 
-- **认证代码路径已实现并通过 fixture 验证**；
-- **Android Compose APK 尚未在本环境编译**；
-- **真实 NVIDIA 账号登录仍需要你的联网真机/Android Studio 环境验证**。
+见：
 
-不能把 fixture 成功等同于 NVIDIA 线上认证成功。
+```text
+docs/V3_TEST_GUIDE.md
+```
 
-## 安全边界
+第三版第一次真机测试最重要的不是串流，而是确认：
 
-- 只使用用户自己的合法 GFN 账号；
-- 不修改订阅等级、entitlement 或服务端授权；
-- 不记录 access token、refresh token、device code 或 Cookie；
-- Android 本机 MediaCodec / Display capability 保持真实；
-- 后续 Windows/GFN-PC 身份仅用于协议兼容性实验。
+```text
+重启恢复
+→ 自动加载 VPC
+→ 正确显示会员
+→ Library 有真实游戏
+→ Catalog 有真实游戏
+→ 搜索正常
+→ 游戏详情正常
+```
 
+## 下一阶段
 
-## v2.1 登录修复
+第三版内容层稳定后进入第四版：
 
-- 修复 AndroidKeyStore AES-GCM 保存 token 时的 `Caller-provided IV not permitted`：加密阶段不再由调用方提供 IV，而由 AndroidKeyStore 自动生成并通过 `Cipher.iv` 保存。
-- 新 token blob 使用显式 IV 长度格式，同时兼容旧版固定 12-byte IV blob 的读取。
-- Android Device Flow 的 `display_name` 从 CloudNow 参考值 `Apple TV` 改为 `Android`。
+```text
+Regions / ServerInfo
+↓
+CloudMatch Create
+↓
+Queue
+↓
+Ready
+↓
+Claim / Resume / End
+↓
+WebRTC Signaling
+↓
+H.264 first frame
+```
+
+Main10/HDR 仍保持后置：
+
+```text
+H.264 SDR
+→ HEVC Main SDR8
+→ HEVC Main10 SDR10
+→ HDR10 / BT.2020 / ST2084
+```

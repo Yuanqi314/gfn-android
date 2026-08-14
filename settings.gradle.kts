@@ -21,6 +21,8 @@ include(
     ":core-model",
     ":core-network",
     ":gfn-auth",
+    ":gfn-account",
+    ":gfn-games",
     ":gfn-cloudmatch",
     ":gfn-identity",
     ":gfn-session",

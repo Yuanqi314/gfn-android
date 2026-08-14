@@ -4,8 +4,50 @@ data class GameSummary(
     val appId: String,
     val title: String,
     val artworkUrl: String? = null,
+    val heroImageUrl: String? = null,
+    val genres: List<String> = emptyList(),
     val supportsHdr: Boolean = false,
     val supportsRtx: Boolean = false,
+    val supportsReflex: Boolean = false,
+    val isInLibrary: Boolean = false,
+    val variants: List<GameVariant> = emptyList(),
+)
+
+data class GameVariant(
+    val id: String,
+    val appStore: String,
+    val isOwned: Boolean = false,
+)
+
+data class GameDetail(
+    val appId: String,
+    val title: String,
+    val description: String? = null,
+    val artworkUrl: String? = null,
+    val heroImageUrl: String? = null,
+    val genres: List<String> = emptyList(),
+    val developer: String? = null,
+    val publisher: String? = null,
+    val contentRating: String? = null,
+    val supportsHdr: Boolean = false,
+    val supportsRtx: Boolean = false,
+    val supportsReflex: Boolean = false,
+    val isInLibrary: Boolean = false,
+    val variants: List<GameVariant> = emptyList(),
+)
+
+data class EntitledResolution(
+    val width: Int,
+    val height: Int,
+    val fps: Int,
+)
+
+data class SubscriptionInfo(
+    val membershipTier: String,
+    val isUnlimited: Boolean = false,
+    val remainingMinutes: Int? = null,
+    val totalMinutes: Int? = null,
+    val entitledResolutions: List<EntitledResolution> = emptyList(),
 )
 
 enum class RequestedColorMode {

@@ -1,8 +1,8 @@
 package dev.gfn.android.auth
 
 import android.util.Log
+import dev.gfn.auth.AuthSession
 import dev.gfn.auth.AuthSessionService
-import dev.gfn.auth.AuthUser
 import dev.gfn.auth.DeviceAuthorization
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -20,7 +20,9 @@ sealed interface AuthUiState {
     data object SignedOut : AuthUiState
     data object RequestingCode : AuthUiState
     data class AwaitingAuthorization(val authorization: DeviceAuthorization) : AuthUiState
-    data class SignedIn(val user: AuthUser) : AuthUiState
+    data class SignedIn(val session: AuthSession) : AuthUiState {
+        val user get() = session.user
+    }
     data class Error(val message: String) : AuthUiState
 }
 
@@ -35,6 +37,8 @@ class AuthController(
     private var restored = false
     private var generation = 0L
 
+    fun currentSession(): AuthSession? = (_state.value as? AuthUiState.SignedIn)?.session
+
     fun restoreOnce() {
         if (restored) return
         restored = true
@@ -45,7 +49,7 @@ class AuthController(
             try {
                 val session = withContext(Dispatchers.IO) { service.restore() }
                 if (operation != generation) return@launch
-                _state.value = session?.let { AuthUiState.SignedIn(it.user) } ?: AuthUiState.SignedOut
+                _state.value = session?.let { AuthUiState.SignedIn(it) } ?: AuthUiState.SignedOut
                 Log.i(TAG, if (session == null) "没有可恢复的登录状态" else "登录状态恢复成功")
             } catch (error: Exception) {
                 if (operation != generation) return@launch
@@ -53,6 +57,20 @@ class AuthController(
                 _state.value = AuthUiState.Error(error.userFacingMessage("恢复登录状态失败"))
             }
         }
+    }
+
+    /** 内容 API 明确收到 401/403 时调用一次。 */
+    suspend fun refreshForApi(): AuthSession? {
+        val current = currentSession() ?: return null
+        val operation = generation
+        val refreshed = withContext(Dispatchers.IO) { service.forceRefresh(current) }
+        if (operation != generation) return null
+        if (refreshed == null) {
+            _state.value = AuthUiState.SignedOut
+            return null
+        }
+        _state.value = AuthUiState.SignedIn(refreshed)
+        return refreshed
     }
 
     fun startLogin() {
@@ -70,11 +88,10 @@ class AuthController(
 
                 val session = withContext(Dispatchers.IO) { service.completeDeviceAuthorization(authorization) }
                 if (operation != generation) {
-                    // 旧任务在取消后才完成时，清掉它可能刚写入的 token。
                     withContext(Dispatchers.IO) { service.signOut() }
                     return@launch
                 }
-                _state.value = AuthUiState.SignedIn(session.user)
+                _state.value = AuthUiState.SignedIn(session)
                 Log.i(TAG, "Device Flow 登录完成")
             } catch (cancelled: CancellationException) {
                 Log.i(TAG, "Device Flow 已取消")
@@ -93,7 +110,6 @@ class AuthController(
         loginJob = null
         _state.value = AuthUiState.SignedOut
         scope.launch {
-            // 防止取消发生在阻塞 HTTP 返回前，先主动清理当前凭据；过期任务完成后还会再清一次。
             runCatching { withContext(Dispatchers.IO) { service.signOut() } }
         }
         Log.i(TAG, "用户取消登录")

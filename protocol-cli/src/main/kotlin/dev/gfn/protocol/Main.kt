@@ -6,6 +6,10 @@ import dev.gfn.auth.AuthTokens
 import dev.gfn.auth.TokenStore
 import dev.gfn.auth.DeviceAuthorization
 import dev.gfn.auth.NvidiaAuthApi
+import dev.gfn.account.GfnAccountClient
+import dev.gfn.account.GfnAccountContext
+import dev.gfn.games.GfnGamesClient
+import dev.gfn.games.GfnGamesContext
 import dev.gfn.cloudmatch.GfnRequestContext
 import dev.gfn.cloudmatch.SessionRequestFactory
 import dev.gfn.core.model.RequestedColorMode
@@ -103,6 +107,10 @@ private class RestoreAuthTransport : HttpTransport {
                 200,
                 body = """{"sub":"restore-user","preferred_username":"恢复用户","email":"restore@example.test"}""".toByteArray(),
             ),
+            HttpResponse(
+                200,
+                body = """{"gfnServiceInfo":{"gfnServiceEndpoints":[{"idpId":"restore-idp","loginProviderCode":"NVIDIA","loginProviderDisplayName":"NVIDIA","streamingServiceUrl":"https://restore-stream.example.test","loginProviderPriority":0}]}}""".toByteArray(),
+            ),
         ),
     )
 
@@ -135,10 +143,11 @@ private fun <T> runSynchronously(block: suspend () -> T): T {
 }
 
 fun main() {
-    println("=== GFN Android 第二版核心验证 ===")
+    println("=== GFN Android 第三版核心验证 ===")
     verifyIdentityAndSession()
     verifyDeviceFlow()
     verifySessionRestoreAfterUnauthorized()
+    verifyContentApis()
 }
 
 private fun verifyIdentityAndSession() {
@@ -218,7 +227,7 @@ private fun verifyDeviceFlow() {
             mainClientId = "fixture-main-client",
             scopes = "openid email",
             userAgent = "fixture-agent",
-            displayName = "Apple TV",
+            displayName = "Android",
         ),
         now = { now },
         uuid = { UUID.fromString("00000000-0000-0000-0000-000000000001") },
@@ -267,7 +276,7 @@ private fun verifySessionRestoreAfterUnauthorized() {
             mainClientId = "fixture-main-client",
             scopes = "openid email",
             userAgent = "fixture-agent",
-            displayName = "Apple TV",
+            displayName = "Android",
         ),
         now = { now },
         sleepSeconds = { },
@@ -285,9 +294,93 @@ private fun verifySessionRestoreAfterUnauthorized() {
     check(session.tokens.accessToken == "restore-refreshed-access")
     check(session.tokens.refreshToken == "restore-refresh-token")
     check(session.user.userId == "restore-user")
-    check(transport.requests.size == 3)
+    check(transport.requests.size == 4)
     check(transport.requests[0].headers["Authorization"] == "Bearer restore-old-access")
     check(transport.requests[1].body!!.toString(Charsets.UTF_8).contains("grant_type=refresh_token"))
     check(transport.requests[2].headers["Authorization"] == "Bearer restore-refreshed-access")
-    println("userinfo 401 → refresh → userinfo 重试验证通过")
+    check(transport.requests[3].url.endsWith("/serviceUrls"))
+    check(session.provider?.streamingServiceUrl == "https://restore-stream.example.test/")
+    println("userinfo 401 → refresh → userinfo 重试 + Provider 恢复验证通过")
+}
+
+
+private class FixtureContentTransport : HttpTransport {
+    private val responses = ArrayDeque(
+        listOf(
+            HttpResponse(
+                200,
+                body = """{"requestStatus":{"serverId":"NP-TST-01"}}""".toByteArray(),
+            ),
+            HttpResponse(
+                200,
+                body = """[{"membershipTier":"ULTIMATE","subType":"UNLIMITED","remainingTimeInMinutes":42,"totalTimeInMinutes":480,"features":{"resolutions":[{"widthInPixels":1920,"heightInPixels":1080,"framesPerSecond":120,"isEntitled":true},{"widthInPixels":3840,"heightInPixels":2160,"framesPerSecond":60,"isEntitled":true}]}}]""".toByteArray(),
+            ),
+            HttpResponse(
+                200,
+                body = """{"data":{"apps":{"pageInfo":{"hasNextPage":false,"endCursor":"","totalCount":1},"items":[{"id":"101","title":"Fixture HDR Game","genres":["Action"],"images":{"GAME_BOX_ART":"https://img.nvidiagrid.net/box"},"variants":[{"id":"9001","appStore":"STEAM","gfn":{"library":{"status":"IN_LIBRARY","selected":true},"features":[{"key":"HDR_ENABLED","value":"true"},{"key":"RTX_ENABLED","value":"true"}]}}]}]}}}""".toByteArray(),
+            ),
+            HttpResponse(
+                200,
+                body = """{"data":{"apps":{"pageInfo":{"hasNextPage":false,"endCursor":"","totalCount":2},"items":[{"id":"101","title":"Fixture HDR Game","genres":["Action"],"images":{"GAME_BOX_ART":"https://img.nvidiagrid.net/box"},"variants":[{"id":"9001","appStore":"STEAM","gfn":{"library":{"status":"IN_LIBRARY","selected":true},"features":[{"key":"HDR_ENABLED","value":"true"}]}}]},{"id":202,"title":"Fixture Strategy","genres":["Strategy"],"images":{},"variants":[{"id":"9002","appStore":"EPIC","gfn":{"library":{"status":"NOT_OWNED","selected":false},"features":[{"key":"REFLEX_ENABLED","value":"true"}]}}]}]}}}""".toByteArray(),
+            ),
+            HttpResponse(
+                200,
+                body = """{"data":{"apps":{"items":[{"id":"101","title":"Fixture HDR Game","longDescription":"真实详情 fixture","genres":["Action"],"developerName":"Fixture Studio","publisherName":"Fixture Publisher","contentRatings":{"type":"ESRB","categoryKey":"T"},"images":{"GAME_BOX_ART":"https://img.nvidiagrid.net/box","TV_BANNER":"https://img.nvidiagrid.net/banner"},"variants":[{"id":"9001","appStore":"STEAM","gfn":{"library":{"status":"IN_LIBRARY","selected":true},"features":[{"key":"HDR_ENABLED","value":"true"}]}}]}]}}}""".toByteArray(),
+            ),
+        ),
+    )
+    val requests = mutableListOf<HttpRequest>()
+    override suspend fun execute(request: HttpRequest): HttpResponse {
+        requests += request
+        return responses.removeFirst()
+    }
+}
+
+private fun verifyContentApis() {
+    println("\n[Account / Subscription / Catalog / Library]")
+    val transport = FixtureContentTransport()
+    val account = GfnAccountClient(transport)
+    val games = GfnGamesClient(
+        transport = transport,
+        now = { Instant.parse("2026-08-14T00:00:00Z") },
+        uuid = { UUID.fromString("00000000-0000-0000-0000-000000000099") },
+    )
+    val accountContext = GfnAccountContext(
+        token = "fixture-gfn-jwt",
+        userId = "fixture-user",
+        streamingServiceUrl = "https://stream.example.test/",
+    )
+    runSynchronously {
+        val vpcId = account.fetchVpcId(accountContext)
+        check(vpcId == "NP-TST-01")
+        val subscription = account.fetchSubscription(accountContext, vpcId, "zh_CN")
+        check(subscription.membershipTier == "ULTIMATE")
+        check(subscription.entitledResolutions.size == 2)
+        val context = GfnGamesContext("fixture-gfn-jwt", vpcId, "zh_CN")
+        val library = games.fetchLibrary(context)
+        check(library.size == 1)
+        check(library.single().isInLibrary)
+        check(library.single().supportsHdr)
+        check(library.single().supportsRtx)
+        val catalog = games.fetchCatalog(context)
+        check(catalog.size == 2)
+        check(catalog.any { it.appId == "202" && it.supportsReflex })
+        val detail = games.fetchGameDetail(context, "101")
+        check(detail.title == "Fixture HDR Game")
+        check(detail.developer == "Fixture Studio")
+        check(detail.supportsHdr)
+        println("vpc=$vpcId, membership=${subscription.membershipTier}, library=${library.size}, catalog=${catalog.size}")
+        println("gameDetail=${detail.title}/${detail.developer}")
+    }
+    check(transport.requests.size == 5)
+    check(transport.requests[0].url == "https://stream.example.test/v2/serverInfo")
+    check(transport.requests[0].headers["Authorization"] == "GFNJWT fixture-gfn-jwt")
+    check(transport.requests[1].url.contains("mes.geforcenow.com/v4/subscriptions"))
+    val libraryBody = transport.requests[2].body!!.toString(Charsets.UTF_8)
+    check(libraryBody.contains("NOT_OWNED"))
+    check(libraryBody.contains("$" + "vpcId"))
+    check(transport.requests[3].url == "https://games.geforce.com/graphql")
+    check(transport.requests[4].url.contains("requestType=appMetaData"))
+    check(transport.requests[4].url.contains("cf8b620dfd03617017ba7c858cee65197e1ace5180e41be194b39227227ced63"))
+    println("serverInfo → MES → Library → Catalog → Game Detail fixture 验证通过")
 }

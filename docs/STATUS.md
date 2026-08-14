@@ -1,78 +1,130 @@
-# 第二版项目状态
+# 第三版状态
 
-## 已实现并通过纯 Kotlin smoke test
+## 真机已经确认
 
-- [x] Windows / GFN-PC 协议身份集中建模
-- [x] `HttpTransport` 网络边界
-- [x] Device Flow 请求模型
-- [x] Device Flow token 轮询
-- [x] `authorization_pending`
-- [x] `slow_down`
-- [x] `expired_token`
-- [x] `access_denied`
-- [x] `/userinfo`
-- [x] refresh token 回退
-- [x] `client_token` 获取
-- [x] `client_token grant` 主 client ID re-bind
-- [x] re-bind 后保留缺失的 Device Flow refresh/id token
-- [x] 登录态 `/userinfo` 401 → refresh → 重试
-- [x] Session queue / preparing / 连续两次 ready 状态机
-- [x] Authorization / Cookie / x-device-id 日志脱敏
-
-## Android 侧已接线，但需要真机构建/联网验证
-
-- [x] 首页真实登录按钮
-- [x] 登录码页面
-- [x] 打开 NVIDIA 授权页
-- [x] 登录成功账号卡片
-- [x] 取消登录 / 退出登录
-- [x] credential generation 防旧任务回写
-- [x] AndroidKeyStore AES-GCM token 存储
-- [x] UTF-8 长度前缀 token 序列化，带 1 MiB 单字段上限
-- [x] `INTERNET` permission
-- [x] 中文 UI 文本
-
-> 当前执行环境没有 Android SDK，也不能向 NVIDIA 登录端点发真实请求。因此以上 Android 项目项属于“代码已接线”，不是“真机线上已通过”。
-
-## 尚未完成
-
-- [ ] 真机 NVIDIA Device Flow 线上验证
-- [x] Provider discovery（代码与 fixture 已验证，线上待真机验证）
-- [ ] 真实 Account / Subscription
-- [ ] 真实 Catalog
-- [ ] 真实 Library
-- [ ] CloudMatch Create / Poll / Stop
-- [ ] Queue 页面接真实 session
-- [ ] WebRTC signaling
-- [ ] H.264 SDR 第一帧
-- [ ] 音频
-- [ ] 手柄输入
-- [ ] HEVC Main
-- [ ] HEVC Main10 SDR10
-- [ ] HDR10 / BT.2020 / ST2084
-
-## 第二版成功判定
-
-真机验证应满足：
+以下来自当前 Android 真机测试：
 
 ```text
-首页点击登录
-→ 获取 NVIDIA Device Flow 登录码
-→ 浏览器完成授权
-→ token 轮询成功
-→ /userinfo 成功
-→ client_token 获取成功
-→ 主 GFN client ID re-bind
-→ 首页显示账号
-→ 重启应用恢复账号
-→ 退出登录后凭据清理
+NVIDIA Device Flow 登录             通过
+用户名 / 邮箱显示                   通过
+AndroidKeyStore 保存                通过
+应用重启后登录态恢复                通过
 ```
 
-只有这条链在真实账号环境通过，第二版认证阶段才算最终验收。
+重启时会短暂显示恢复状态，随后正常进入已登录状态。
 
+## 第三版已实现
 
-## v2.1 登录修复
+```text
+AuthSession 向内容层提供只读凭据快照
+Provider discovery 在重启恢复后重新建立
+GFN token 选择：id_token 优先，access_token 回退
+401 时允许一次认证 refresh 后重试
 
-- 修复 AndroidKeyStore AES-GCM 保存 token 时的 `Caller-provided IV not permitted`：加密阶段不再由调用方提供 IV，而由 AndroidKeyStore 自动生成并通过 `Cipher.iv` 保存。
-- 新 token blob 使用显式 IV 长度格式，同时兼容旧版固定 12-byte IV blob 的读取。
-- Android Device Flow 的 `display_name` 从 CloudNow 参考值 `Apple TV` 改为 `Android`。
+serverInfo / VPC
+MES subscription
+Catalog GraphQL
+Library GraphQL
+Search GraphQL
+Game Detail persisted query
+
+首页内容概览
+真实 Library 页面
+真实 Catalog 页面
+服务端搜索
+真实 Game Detail
+内容服务诊断
+```
+
+## 当前核心 fixture 已通过
+
+```text
+Provider discovery
+Device Flow
+authorization_pending
+OAuth token
+userinfo
+client_token
+main-client re-bind
+登录恢复 401 → refresh
+Provider 恢复
+serverInfo → VPC
+MES Subscription
+Library
+Catalog
+Game Detail
+```
+
+最新输出：
+
+```text
+docs/V3_SMOKE_OUTPUT.txt
+```
+
+## 尚未实现
+
+```text
+Library sync orchestration
+Catalog 本地缓存 / Room
+图像下载缓存
+Favorites
+Regions / ServerInfo UI
+NetTest
+CloudMatch Create
+Queue
+Ready / Claim / Resume / End
+WebRTC signaling
+H.264 video
+Audio
+Controller input
+HEVC
+Main10
+HDR10
+```
+
+## 不确定 / 需要真机验证
+
+第三版内容请求结构主要参考 CloudNow 当前公开实现，但以下仍必须由真实 GFN endpoint 结果确认：
+
+```text
+当前用户所在区域的 serverInfo 响应结构
+MES 在当前账号 / provider 下的实际字段
+GraphQL browse 在当前区域是否接受 500 page size
+当前 GraphQL 是否仍接受 genres 字段
+persisted-query metadata hash 是否仍有效
+id_token / access_token 在当前 API 上的实际接受范围
+```
+
+代码已经对部分兼容情况做保护：
+
+```text
+500 page size 无结果 / 特定 4xx → 200 page retry
+genres GraphQL error → 无 genres query retry
+401 → 认证层 refresh 一次后重试
+403 不自动当作 token 过期
+```
+
+## 下一版目标
+
+```text
+第四版：CloudMatch / Session lifecycle
+
+Regions
+ServerInfo
+CloudMatch Create
+Queue
+Ready
+Claim
+Resume
+End
+```
+
+第四版仍不要求 HDR；成功标准是：
+
+```text
+选择一个真实 Library 游戏
+→ 创建真实 session
+→ 正确显示排队位置
+→ 到 Ready
+→ 可以正常 End Session
+```
