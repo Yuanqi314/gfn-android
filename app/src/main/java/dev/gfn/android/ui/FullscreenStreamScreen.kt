@@ -167,12 +167,6 @@ fun FullscreenStreamScreen(
             },
         )
 
-        InputDebugHud(
-            streamState = streamState,
-            diagnostics = diagnostics,
-            modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
-        )
-
         if (overlayOpen) {
             Column(
                 modifier = Modifier
@@ -229,69 +223,6 @@ fun FullscreenStreamScreen(
             }
         }
     }
-}
-
-@Composable
-private fun InputDebugHud(
-    streamState: StreamState,
-    diagnostics: StreamDiagnostics,
-    modifier: Modifier = Modifier,
-) {
-    val input = diagnostics.input
-    Column(
-        modifier = modifier.background(Color.Black.copy(alpha = 0.56f)).padding(9.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text("H.264 ${streamStateLabelV51(streamState)}", color = Color.White, fontWeight = FontWeight.Bold)
-        Text(
-            "Input ch=${if (input.dataChannelOpen) "OPEN" else "-"} proto=${input.protocolVersion ?: "-"} " +
-                "K=${if (input.keyboardActive) "ON" else "OFF"} M=${if (input.mouseActive) "ON" else "OFF"}",
-            color = Color.White,
-        )
-        Text(
-            "Capture=${if (input.pointerCaptured) "ON" else "OFF"} epoch=${input.inputEpoch} remote=${input.remoteState}",
-            color = Color.White,
-        )
-        Text(
-            "Audio=${if (diagnostics.audio.remoteAudioTrackEnabled) "ON" else "OFF"} RTP=${if (diagnostics.audio.firstRtpPacketReceived) "YES" else "-"} " +
-                "CTRL=${diagnostics.control.controlChannelState}",
-            color = Color.White,
-        )
-        Text(
-            "held K ${input.physicalHeldKeys}/${input.remoteHeldKeys} · M ${input.physicalHeldMouseButtons}/${input.remoteHeldMouseButtons}",
-            color = Color.White,
-        )
-        Text(
-            "pkt ${input.acceptedPackets}/${input.submittedPackets} drop=${input.droppedPackets} " +
-                "stale=${input.staleEventsDropped} buf=${input.transportBufferedBytes}B",
-            color = Color.White,
-        )
-        Text(
-            "mods android=${input.lastAndroidReportedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"} " +
-                "tracked=${input.lastTrackedModifierMask?.let { "0x${it.toString(16)}" } ?: "-"} " +
-                "mismatch=${input.modifierMismatchCount}",
-            color = Color.White,
-        )
-        Text(
-            "Wire=${input.keyboardWireMode} mapped=${input.lastMappedScanCode?.let { "0x${it.toString(16)}" } ?: "-"} " +
-                "wire=${input.lastWireScanCode?.let { "0x${it.toString(16)}" } ?: "-"}",
-            color = Color.White,
-        )
-        Text(input.lastEvent ?: "点击画面捕获鼠标", color = Color.White)
-    }
-}
-
-private fun streamStateLabelV51(state: StreamState): String = when (state) {
-    StreamState.Idle -> "Idle"
-    StreamState.OpeningSignaling -> "WSS"
-    StreamState.AwaitingOffer -> "Offer"
-    StreamState.NegotiatingSdp -> "SDP"
-    StreamState.IceChecking -> "ICE"
-    StreamState.Connected -> "Connected"
-    StreamState.FirstFrame -> "FIRST FRAME"
-    StreamState.SessionEnded -> "Session Ended"
-    is StreamState.Failed -> "Failed"
-    StreamState.Closed -> "Closed"
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

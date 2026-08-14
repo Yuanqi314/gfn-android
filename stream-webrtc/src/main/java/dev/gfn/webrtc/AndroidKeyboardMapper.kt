@@ -84,6 +84,15 @@ object AndroidKeyboardMapper {
 
     fun map(keyCode: Int): GfnKey? = keys[keyCode]
 
+    /** OpenNOW-compatible lock-key state. The exact meaning of base bits 0x10/0x20/0x40 is undocumented. */
+    fun lockKeysState(metaState: Int): Int {
+        var state = 0x70
+        if (metaState and KeyEvent.META_CAPS_LOCK_ON != 0) state = state or 0x01
+        if (metaState and KeyEvent.META_NUM_LOCK_ON != 0) state = state or 0x02
+        if (metaState and KeyEvent.META_SCROLL_LOCK_ON != 0) state = state or 0x04
+        return state
+    }
+
     fun modifiers(metaState: Int): Int {
         var result = 0
         if (metaState and KeyEvent.META_SHIFT_ON != 0) result = result or MOD_SHIFT

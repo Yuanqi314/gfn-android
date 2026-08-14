@@ -75,6 +75,7 @@ class GfnKeyboardMouseInputController(
     private var modifierMismatchCount = 0L
     private var lastMappedScanCode: Int? = null
     private var lastWireScanCode: Int? = null
+    private var lastLockKeysState: Int? = null
     private var lastHeartbeatNanos = System.nanoTime()
     private var lastDiagnosticNanos = 0L
 
@@ -135,6 +136,8 @@ class GfnKeyboardMouseInputController(
                 )
                 return@enqueue
             }
+
+            syncLockKeysStateIfNeeded(trace.metaState)
 
             if (androidReportedModifiers != trackedModifiersForEvent) {
                 modifierMismatchCount += 1
@@ -282,6 +285,7 @@ class GfnKeyboardMouseInputController(
             if (!dataChannelOpen || !packetSink.isOpen()) return@enqueue
             protocolVersion = version
             encoder.protocolVersion = version
+            lastLockKeysState = null
             neutralizeUncertainRemoteStateBeforeReady()
             protocolReady = true
             GfnInputForensics.logProtocolReady(connectionGeneration, gate.currentEpoch, version)
@@ -354,6 +358,7 @@ class GfnKeyboardMouseInputController(
         if (!enqueue {
                 tracker.markAllRemoteUnknown()
                 tracker.clearPhysicalState()
+                lastLockKeysState = null
                 pendingDx = 0.0
                 pendingDy = 0.0
                 pendingWheel = 0.0
@@ -362,6 +367,18 @@ class GfnKeyboardMouseInputController(
             }) {
             executor.shutdown()
         }
+    }
+
+    private fun syncLockKeysStateIfNeeded(metaState: Int) {
+        val state = AndroidKeyboardMapper.lockKeysState(metaState)
+        if (lastLockKeysState == state) return
+        val ok = send(encoder.lockKeysSync(state))
+        Log.i(
+            "GfnLockState",
+            "generation=$connectionGeneration protocol=${protocolVersion ?: encoder.protocolVersion} " +
+                "state=0x${state.toString(16).padStart(2, '0')} sendAccepted=$ok",
+        )
+        if (ok) lastLockKeysState = state
     }
 
     private fun handleKeyDown(
@@ -464,6 +481,7 @@ class GfnKeyboardMouseInputController(
         }
         tracker.clearPhysicalState()
         tracker.finishRelease(channelUsable)
+        lastLockKeysState = null
         emitDiagnostics(force = true)
     }
 
