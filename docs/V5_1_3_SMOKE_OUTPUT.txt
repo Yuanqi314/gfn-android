@@ -1,0 +1,61 @@
+GFN Android v5.1.3 Input Forensics 定向验证
+==========================================
+
+[Freeze]
+stream-input/GfnInputProtocol.kt SHA-256:
+bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2
+= v5.1.2 PASS
+
+AndroidKeyboardMapper.kt SHA-256:
+f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d
+= v5.1.2 PASS
+
+[Golden keyboard packets]
+A/W/K/1/Space/Esc v2 DOWN/UP PASS
+A/W/K/1/Space/Esc v3 DOWN/UP PASS
+V513_KEYBOARD_GOLDEN_PACKETS=PASS
+
+[eventSeq / final buffer]
+V513_EVENTSEQ_TO_TX_FIXTURE=PASS
+V513_DISPATCH_EVENTSEQ_FIXTURE=PASS
+V513_FINAL_BYTEBUFFER_READONLY_DUMP=PASS
+
+[Targeted Kotlin/API-shaped compile]
+V513_INPUT_FORENSICS_CONTROLLER_COMPILE=PASS
+V513_VIDEO_SURFACE_COMPILE=PASS
+V513_MAIN_ACTIVITY_COMPILE=PASS
+V513_GFN_WEBRTC_ENGINE_COMPILE=PASS
+
+[Core protocol]
+stream-input=PASS
+stream-signaling=PASS
+gfn-session=PASS
+diagnostics=PASS
+gfn-cloudmatch=PASS
+protocol-cli compile=PASS
+protocol-cli run=PASS
+
+[Static guards]
+V5_WEBRTC_PUBLIC_ABI=PASS
+V5_WEBRTC_NETWORK_PERMISSIONS=PASS
+V51_INPUT_ARCHITECTURE=PASS
+V51_RELEASE_ALL_GUARDS=PASS
+V511_TRUE_DEVICE_FIX_GUARDS=PASS
+V512_AUDIO_KEYBOARD_GUARDS=PASS
+V513_INPUT_FORENSICS_GUARDS=PASS
+
+[Environment boundary]
+FULL_ANDROID_AGP_BUILD=NOT_EXECUTED
+当前容器无 Android SDK/android.jar，不能把 API-shaped Kotlin compile 冒充 assembleDebug。
+
+[Final re-check after interface/handshake hardening]
+V513_INPUT_FORENSICS_CONTROLLER_FINAL_COMPILE=PASS
+V513_ENGINE_FINAL_COMPILE=PASS
+V513_EVENTSEQ_TO_TX_FIXTURE=PASS
+V513_FINAL_TARGETED_COMPILE=PASS
+
+[verify-core.sh single-run boundary]
+Static guards through V513_INPUT_FORENSICS_GUARDS=PASS.
+Module compilation reached and passed core-model/core-network/gfn-identity/gfn-auth/gfn-account/gfn-games/gfn-session,
+then the constrained container timed out while starting diagnostics. No compiler error was emitted before timeout.
+This timeout is NOT recorded as a full verify-core PASS.

@@ -21,11 +21,13 @@ import kotlin.math.roundToInt
  * Android UI 回调只负责 admission；不会直接碰 DataChannel。
  */
 class GfnKeyboardMouseInputController(
+    private val connectionGeneration: Long,
     private val packetSink: PacketSink,
     private val onDiagnostics: (InputDiagnostics) -> Unit,
 ) {
     interface PacketSink {
         fun sendBinary(packet: ByteArray): Boolean
+        fun sendKeyboard(tx: GfnInputForensics.KeyboardTx, packet: ByteArray): Boolean
         fun isOpen(): Boolean
         fun bufferedAmount(): Long
     }
@@ -78,43 +80,75 @@ class GfnKeyboardMouseInputController(
         emitDiagnostics(force = true)
     }
 
-    fun onKey(down: Boolean, keyCode: Int, metaState: Int): Boolean {
-        val key = AndroidKeyboardMapper.map(keyCode) ?: return false
+    fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean {
         val eventEpoch = externallyVisibleEpoch.get()
-        val androidReportedModifiers = AndroidKeyboardMapper.modifiers(metaState)
+        val androidReportedModifiers = AndroidKeyboardMapper.modifiers(trace.metaState)
+        val key = AndroidKeyboardMapper.map(trace.keyCode)
+        if (key == null) {
+            // 只做取证：保持既有语义，未映射键仍返回 false 交给 Android 默认 dispatch。
+            enqueue {
+                GfnInputForensics.logInputKey(
+                    trace = trace,
+                    connectionGeneration = connectionGeneration,
+                    inputEpoch = eventEpoch,
+                    androidModifiers = androidReportedModifiers,
+                    trackedModifiers = tracker.currentPhysicalModifierMask(),
+                    mappedVirtualKey = null,
+                    mappedScanCode = null,
+                    protocolVersion = protocolVersion,
+                    keyboardActive = keyboardActive(),
+                    consumed = false,
+                    disposition = "UNMAPPED",
+                )
+            }
+            return false
+        }
         enqueue {
-            if (!gate.isCurrent(eventEpoch)) {
-                staleDropped += 1
-                emitDiagnostics()
-                return@enqueue
-            }
-            if (!keyboardActive()) {
-                dropped += 1
-                return@enqueue
-            }
-
             val heldModifierMaskBeforeEvent = tracker.currentPhysicalModifierMask()
             val trackedModifiersForEvent = if (down && key.isModifier) {
                 heldModifierMaskBeforeEvent or key.modifierBit
             } else {
                 heldModifierMaskBeforeEvent
             }
-            lastRawKeyCode = keyCode
-            lastRawMetaState = metaState
+            lastRawKeyCode = trace.keyCode
+            lastRawMetaState = trace.metaState
             lastAndroidReportedModifierMask = androidReportedModifiers
             lastTrackedModifierMask = trackedModifiersForEvent
+
+            if (!gate.isCurrent(eventEpoch)) {
+                staleDropped += 1
+                GfnInputForensics.logInputKey(
+                    trace, connectionGeneration, eventEpoch, androidReportedModifiers, trackedModifiersForEvent,
+                    key.virtualKey, key.scanCode, protocolVersion, keyboardActive(), true, "STALE_EPOCH",
+                )
+                emitDiagnostics()
+                return@enqueue
+            }
+            if (!keyboardActive()) {
+                dropped += 1
+                GfnInputForensics.logInputKey(
+                    trace, connectionGeneration, eventEpoch, androidReportedModifiers, trackedModifiersForEvent,
+                    key.virtualKey, key.scanCode, protocolVersion, false, true, "INPUT_INACTIVE",
+                )
+                return@enqueue
+            }
+
             if (androidReportedModifiers != trackedModifiersForEvent) {
                 modifierMismatchCount += 1
                 Log.w(
                     "GfnInput",
-                    "modifier mismatch keyCode=$keyCode down=$down rawMeta=0x${metaState.toString(16)} " +
+                    "modifier mismatch keyCode=${trace.keyCode} down=$down rawMeta=0x${trace.metaState.toString(16)} " +
                         "androidMask=0x${androidReportedModifiers.toString(16)} trackedMask=0x${trackedModifiersForEvent.toString(16)}",
                 )
             }
+            GfnInputForensics.logInputKey(
+                trace, connectionGeneration, eventEpoch, androidReportedModifiers, trackedModifiersForEvent,
+                key.virtualKey, key.scanCode, protocolVersion, true, true, "ENCODE",
+            )
 
             // 远端只使用本状态机实际持有的 modifier。Android metaState 只做诊断。
-            if (down) handleKeyDown(key, trackedModifiersForEvent)
-            else handleKeyUp(key, trackedModifiersForEvent)
+            if (down) handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)
+            else handleKeyUp(trace, eventEpoch, key, trackedModifiersForEvent)
         }
         return true
     }
@@ -247,6 +281,7 @@ class GfnKeyboardMouseInputController(
             encoder.protocolVersion = version
             neutralizeUncertainRemoteStateBeforeReady()
             protocolReady = true
+            GfnInputForensics.logProtocolReady(connectionGeneration, gate.currentEpoch, version)
             emitDiagnostics(force = true)
         }
     }
@@ -295,21 +330,33 @@ class GfnKeyboardMouseInputController(
         }
     }
 
-    private fun handleKeyDown(key: GfnKey, modifiers: Int) {
+    private fun handleKeyDown(
+        trace: GfnInputForensics.KeyTrace,
+        eventEpoch: Long,
+        key: GfnKey,
+        modifiers: Int,
+    ) {
         val held = HeldKey(key, modifiers)
         if (!tracker.recordPhysicalKeyDown(held)) return
         lastEvent = keyLabel(key) + " DOWN"
-        val ok = send(encoder.keyboard(true, key, modifiers))
+        val packet = encoder.keyboard(true, key, modifiers)
+        val ok = sendKeyboard(trace, eventEpoch, true, key, modifiers, packet)
         if (ok) tracker.markKeyDownAccepted(held) else tracker.markKeyUncertain(held)
         emitDiagnostics(force = true)
     }
 
-    private fun handleKeyUp(key: GfnKey, modifiers: Int) {
+    private fun handleKeyUp(
+        trace: GfnInputForensics.KeyTrace,
+        eventEpoch: Long,
+        key: GfnKey,
+        modifiers: Int,
+    ) {
         val previous = tracker.recordPhysicalKeyUp(key)
         val held = previous ?: HeldKey(key, modifiers)
         val encodedModifiers = previous?.modifiersAtDown ?: modifiers
         lastEvent = keyLabel(key) + " UP"
-        val ok = send(encoder.keyboard(false, key, encodedModifiers))
+        val packet = encoder.keyboard(false, key, encodedModifiers)
+        val ok = sendKeyboard(trace, eventEpoch, false, key, encodedModifiers, packet)
         if (ok) tracker.markKeyUpAccepted(key) else tracker.markKeyUncertain(held)
         emitDiagnostics(force = true)
     }
@@ -469,6 +516,39 @@ class GfnKeyboardMouseInputController(
         }
         submitted += 1
         val ok = packetSink.sendBinary(packet)
+        if (ok) accepted += 1 else rejected += 1
+        return ok
+    }
+
+    private fun sendKeyboard(
+        trace: GfnInputForensics.KeyTrace,
+        eventEpoch: Long,
+        down: Boolean,
+        key: GfnKey,
+        modifiers: Int,
+        packet: ByteArray,
+    ): Boolean {
+        generated += 1
+        val version = protocolVersion ?: encoder.protocolVersion
+        val tx = GfnInputForensics.KeyboardTx(
+            trace = trace,
+            connectionGeneration = connectionGeneration,
+            inputEpoch = eventEpoch,
+            down = down,
+            protocolVersion = version,
+            payloadOffset = if (version >= 3) 10 else 0,
+            virtualKey = key.virtualKey,
+            modifiers = modifiers,
+            scanCode = key.scanCode,
+        )
+        if (!packetSink.isOpen()) {
+            dropped += 1
+            // PacketSink 仍接收该事件以记录实际“未发送”边界；实现不得调用 DataChannel.send。
+            packetSink.sendKeyboard(tx, packet)
+            return false
+        }
+        submitted += 1
+        val ok = packetSink.sendKeyboard(tx, packet)
         if (ok) accepted += 1 else rejected += 1
         return ok
     }

@@ -136,6 +136,47 @@ private class StaleCreatePort : dev.gfn.session.CloudMatchPort {
     }
 }
 
+
+private fun verifyV513KeyboardForensicsGoldenPackets() {
+    println("\n[v5.1.3 Keyboard Forensics Golden Packets]")
+    val timestamp = 0x0102030405060708L
+    val keys = listOf(
+        "A" to GfnKey(0x41, 0x1E),
+        "W" to GfnKey(0x57, 0x11),
+        "K" to GfnKey(0x4B, 0x25),
+        "1" to GfnKey(0x31, 0x02),
+        "Space" to GfnKey(0x20, 0x39),
+        "Esc" to GfnKey(0x1B, 0x01),
+    )
+
+    fun assertPacket(packet: ByteArray, version: Int, down: Boolean, key: GfnKey) {
+        val payloadOffset = if (version >= 3) 10 else 0
+        check(packet.size == payloadOffset + 18)
+        if (version >= 3) {
+            check((packet[0].toInt() and 0xff) == 0x23)
+            check((packet[9].toInt() and 0xff) == 0x22)
+        }
+        val type = if (down) 3 else 4
+        check(packet.sliceArray(payloadOffset until payloadOffset + 4).contentEquals(byteArrayOf(type.toByte(), 0, 0, 0)))
+        check((packet[payloadOffset + 4].toInt() and 0xff) == ((key.virtualKey ushr 8) and 0xff))
+        check((packet[payloadOffset + 5].toInt() and 0xff) == (key.virtualKey and 0xff))
+        check((packet[payloadOffset + 6].toInt() and 0xff) == 0)
+        check((packet[payloadOffset + 7].toInt() and 0xff) == 0)
+        check((packet[payloadOffset + 8].toInt() and 0xff) == ((key.scanCode ushr 8) and 0xff))
+        check((packet[payloadOffset + 9].toInt() and 0xff) == (key.scanCode and 0xff))
+    }
+
+    for (version in listOf(2, 3)) {
+        val encoder = GfnInputPacketEncoder(protocolVersion = version, timestampMicros = { timestamp })
+        for ((name, key) in keys) {
+            assertPacket(encoder.keyboard(true, key, 0), version, true, key)
+            assertPacket(encoder.keyboard(false, key, 0), version, false, key)
+            println("golden $name v$version DOWN/UP PASS")
+        }
+    }
+    println("V513_KEYBOARD_GOLDEN_PACKETS=PASS")
+}
+
 private fun verifyStaleCreateCleanup() {
     println("\n[Session race cleanup]")
     val port = StaleCreatePort()
@@ -256,6 +297,7 @@ fun main() {
     verifyV4CloudMatchLifecycle()
     verifyV5SignalingAndSdp()
     verifyV51KeyboardMouseProtocol()
+    verifyV513KeyboardForensicsGoldenPackets()
     verifyStaleCreateCleanup()
     verifyDeviceFlow()
     verifySessionRestoreAfterUnauthorized()

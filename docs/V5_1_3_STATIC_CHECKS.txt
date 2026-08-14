@@ -1,0 +1,31 @@
+GFN Android v5.1.3 静态/边界检查
+================================
+
+[PASS] Input Forensics 仅 debug build 启用；release build flag=false
+[PASS] Activity dispatch PRE/POST 使用同一 eventSeq
+[PASS] Surface 同一 dispatch 复用 Activity eventSeq
+[PASS] Controller ordered queue 保留 eventSeq/connectionGen/inputEpoch
+[PASS] GfnInputKey 记录 raw scan/meta/repeat/device/source + mapping + modifiers
+[PASS] input_channel_v1 state 有独立 GfnInputChannel 日志
+[PASS] server handshake 记录 raw bytes/firstWord/parseRule/version
+[PASS] protocolReady 在 uncertain neutralization 后记录
+[PASS] GfnInputTx 使用真正 DataChannel.Buffer(finalBuffer,true) 的 finalBuffer
+[PASS] final buffer dump 使用 asReadOnlyBuffer，不改变 position/limit/remaining
+[PASS] binary=true / channel state / buffered amount / sendAccepted 均记录
+[PASS] 不逐事件 dump mouse MOVE/RTP/video frame
+
+Freeze:
+[PASS] GfnInputProtocol.kt 与 v5.1.2 SHA 完全一致
+[PASS] AndroidKeyboardMapper.kt 与 v5.1.2 SHA 完全一致
+[PASS] K 仍 VK=0x004B scan=0x0025
+[PASS] modifier truth 仍来自 InputStateTracker
+[PASS] releaseAll / ordered queue / input epoch 保留
+[PASS] wheel sign 保留 v5.1.1 真机修复
+[PASS] CloudMatch / WSS / SDP / ICE / H.264 / Audio 未因 v5.1.3 重构
+
+Known boundary:
+- 当前可靠 correlation IDs 为 activityInstanceId / connectionGeneration / inputEpoch / eventSeq。
+- 没有虚构 sessionGeneration。
+- 真机 K 异常根因尚未宣称修复；v5.1.3 的目标是把根因定位到唯一层级。
+[PASS] raw handshake bytes are logged even if protocol parsing returns UNPARSED
+[PASS] PacketSink.sendKeyboard has no fallback default implementation; the keyboard forensics path must be explicit

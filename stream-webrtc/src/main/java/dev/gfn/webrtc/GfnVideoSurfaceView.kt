@@ -12,7 +12,7 @@ import org.webrtc.SurfaceViewRenderer
  */
 class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
     interface InputListener {
-        fun onKey(down: Boolean, keyCode: Int, metaState: Int): Boolean
+        fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean
         fun onMouseMove(dx: Float, dy: Float)
         fun onMouseButton(down: Boolean, button: Int): Boolean
         fun onMouseWheel(verticalAxis: Float)
@@ -90,13 +90,23 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (!inputCaptureEnabled) return super.onKeyDown(keyCode, event)
-        if (event.repeatCount > 0) return true // held state 已由第一次 DOWN 维护，避免重复远端 DOWN。
-        return inputListener?.onKey(true, keyCode, event.metaState) == true || super.onKeyDown(keyCode, event)
+        val trace = GfnInputForensics.traceForSurface(event)
+        if (event.repeatCount > 0) {
+            // 保持 v5.1 既有语义：held state 只由第一次 DOWN 维护，不发送重复远端 DOWN。
+            GfnInputForensics.markSurfaceHandled(trace, true)
+            return true
+        }
+        val handled = inputListener?.onKey(true, trace) == true
+        GfnInputForensics.markSurfaceHandled(trace, handled)
+        return handled || super.onKeyDown(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (!inputCaptureEnabled) return super.onKeyUp(keyCode, event)
-        return inputListener?.onKey(false, keyCode, event.metaState) == true || super.onKeyUp(keyCode, event)
+        val trace = GfnInputForensics.traceForSurface(event)
+        val handled = inputListener?.onKey(false, trace) == true
+        GfnInputForensics.markSurfaceHandled(trace, handled)
+        return handled || super.onKeyUp(keyCode, event)
     }
 
     override fun onCapturedPointerEvent(event: MotionEvent): Boolean {

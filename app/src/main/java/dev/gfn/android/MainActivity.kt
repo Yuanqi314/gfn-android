@@ -4,11 +4,13 @@ import android.content.res.Configuration
 import android.os.Bundle
 import android.media.AudioManager
 import android.util.Log
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.ViewModelProvider
 import dev.gfn.android.ui.GfnAndroidApp
+import dev.gfn.webrtc.GfnInputForensics
 import java.util.concurrent.atomic.AtomicLong
 
 class MainActivity : ComponentActivity() {
@@ -20,10 +22,27 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logLifecycle("onCreate", "saved=${savedInstanceState != null}")
+        GfnInputForensics.configure(BuildConfig.DEBUG && BuildConfig.INPUT_FORENSICS_ENABLED)
         volumeControlStream = AudioManager.STREAM_MUSIC
         enableEdgeToEdge()
         setContent {
             GfnAndroidApp(runtime)
+        }
+    }
+
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val trace = GfnInputForensics.beginActivityDispatch(
+            event = event,
+            activityInstanceId = activityInstanceId,
+            focusedView = currentFocus?.let { "${it.javaClass.name}@${Integer.toHexString(System.identityHashCode(it))}" } ?: "none",
+        )
+        var handled = false
+        try {
+            handled = super.dispatchKeyEvent(event)
+            return handled
+        } finally {
+            GfnInputForensics.endActivityDispatch(trace, handled)
         }
     }
 

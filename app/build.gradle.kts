@@ -11,13 +11,22 @@ android {
         applicationId = "dev.gfn.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.5.1.2-dev"
+        versionCode = 11
+        versionName = "0.5.1.3-dev"
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "INPUT_FORENSICS_ENABLED", "true")
+        }
+        getByName("release") {
+            buildConfigField("boolean", "INPUT_FORENSICS_ENABLED", "false")
+        }
     }
 
     compileOptions {

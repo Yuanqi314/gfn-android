@@ -78,10 +78,32 @@ grep -Fq '.setAudioDeviceModule(adm)' stream-webrtc/src/main/java/dev/gfn/webrtc
 grep -Fq 'adm.release()' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt || { echo 'ERROR: caller-owned AudioDeviceModule native ref is not released after PeerConnectionFactory creation' >&2; exit 1; }
 grep -Fq 'volumeControlStream = AudioManager.STREAM_MUSIC' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: Activity volume buttons not bound to media stream' >&2; exit 1; }
 grep -Fq 'currentPhysicalModifierMask()' stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt || { echo 'ERROR: tracked modifier truth missing' >&2; exit 1; }
-grep -Fq 'val androidReportedModifiers = AndroidKeyboardMapper.modifiers(metaState)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: raw Android modifier diagnostics missing' >&2; exit 1; }
-grep -Fq 'handleKeyDown(key, trackedModifiersForEvent)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: keyboard DOWN still trusts Android metaState instead of tracked modifier state' >&2; exit 1; }
+grep -Fq 'val androidReportedModifiers = AndroidKeyboardMapper.modifiers(trace.metaState)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: raw Android modifier diagnostics missing' >&2; exit 1; }
+grep -Fq 'handleKeyDown(trace, eventEpoch, key, trackedModifiersForEvent)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: keyboard DOWN still trusts Android metaState instead of tracked modifier state' >&2; exit 1; }
 grep -Fq 'modifierMismatchCount' stream-core/src/main/kotlin/dev/gfn/stream/StreamingEngine.kt || { echo 'ERROR: modifier mismatch diagnostics missing' >&2; exit 1; }
 echo 'V512_AUDIO_KEYBOARD_GUARDS=PASS'
+
+# v5.1.3 Input Forensics only guards. These must not alter keyboard protocol semantics.
+grep -Fq 'buildConfigField("boolean", "INPUT_FORENSICS_ENABLED", "true")' app/build.gradle.kts || { echo 'ERROR: debug Input Forensics switch missing' >&2; exit 1; }
+grep -Fq 'BuildConfig.DEBUG && BuildConfig.INPUT_FORENSICS_ENABLED' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: Input Forensics must be debug-gated' >&2; exit 1; }
+grep -Fq 'override fun dispatchKeyEvent(event: KeyEvent)' app/src/main/java/dev/gfn/android/MainActivity.kt || { echo 'ERROR: Activity dispatch PRE/POST instrumentation missing' >&2; exit 1; }
+grep -Fq 'GfnKeyDispatch' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: GfnKeyDispatch log missing' >&2; exit 1; }
+grep -Fq 'GfnInputKey' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: GfnInputKey log missing' >&2; exit 1; }
+grep -Fq 'GfnInputHandshake' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: GfnInputHandshake log missing' >&2; exit 1; }
+grep -Fq 'GfnInputTx' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: GfnInputTx log missing' >&2; exit 1; }
+grep -Fq 'asReadOnlyBuffer()' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt || { echo 'ERROR: final ByteBuffer dump must use read-only duplicate/view' >&2; exit 1; }
+grep -Fq 'val finalBuffer = ByteBuffer.wrap(packet)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: Tx diagnostics are not attached to final DataChannel ByteBuffer' >&2; exit 1; }
+grep -Fq 'DataChannel.Buffer(finalBuffer, true)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: actual final ByteBuffer is not sent as binary DataChannel payload' >&2; exit 1; }
+grep -Fq 'GfnInputForensics.logHandshake(eventGeneration, bytes, version)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: raw input handshake diagnostics missing' >&2; exit 1; }
+grep -Fq 'KEYCODE_K to k(0x4B, 0x25)' stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt || { echo 'ERROR: K mapping changed during forensics-only release' >&2; exit 1; }
+INPUT_PROTOCOL_SHA=$(sha256sum stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt | awk '{print $1}')
+[ "$INPUT_PROTOCOL_SHA" = 'bc4cc1600fe664f077a2848e8009093dd58f8c233010fc3e5d80c2ce290509f2' ] || { echo 'ERROR: stream-input protocol semantics changed in v5.1.3' >&2; exit 1; }
+KEYBOARD_MAPPER_SHA=$(sha256sum stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt | awk '{print $1}')
+[ "$KEYBOARD_MAPPER_SHA" = 'f767dddb02734193545e56e5b817cc82bd7d2baa53df34429a1e1402a366b69d' ] || { echo 'ERROR: AndroidKeyboardMapper changed in v5.1.3 forensics-only release' >&2; exit 1; }
+grep -Fq 'DataChannel.Init().apply { ordered = true }' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: input_channel_v1 DataChannel configuration changed' >&2; exit 1; }
+grep -Fq 'fun releaseAll(reason: InputReleaseReason)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: releaseAll architecture changed' >&2; exit 1; }
+grep -Fq 'pendingWheel += verticalAxis * 3.0' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt || { echo 'ERROR: mouse/wheel logic changed in forensics-only release' >&2; exit 1; }
+echo 'V513_INPUT_FORENSICS_GUARDS=PASS'
 BUILD="$ROOT/build"
 MODULES="$BUILD/module-check"
 rm -rf "$MODULES"

@@ -120,3 +120,17 @@
 - 新增 Input diagnostics：raw keyCode/metaState、Android modifier mask、tracked modifier mask、mismatch count。
 - 未修改 CloudMatch、GFN WSS、SDP、ICE、H.264、mouse packet framing、control_channel、releaseAll/epoch/ordered queue。
 - 自定义 `JavaAudioDeviceModule` 在 `PeerConnectionFactory` 创建后立即 `adm.release()` 释放调用方持有的 native ref；Factory 保留自己的引用，避免 ADM 生命周期泄漏。
+## v5.1.3 — Input Forensics 键盘全链路取证
+
+- 定义为 `Input Forensics Only`；不宣称直接修复普通字母最小化远端游戏窗口。
+- 新增 `GfnInputForensics`，用唯一 `eventSeq` 关联 Activity dispatch → Surface → Mapper/State → Encoder → DataChannel Tx。
+- `MainActivity.dispatchKeyEvent()` 新增 PRE/POST 日志：raw keyCode/scan/meta/repeat/flags/device/source/focus + appHandled/superHandled。
+- `GfnInputKey` 新增 rawMeta / androidMods / trackedMods / mappedVK / mappedScan / protocol / epoch / active / consumed。
+- `GfnInputChannel` 记录 `input_channel_v1` 创建与 state。
+- `GfnInputHandshake` dump 真实 server callback bytes、firstWord、parseRule、negotiatedVersion、protocolReady。
+- `GfnInputTx` 从真正传给 `DataChannel.Buffer(finalBuffer, true)` 的同一个 final ByteBuffer 做 read-only dump，记录 position/limit/remaining/binary/bufferedAmount/sendAccepted。
+- debug build 通过 `BuildConfig.DEBUG && INPUT_FORENSICS_ENABLED` 启用；release build 默认关闭逐键日志。
+- A/W/K/1/Space/Esc 新增 v2/v3 golden packet fixture。
+- `GfnInputProtocol.kt` 与 `AndroidKeyboardMapper.kt` 与 v5.1.2 SHA 完全一致；K 继续 `VK=0x004B / scan=0x0025`。
+- 不修改 tracked modifier、releaseAll/epoch、mouse/wheel、CloudMatch、WSS、SDP、ICE、H.264、Audio。
+

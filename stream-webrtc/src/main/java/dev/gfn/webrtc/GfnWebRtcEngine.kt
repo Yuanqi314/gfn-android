@@ -169,8 +169,8 @@ class GfnWebRtcEngine(
                 output.onFirstFrame = ::onFirstFrameRendered
                 output.onResolutionChanged = ::onResolutionChanged
                 output.inputListener = object : GfnVideoSurfaceView.InputListener {
-                    override fun onKey(down: Boolean, keyCode: Int, metaState: Int): Boolean =
-                        synchronized(lock) { inputController }?.onKey(down, keyCode, metaState) == true
+                    override fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean =
+                        synchronized(lock) { inputController }?.onKey(down, trace) == true
 
                     override fun onMouseMove(dx: Float, dy: Float) {
                         synchronized(lock) { inputController }?.onMouseMove(dx, dy)
@@ -420,6 +420,12 @@ class GfnWebRtcEngine(
             DataChannel.Init().apply { ordered = true },
         )?.let { channel ->
             dataChannels += channel
+            GfnInputForensics.logDataChannel(
+                connectionGeneration = eventGeneration,
+                state = runCatching { channel.state().name }.getOrDefault("UNKNOWN"),
+                protocolReady = false,
+                note = "created configuredOrdered=true configuredNegotiated=false",
+            )
             registerInputDataChannel(channel, eventGeneration)
         }
         pc.createDataChannel(
@@ -440,11 +446,37 @@ class GfnWebRtcEngine(
 
     private fun createKeyboardMouseController(eventGeneration: Long): GfnKeyboardMouseInputController =
         GfnKeyboardMouseInputController(
+            connectionGeneration = eventGeneration,
             packetSink = object : GfnKeyboardMouseInputController.PacketSink {
                 override fun sendBinary(packet: ByteArray): Boolean {
                     val channel = synchronized(lock) { inputDataChannel }
                     if (channel == null || channel.state() != DataChannel.State.OPEN) return false
                     return channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true))
+                }
+
+                override fun sendKeyboard(
+                    tx: GfnInputForensics.KeyboardTx,
+                    packet: ByteArray,
+                ): Boolean {
+                    val channel = synchronized(lock) { inputDataChannel }
+                    val finalBuffer = ByteBuffer.wrap(packet)
+                    val channelState = runCatching { channel?.state()?.name ?: "NULL" }.getOrDefault("UNKNOWN")
+                    val bufferedBefore = runCatching { channel?.bufferedAmount() ?: 0L }.getOrDefault(0L)
+                    val logPrefix = GfnInputForensics.logKeyboardTxBeforeSend(
+                        tx = tx,
+                        buffer = finalBuffer,
+                        channelState = channelState,
+                        bufferedAmount = bufferedBefore,
+                        binary = true,
+                    )
+                    if (channel == null || channelState != DataChannel.State.OPEN.name) {
+                        GfnInputForensics.logKeyboardTxAfterSend(logPrefix, false, bufferedBefore)
+                        return false
+                    }
+                    val accepted = channel.send(DataChannel.Buffer(finalBuffer, true))
+                    val bufferedAfter = runCatching { channel.bufferedAmount() }.getOrDefault(bufferedBefore)
+                    GfnInputForensics.logKeyboardTxAfterSend(logPrefix, accepted, bufferedAfter)
+                    return accepted
                 }
 
                 override fun isOpen(): Boolean =
@@ -470,7 +502,14 @@ class GfnWebRtcEngine(
                     if (generation.get() != eventGeneration) return
                     // Native -> Java callback: never allow a Java/Kotlin exception to escape back into WebRTC JNI.
                     runCatching {
-                        val open = channel.state() == DataChannel.State.OPEN
+                        val channelState = channel.state()
+                        val open = channelState == DataChannel.State.OPEN
+                        GfnInputForensics.logDataChannel(
+                            connectionGeneration = eventGeneration,
+                            state = channelState.name,
+                            protocolReady = diagnostics.input.protocolReady,
+                            note = "observer.onStateChange",
+                        )
                         synchronized(lock) { inputController }?.onDataChannelState(open)
                     }
                 }
@@ -483,7 +522,10 @@ class GfnWebRtcEngine(
                         val source = buffer.data.slice()
                         val bytes = ByteArray(source.remaining())
                         source.get(bytes)
-                        val version = GfnInputHandshake.parseProtocolVersion(bytes) ?: return@runCatching
+                        val version = GfnInputHandshake.parseProtocolVersion(bytes)
+                        // Input Forensics: raw callback bytes must be recorded even when parsing fails.
+                        GfnInputForensics.logHandshake(eventGeneration, bytes, version)
+                        version ?: return@runCatching
                         if (version < 2) return@runCatching
                         val controller = synchronized(lock) { inputController }
                         // 防御回调时序：即使 OPEN state callback 晚于第一条 handshake message，
@@ -494,7 +536,14 @@ class GfnWebRtcEngine(
                 }
             },
         )
-        synchronized(lock) { inputController }?.onDataChannelState(channel.state() == DataChannel.State.OPEN)
+        val initialState = channel.state()
+        GfnInputForensics.logDataChannel(
+            connectionGeneration = eventGeneration,
+            state = initialState.name,
+            protocolReady = diagnostics.input.protocolReady,
+            note = "observer.registered",
+        )
+        synchronized(lock) { inputController }?.onDataChannelState(initialState == DataChannel.State.OPEN)
     }
 
     private fun registerServerDataChannel(channel: DataChannel, eventGeneration: Long) {

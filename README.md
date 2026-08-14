@@ -1,27 +1,42 @@
-# GFN Android Lab · v5.1.2 音频路由 / 键盘 modifier 修正版
+# GFN Android Lab · v5.1.3 Input Forensics 键盘全链路取证版
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
 
-## v5.1.2 本轮新增
+## v5.1.3 本轮新增
 
-真机 v5.1.1 已确认：声音恢复、滚轮方向正确、全屏自动横屏/旋转保持、游戏退出自动 Session End 均通过。当前新增两项：
+当前真机已确认：音频输出恢复、滚轮方向、自动横屏/画面适配、游戏退出自动 Session End 均已通过；v5.1.2 的扬声器/媒体音量路由尚未收到本轮真机复测结果。当前键盘问题是：普通字母（最新明确为 K，且疑似所有字母）会让远端全屏游戏窗口最小化。
 
-```text
-1. Android 音频当前走听筒 + 通话音量
-2. 普通字母键可能触发远端 Windows 窗口最小化
-```
-
-v5.1.2 只修这两层：
+v5.1.3 明确定义为：
 
 ```text
-AudioDeviceModule: VOICE_COMMUNICATION → GAME/MUSIC
-Keyboard modifier truth: Android metaState → InputStateTracker 实际 held modifier
+Input Forensics Only
 ```
 
-CloudMatch / WSS / SDP / ICE / H.264 / control_channel / releaseAll packet framing 均保持不变。
+只增加：
+
+```text
+eventSeq
+Activity dispatch PRE/POST
+raw Android KeyEvent
+Mapper / modifier / active gate diagnostics
+input_channel_v1 state
+raw server handshake / parse rule / protocolVersion
+final DataChannel ByteBuffer exact hex
+position / limit / remaining / binary / sendAccepted
+```
+
+本版禁止修改 VK/scanCode、modifier 语义、endianness、packet size、v2/v3 framing、DataChannel 配置、releaseAll/epoch、mouse、CloudMatch/WSS/SDP/ICE/H.264。K 仍为 `VK=0x004B / scan=0x0025`。
+
+详细见：
+
+```text
+docs/V5_1_3_INPUT_FORENSICS.md
+docs/V5_1_3_TEST_GUIDE.md
+docs/V5_1_3_REFERENCE_ADOPTION.md
+```
 
 ## v5.1.1 本轮范围
 
