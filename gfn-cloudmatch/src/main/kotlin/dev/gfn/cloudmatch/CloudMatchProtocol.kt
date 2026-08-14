@@ -229,9 +229,10 @@ class GfnCloudMatchClient(
 
         // 与 CloudNow 当前行为一致：当 provider endpoint 在 Ready 阶段给出具体 server host 后，
         // 再通过 resolved server 拉一次最终 connectionInfo。
-        if (session.serverIp.isNullOrBlank() && parsed.isReadyStatus && !parsed.serverIp.isNullOrBlank()) {
+        val resolvedServerIp = parsed.serverIp?.takeIf { it.isNotBlank() }
+        if (session.serverIp.isNullOrBlank() && parsed.isReadyStatus && resolvedServerIp != null) {
             val currentHost = hostOf(effectiveBase)
-            val resolvedHost = parsed.serverIp.lowercase()
+            val resolvedHost = resolvedServerIp.lowercase()
             if (currentHost != resolvedHost) {
                 return pollSession(parsed, token)
             }

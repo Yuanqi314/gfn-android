@@ -1,4 +1,5 @@
-# GFN Android Lab · 第四版（v4）
+# GFN Android Lab · 第四版（v4.0.1）
+> v4.0.1：修复 `CloudMatchProtocol.kt` 跨模块 `serverIp` smart-cast 编译错误；协议和 Session 行为不变。详见 `docs/V4_0_1_BUILD_FIX.md`。
 
 这是一个独立 Android GeForce NOW 客户端实验工程。
 

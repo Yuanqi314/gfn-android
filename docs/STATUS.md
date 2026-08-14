@@ -1,4 +1,6 @@
-# 第四版状态
+# 第四版状态（v4.0.1）
+
+> 已修复 `CloudMatchProtocol.kt` 跨模块 `serverIp` smart-cast 编译错误，并新增真实模块边界编译检查。Session 协议逻辑未改变。
 
 ## 已由真机确认的基础
 
