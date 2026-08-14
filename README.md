@@ -1,5 +1,6 @@
-# GFN Android Lab · 第五版（v5.0）
+# GFN Android Lab · 第五版（v5.0.1）
 
+> **v5.0.1 握手修复**：真机 v5.0 已到 GFN signaling HTTP endpoint，但 WebSocket Upgrade 返回 `HTTP 400 Bad Request`。取证确认 v5.0 Android 请求漏发了 GFN 会话 WebSocket 子协议 `x-nv-sessionid.<sessionId>`，同时未显式发送 CloudNow 当前成功实现中的 `Origin` 与 GFN-PC `User-Agent`。v5.0.1 已补齐三项；CloudMatch/Claim/SDP/ICE 行为未改。
 这是一个独立 Android GeForce NOW 客户端实验工程。官方客户端只作为协议取证参考，CloudNow 作为已经实现的行为/架构参考；Android 端保持自己的模块边界，不修改 NVIDIA 官方 APK。
 
 > 仅使用用户自己的合法 GeForce NOW 账号，不修改订阅等级、账号 entitlement 或服务端授权。

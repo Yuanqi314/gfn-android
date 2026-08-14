@@ -1,4 +1,11 @@
-# 第五版状态（v5.0）
+## v5.0.1 真机握手修复
+
+- v5.0 真机：`wss://<resolved-server>/nvst/` TLS/HTTP 已到达 GFN，WebSocket Upgrade 返回 `HTTP 400 Bad Request`，RX/TX 均为 0。
+- 根因证据：Android OkHttp v5.0 只构造了 sign_in URL，没有发送当前已验证实现使用的 `Sec-WebSocket-Protocol: x-nv-sessionid.<sessionId>`、`Origin: https://play.geforcenow.com` 和 GFN-PC User-Agent。
+- v5.0.1：三项握手字段已补齐；仍强制 HTTP/1.1；未修改 TLS 校验策略。
+- 当前证据等级：**代码/fixture 已修复，真机 WSS 101/Connected 待验证。**
+
+# 第五版状态（v5.0.1）
 
 ## 真机已确认
 

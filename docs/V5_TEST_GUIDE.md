@@ -1,4 +1,28 @@
-# v5.0 真机测试指南
+## v5.0.1 首要 Gate：WebSocket Upgrade
+
+升级后第一项只验证 WSS，不先判断 SDP/ICE：
+
+```text
+旧 v5.0：HTTP 400 Bad Request，WSS RX/TX 0/0
+
+v5.0.1 目标：
+HTTP 101 Switching Protocols
+→ WSS connected
+→ TX peer_info > 0
+→ RX peer_info/offer/heartbeat > 0
+```
+
+握手请求必须包含：
+
+```text
+Sec-WebSocket-Protocol: x-nv-sessionid.<sessionId>
+Origin: https://play.geforcenow.com
+User-Agent: GFN-PC browser UA
+```
+
+如果仍然返回 HTTP 400，请只提供：HTTP code/message、WSS endpoint host/path、RX/TX 计数，不要提供 token、完整 SDP、ICE password 或 TURN credential。
+
+# v5.0.1 真机测试指南
 
 ## 前提
 

@@ -1,3 +1,14 @@
+## v5.0.1 — GFN WebSocket Upgrade 修复
+
+- 修复真实真机 `Expected HTTP 101 response but was 400 Bad Request`。
+- `GfnSignalingClient` 新增 `Sec-WebSocket-Protocol: x-nv-sessionid.<sessionId>`。
+- 新增 `Origin: https://play.geforcenow.com`。
+- 新增统一的 GFN-PC User-Agent，复用 `gfn-identity/GfnProtocolDefaults`，避免常量漂移。
+- `stream-webrtc` 显式依赖 `:gfn-identity`。
+- 失败信息附带 HTTP code/message，但不输出 token/credential。
+- 新增纯 JVM fixture：验证 session subprotocol 精确格式。
+- 未修改 CloudMatch Create/Poll/Claim/DELETE、SDP/ICE/H.264 逻辑。
+
 # v5.0 变更说明
 
 ## 新增

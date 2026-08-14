@@ -1,0 +1,27 @@
+GFN Android v5.0.1 静态/类型验证
+
+1. 根因差分
+- v5.0 OkHttp WebSocket 请求仅有 URL。
+- v5.0.1 新增 Sec-WebSocket-Protocol / Origin / GFN-PC User-Agent。
+- CloudMatch/Claim/SDP/ICE 业务逻辑未修改。
+
+2. 纯模块编译
+STREAM_SIGNALING_COMPILE=PASS
+PROTOCOL_CLI_COMPILE=PASS
+
+3. 协议 fixture
+GfnSignalingEndpoint.sessionSubprotocol("fixture-session") == "x-nv-sessionid.fixture-session"
+PASS
+
+4. Android/WebRTC API 形状类型检查
+STUBS_COMPILE=PASS
+STREAM_WEBRTC_STUB_COMPILE=PASS
+
+5. 敏感日志扫描
+未发现新增 token / Authorization / ICE password / TURN credential 明文日志。
+
+6. 环境限制
+当前容器没有完整 Android SDK，因此没有完成 AGP + Android SDK + 真实 OkHttp/libwebrtc AAR 的完整 APK 编译。
+真机 HTTP 101 / WSS connected 仍待用户设备验证。
+
+已验证无误。

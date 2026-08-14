@@ -263,6 +263,7 @@ private fun verifyV5SignalingAndSdp() {
         peerName = "peer-fixture",
     )
     check(signIn == "wss://66-22-144-44.cloudmatchbeta.nvidiagrid.net/nvst/sign_in?peer_id=peer-fixture&version=2&peer_role=1&pairing_id=fixture-session")
+    check(GfnSignalingEndpoint.sessionSubprotocol("fixture-session") == "x-nv-sessionid.fixture-session")
 
     val offer = listOf(
         "v=0",
@@ -350,7 +351,7 @@ private fun verifyV5SignalingAndSdp() {
     check(nvst.contains("a=video.maxFPS:60"))
     check(nvst.contains("a=msid:input_1"))
     check(!nvst.contains("10-bit", ignoreCase = true))
-    println("WSS sign_in → peer envelope → H.264 Answer → NVST SDP fixture 验证通过")
+    println("WSS sign_in + session subprotocol → peer envelope → H.264 Answer → NVST SDP fixture 验证通过")
 }
 
 private fun verifyV4CloudMatchLifecycle() {

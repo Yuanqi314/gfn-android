@@ -18,9 +18,10 @@ android {
 
 dependencies {
     implementation(project(":core-model"))
+    implementation(project(":gfn-identity"))
     implementation(project(":stream-core"))
     implementation(project(":stream-signaling"))
 
     implementation("com.squareup.okhttp3:okhttp:5.3.0")
-    api("io.github.webrtc-sdk:android:144.7559.09")
+    implementation("io.github.webrtc-sdk:android:144.7559.09")
 }

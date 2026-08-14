@@ -14,6 +14,11 @@ import java.time.Instant
  */
 
 object GfnSignalingEndpoint {
+    fun sessionSubprotocol(sessionId: String): String {
+        require(sessionId.isNotBlank()) { "Session ID 不能为空" }
+        return "x-nv-sessionid.$sessionId"
+    }
+
     fun signInUrl(signalingUrl: String, sessionId: String, peerName: String): String {
         val base = URI(signalingUrl)
         require(base.scheme == "wss" || base.scheme == "ws") { "Signaling URL 必须是 ws/wss" }

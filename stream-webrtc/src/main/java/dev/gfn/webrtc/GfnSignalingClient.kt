@@ -2,6 +2,7 @@ package dev.gfn.webrtc
 
 import dev.gfn.signaling.GfnSignalingEndpoint
 import dev.gfn.signaling.GfnSignalingMessageCodec
+import dev.gfn.identity.GfnProtocolDefaults
 import dev.gfn.signaling.SignalingPeerPayload
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.Executors
@@ -59,7 +60,15 @@ class GfnSignalingClient(
             if (socket != null) return
             closed = false
         }
-        val request = Request.Builder().url(url).build()
+        val request = Request.Builder()
+            .url(url)
+            // GFN signaling server binds the WebSocket Upgrade to the claimed session
+            // through this RFC 6455 subprotocol. Omitting it reaches the server but is
+            // rejected during the HTTP Upgrade (observed as HTTP 400 on Android).
+            .header("Sec-WebSocket-Protocol", GfnSignalingEndpoint.sessionSubprotocol(sessionId))
+            .header("Origin", GfnProtocolDefaults.webOrigin)
+            .header("User-Agent", GfnProtocolDefaults.userAgent)
+            .build()
         val ws = client.newWebSocket(request, SocketListener())
         synchronized(lock) { socket = ws }
     }
@@ -216,7 +225,12 @@ class GfnSignalingClient(
                 socket = null
                 closed = true
             }
-            listener(GfnSignalingEvent.Failure("WebSocket 失败：${t.message ?: t::class.java.simpleName}"))
+            val http = response?.let { "；HTTP ${it.code} ${it.message}" }.orEmpty()
+            listener(
+                GfnSignalingEvent.Failure(
+                    "WebSocket 失败：${t.message ?: t::class.java.simpleName}$http",
+                ),
+            )
         }
     }
 
