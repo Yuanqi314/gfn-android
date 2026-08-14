@@ -69,6 +69,7 @@ class GfnAppRuntimeViewModel(application: Application) : AndroidViewModel(applic
             context = appContext,
             serverSessionEndedSink = sessionController::onServerSessionEnded,
             transportReconcileSink = sessionController::reconcileAfterStreamDisconnect,
+            transportRecoverySink = sessionController::recoverForStreamReconnect,
         )
     }
 

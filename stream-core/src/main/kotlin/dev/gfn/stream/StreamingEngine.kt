@@ -68,6 +68,7 @@ sealed interface StreamState {
     data object IceChecking : StreamState
     data object Connected : StreamState
     data object FirstFrame : StreamState
+    data class Reconnecting(val attempt: Int, val source: String) : StreamState
     data object SessionEnded : StreamState
     data class Failed(val reason: String) : StreamState
     data object Closed : StreamState
@@ -171,6 +172,18 @@ data class VideoDiagnostics(
     val decoderPath: String = "libwebrtc DefaultVideoDecoderFactory（具体硬件/软件 decoder 待真机确认）",
 )
 
+data class ReconnectDiagnostics(
+    val active: Boolean = false,
+    val attempt: Int = 0,
+    val maxAttempts: Int = 3,
+    val source: String? = null,
+    val phase: String = "IDLE",
+    val sessionId: String? = null,
+    val sameSessionIdVerified: Boolean = false,
+    val frozenProfileVerified: Boolean = false,
+    val lastError: String? = null,
+)
+
 data class StreamDiagnostics(
     val signaling: SignalingDiagnostics = SignalingDiagnostics(),
     val offer: SdpDiagnostics = SdpDiagnostics(),
@@ -180,6 +193,7 @@ data class StreamDiagnostics(
     val audio: AudioDiagnostics = AudioDiagnostics(),
     val control: ControlDiagnostics = ControlDiagnostics(),
     val input: InputDiagnostics = InputDiagnostics(),
+    val reconnect: ReconnectDiagnostics = ReconnectDiagnostics(),
 )
 
 interface StreamingEngine {

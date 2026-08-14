@@ -12,7 +12,7 @@
 | type19 lock sync | No | Yes | No | A/B 后删除 |
 | tracked modifiers | client state | DOM event/state path | InputStateTracker | 既有真机证据 |
 | Session keyboardLayout | explicit setting | explicit setting | persistent setting | `en-US` Cyberpunk 真机修复 |
-| Claim/Resume layout stability | session setting | session setting | frozen launch snapshot | fixture；v5.2 真机待回归 |
+| Claim/Resume layout stability | session setting | session setting | frozen launch snapshot | v5.2 真机通过 |
 | ordered input channel | Yes | Yes | Yes | 既有真机证据 |
 
 ### Current verdict
@@ -37,7 +37,7 @@ v5.1.9 已完成 Cyberpunk 2077 + CS2 回归，Keyboard packet semantics 进入 
 | Keyboard layout independent from game language | Yes | Yes | Yes | en-US 真机修复 + fixture |
 | Resolution setting | Yes | Yes | Auto + 当前 1920x1080 | Resolver fixture；默认路径既有真机 |
 | FPS setting | Yes | Yes | Auto + 当前 60 FPS | Resolver fixture；默认路径既有真机 |
-| Max bitrate setting | Yes | Yes | 5–100 Mbps client guard, 20 Mbps default | Encoding path/static verified；非默认值真机 A/B 待验证 |
+| Max bitrate setting | Yes | Yes | 5–100 Mbps client guard, 20 Mbps default | 100 Mbps 当前真机环境通过；不外推为服务端全局上限 |
 | Audio mode setting | Yes | platform capability based | 当前仅 Stereo 2ch | Resolver fixture；Stereo 既有真机 |
 | Codec choice exposed | Yes | Yes | **No**，当前固定 H.264 | 保守冻结 |
 | Main10/HDR exposed | implementation-dependent | Yes | **No** | 后续版本单独取证 |
@@ -50,15 +50,16 @@ v5.1.9 已完成 Cyberpunk 2077 + CS2 回归，Keyboard packet semantics 进入 
 ### v5.2 evidence boundary
 
 ```text
-Current stable media path:
+Current verified media path:
 1920x1080 @ 60 FPS
 H.264
 SDR8
 Stereo 2ch
 20 Mbps default
+100 Mbps tested successfully on the current true-device/session environment
 ```
 
-`5–100 Mbps` 是 v5.2 客户端允许写入现有 SDP/NVST bitrate 字段的 guard 范围，参考实现也允许可调码率；它**不是**本项目已经真机证明的服务端最大码率。非默认值必须继续做单变量真机 A/B。
+`100 Mbps` 已在当前真机环境验证功能正常；这只证明该设备/账号/节点/Session 组合可用，**不等价于 NVIDIA 服务端的全局最大码率规范**。5–100 Mbps 仍是本客户端 guard。
 
 `ResolvedLaunchProfile` 的工程约束：
 
@@ -77,16 +78,35 @@ CREATE / persist / CLAIM / WebRTC
 
 ---
 
-## Reconnect — v5.2.1 placeholder
+## Reconnect — v5.2.1
 
-| Feature | CloudNow | OpenNOW | gfn-android | Verified |
+| Feature | CloudNow | OpenNOW | gfn-android v5.2.1 | Verified |
 |---|---|---|---|---|
-| same Session ID | TODO inspect | TODO inspect | reconcile only | - |
-| recreate Session | TODO inspect | TODO inspect | must not | - |
-| signaling refresh | TODO inspect | TODO inspect | TODO | - |
-| DataChannel rebuild | TODO inspect | TODO inspect | TODO | - |
-| input re-handshake | TODO inspect | TODO inspect | TODO | - |
-| reuse frozen launch profile | expected session-stable | expected session-stable | v5.2 foundation ready | fixture only |
+| same Session ID | same-session `claimSession` | active-session candidate -> same-ID `claimSession` | enforced; changed ID rejected | fixture |
+| recreate Session on transport failure | No | No | **No** | static guard + fixture (`CREATE_COUNT=1`) |
+| signaling refresh | reclaim returns refreshed Session, then new signaling | active lookup + claim, then reconnect signaling | same-session Claim response drives fresh signaling info | fixture + code path |
+| PeerConnection rebuild | tears down old PC, creates new | disposes old client/WebRTC, reconnects | old transport drain/close -> new PC | controller fixture + static guard |
+| DataChannel rebuild | new transport channels | new WebRTC client/channels | `createExpectedDataChannels` on new PC | static guard |
+| input re-handshake | new InputSender/channel readiness | input bridge reset then new connection | fresh `input_channel_v1` + handshake required for success | static guard + recovery success gate |
+| transient disconnect grace | reconnect implementation uses bounded retry/backoff | 7s ICE disconnected grace | 7s grace before reclaim | deterministic controller fixture |
+| bounded retry | max 3, delays 0.5/1/2s | recovery budget 2, 0/3s | max 3; 1/3s retry after failed attempts | deterministic controller fixture |
+| server terminal event | `serverStopped` blocks reconnect | explicit/expected close terminal handling | `exitMessage` / 404 / 410 terminal; reconnect blocked | existing guards + static guard |
+| reuse frozen launch profile | reconnect callback captures its reconnect settings | recovery rebuilds settings from current settings | **always existing immutable `ResolvedLaunchProfile`** | session fixture (`SETTINGS_RESOLVE_COUNT=1`) |
+| video surface input after rebuild | platform-specific | platform-specific | re-installs dynamic `inputListener` on bound Surface | static guard |
+
+### Deliberate reference divergence
+
+CloudNow and OpenNOW agree on the important protocol/lifecycle boundary: a recoverable transport failure reclaims the running Session and rebuilds transport; neither needs a new CloudMatch Session. Their retry timing and recovery orchestration differ. OpenNOW currently rebuilds recovery stream settings from current settings, while this project deliberately does **not** copy that behavior because the v5.2 project rule requires a frozen Session snapshot.
+
+The v5.2.1 success gate is stricter than merely reaching ICE connected:
+
+```text
+same Session ID verified
++ frozen profile verified
++ new FIRST FRAME
++ new input_channel_v1 protocolReady
+= reconnect success
+```
 
 ## Gamepad — v5.3 placeholder
 

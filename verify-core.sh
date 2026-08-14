@@ -116,6 +116,16 @@ CLOUDMATCH_LAYOUT_QUERIES=$(grep -Fc 'keyboardLayout=${enc(request.keyboardLayou
 echo 'V520_STREAM_SETTINGS_SNAPSHOT_GUARDS=PASS'
 ./verify-stream-settings.sh
 
+# v5.2.1 same-session reconnect: reclaim existing Session, rebuild transport, keep frozen profile.
+grep -Fq 'fun recoverForStreamReconnect(' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: same-session reconnect session handler missing' >&2; exit 1; }
+grep -Fq 'orchestrator.claimSession(request, sessionAttempt)' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: reconnect does not use same-session claim' >&2; exit 1; }
+grep -Fq 'fun prepareForReconnect(onDrained: () -> Unit)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: reconnect transport drain missing' >&2; exit 1; }
+grep -Fq 'onTransportNeedsReconnect(sessionId, source, immediate)' app/src/main/java/dev/gfn/android/stream/GfnStreamingController.kt || { echo 'ERROR: reconnect trigger is not wired' >&2; exit 1; }
+grep -Fq 'transportRecoverySink = sessionController::recoverForStreamReconnect' app/src/main/java/dev/gfn/android/GfnAppRuntimeViewModel.kt || { echo 'ERROR: session reconnect sink not wired into stream controller' >&2; exit 1; }
+grep -Fq 'videoOutput?.let(::installVideoOutputCallbacksLocked)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: reconnect does not restore Surface input listener' >&2; exit 1; }
+echo 'V521_RECONNECT_GUARDS=PASS'
+./verify-reconnect.sh
+
 # v5.1.9 stable keyboard baseline: Set-1 is the sole production path; all C2/C3 probes are removed.
 test ! -e stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: experiment-only GfnKeyboardWireMode.kt still exists' >&2; exit 1; }
 if grep -RqsE 'LOCK_KEYS_SYNC|lockKeysSync|GfnKeyboardWireMode|GfnKeyboardWirePolicy|setKeyboardWireMode|GfnCapsCompat|GfnLockState|C2_ISO|C3_OPENNOW' stream-input/src/main stream-webrtc/src/main app/src/main; then

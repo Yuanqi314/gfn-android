@@ -1,0 +1,70 @@
+v5.2.1 Same-Session Reconnect - static/offline verification
+Date: 2026-08-15
+
+Scope
+- Preserve the existing CloudMatch Session ID during transport recovery.
+- Preserve the immutable ResolvedLaunchProfile from v5.2.
+- Never call createSession from reconnect.
+- Rebuild signaling / PeerConnection / DataChannels and require a fresh input handshake.
+- Keep v5.1.9 keyboard packet semantics byte-identical.
+
+Session reclaim fixture
+V521_SESSION_SAME_ID_RECLAIM=PASS
+SESSION_ID=same-session
+CREATE_COUNT=1
+CLAIM_COUNT=2
+SETTINGS_RESOLVE_COUNT=1
+PROFILE=1920x1080@60 100Mbps audio=2ch keyboard=en-US language=zh_CN
+
+Streaming recovery state-machine fixture
+V521_STREAM_RECONNECT_STATE_MACHINE=PASS
+CONNECT_SESSION_IDS=same-session, same-session, same-session
+PREPARE_RECONNECT_COUNT=2
+RECOVERY_CALLS=2
+FINAL_STATE=FirstFrame
+
+Behavior proven by the fixture
+- A transient disconnected state that self-heals inside the grace period performs zero reclaim calls.
+- A hard transport failure performs same-session reclaim.
+- A failure of a freshly rebuilt transport consumes a bounded retry and still uses the same Session ID.
+- Recovery is completed only after FIRST FRAME and input protocolReady.
+
+WebRTC engine API-shaped compile
+V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+- Compiles the actual production GfnWebRtcEngine.kt against deterministic Android/org.webrtc API-shaped stubs.
+- New PeerConnection path recreates expected DataChannels.
+- input_channel_v1 still uses the existing server handshake parser.
+- The mounted GfnVideoSurfaceView input listener is reinstalled for each new input-controller generation.
+
+Keyboard soft-freeze
+V519_KEYBOARD_STABLE_PACKET_FIXTURE=PASS
+A_SCAN=0x001E W_SCAN=0x0011 CAPS_SCAN=0x003A SHIFT_SCAN=0x002A
+V519_KEYBOARD_STABLE_STATIC_GUARDS=PASS
+V521_KEYBOARD_SOFT_FREEZE_BYTE_IDENTICAL=PASS
+
+v5.2 settings/snapshot regression
+V520_STREAM_SETTINGS_RESOLVER=PASS
+V520_STREAM_SETTINGS_STORE=PASS
+V520_SESSION_PROFILE_PERSISTENCE=PASS
+V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
+V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+Note: the monolithic verify-stream-settings.sh exceeded the execution time limit after the store stage in the final run; the remaining production persistence/controller/static stages were then executed separately and passed.
+
+Static reconnect guards
+V521_RECONNECT_STATIC_GUARDS=PASS
+- reconnect production method contains no createSession call.
+- Session ID returned by reclaim is checked against the original ID.
+- reconnect uses the active frozen ResolvedLaunchProfile and does not resolve persistent Settings.
+- teardown/release is invoked before transport rebuild.
+- a new PeerConnection recreates DataChannels.
+- a new input_channel_v1 server handshake remains required.
+- server terminal events remain terminal.
+
+Full Android Gradle build
+NOT EXECUTED TO KOTLIN COMPILATION STAGE.
+./gradlew :app:compileDebugKotlin attempted to download Gradle 9.5.0 and failed before project compilation:
+curl: (6) Could not resolve host: services.gradle.org
+
+Evidence boundary
+- Source/offline/API-shaped behavior above is verified.
+- Same-session reconnect is NOT yet marked true-device VERIFIED until a real network interruption test confirms video, audio, keyboard and mouse recovery on an active GFN Session.

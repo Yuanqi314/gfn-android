@@ -46,6 +46,7 @@ class GfnWebRtcEngine(
         fun onUpdated(state: StreamState, diagnostics: StreamDiagnostics)
         fun onServerSessionEnded(sessionId: String, source: String)
         fun onTransportNeedsReconcile(sessionId: String, source: String)
+        fun onTransportNeedsReconnect(sessionId: String, source: String, immediate: Boolean)
     }
 
     private val factory: PeerConnectionFactory = GfnWebRtcRuntime.factory(context)
@@ -125,7 +126,10 @@ class GfnWebRtcEngine(
             state = StreamState.OpeningSignaling
         }
         val keyboardMouse = createKeyboardMouseController(currentGeneration)
-        synchronized(lock) { inputController = keyboardMouse }
+        synchronized(lock) {
+            inputController = keyboardMouse
+            videoOutput?.let(::installVideoOutputCallbacksLocked)
+        }
         emit()
 
         val client = GfnSignalingClient(
@@ -150,6 +154,15 @@ class GfnWebRtcEngine(
         disconnectWithReason(InputReleaseReason.SessionEnd, emitClosed = true, onComplete = onDrained)
     }
 
+    /**
+     * v5.2.1 reconnect teardown: freeze/release/drain current input before closing the old
+     * signaling/PeerConnection/DataChannels. The outer controller keeps the Session/profile snapshot
+     * and will call connect() with freshly reclaimed connection information.
+     */
+    fun prepareForReconnect(onDrained: () -> Unit) {
+        disconnectWithReason(InputReleaseReason.WebRtcDisconnect, emitClosed = false, onComplete = onDrained)
+    }
+
     fun onActivityResumed() = synchronized(lock) { inputController }?.onActivityResumed()
     fun onActivityPaused() = synchronized(lock) { inputController }?.onActivityPaused()
     fun onActivityDestroy() = synchronized(lock) { inputController }?.onActivityDestroy()
@@ -158,39 +171,48 @@ class GfnWebRtcEngine(
 
     fun bindVideoOutput(output: GfnVideoSurfaceView?) {
         synchronized(lock) {
-            if (videoOutput === output) return
+            if (videoOutput === output) {
+                output?.let(::installVideoOutputCallbacksLocked)
+                return
+            }
             videoOutput?.let { previous ->
                 videoTrack?.removeSink(previous)
                 previous.inputListener = null
             }
             videoOutput = output
             if (output != null) {
-                output.onFirstFrame = ::onFirstFrameRendered
-                output.onResolutionChanged = ::onResolutionChanged
-                output.inputListener = object : GfnVideoSurfaceView.InputListener {
-                    override fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean =
-                        synchronized(lock) { inputController }?.onKey(down, trace) == true
-
-                    override fun onMouseMove(dx: Float, dy: Float) {
-                        synchronized(lock) { inputController }?.onMouseMove(dx, dy)
-                    }
-
-                    override fun onMouseButton(down: Boolean, button: Int): Boolean =
-                        synchronized(lock) { inputController }?.onMouseButton(down, button) == true
-
-                    override fun onMouseWheel(verticalAxis: Float) {
-                        synchronized(lock) { inputController }?.onMouseWheel(verticalAxis)
-                    }
-
-                    override fun onWindowFocusChanged(focused: Boolean) {
-                        synchronized(lock) { inputController }?.onWindowFocusChanged(focused)
-                    }
-
-                    override fun onPointerCaptureChanged(captured: Boolean) {
-                        synchronized(lock) { inputController }?.onPointerCaptureChanged(captured)
-                    }
-                }
+                installVideoOutputCallbacksLocked(output)
                 videoTrack?.addSink(output)
+            }
+        }
+    }
+
+    /** lock must be held. Listener resolves inputController dynamically so a reconnect cannot
+     * retain the old generation's controller. */
+    private fun installVideoOutputCallbacksLocked(output: GfnVideoSurfaceView) {
+        output.onFirstFrame = ::onFirstFrameRendered
+        output.onResolutionChanged = ::onResolutionChanged
+        output.inputListener = object : GfnVideoSurfaceView.InputListener {
+            override fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean =
+                synchronized(lock) { inputController }?.onKey(down, trace) == true
+
+            override fun onMouseMove(dx: Float, dy: Float) {
+                synchronized(lock) { inputController }?.onMouseMove(dx, dy)
+            }
+
+            override fun onMouseButton(down: Boolean, button: Int): Boolean =
+                synchronized(lock) { inputController }?.onMouseButton(down, button) == true
+
+            override fun onMouseWheel(verticalAxis: Float) {
+                synchronized(lock) { inputController }?.onMouseWheel(verticalAxis)
+            }
+
+            override fun onWindowFocusChanged(focused: Boolean) {
+                synchronized(lock) { inputController }?.onWindowFocusChanged(focused)
+            }
+
+            override fun onPointerCaptureChanged(captured: Boolean) {
+                synchronized(lock) { inputController }?.onPointerCaptureChanged(captured)
             }
         }
     }
@@ -334,12 +356,13 @@ class GfnWebRtcEngine(
                         PeerConnection.IceConnectionState.DISCONNECTED -> {
                             synchronized(lock) { inputController }?.onStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "ice.DISCONNECTED")
+                            requestTransportReconnect(eventGeneration, "ice.DISCONNECTED", immediate = false)
                         }
                         PeerConnection.IceConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
                         PeerConnection.IceConnectionState.FAILED -> {
                             synchronized(lock) { inputController }?.onStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "ice.FAILED")
-                            fail("ICE connection FAILED")
+                            requestTransportReconnect(eventGeneration, "ice.FAILED", immediate = true)
                         }
                         else -> Unit
                     }
@@ -357,12 +380,13 @@ class GfnWebRtcEngine(
                         PeerConnection.PeerConnectionState.DISCONNECTED -> {
                             synchronized(lock) { inputController }?.onStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "pc.DISCONNECTED")
+                            requestTransportReconnect(eventGeneration, "pc.DISCONNECTED", immediate = false)
                         }
                         PeerConnection.PeerConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
                         PeerConnection.PeerConnectionState.FAILED -> {
                             synchronized(lock) { inputController }?.onStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "pc.FAILED")
-                            fail("PeerConnection FAILED")
+                            requestTransportReconnect(eventGeneration, "pc.FAILED", immediate = true)
                         }
                         else -> Unit
                     }
@@ -505,6 +529,10 @@ class GfnWebRtcEngine(
                             note = "observer.onStateChange",
                         )
                         synchronized(lock) { inputController }?.onDataChannelState(open)
+                        if (channelState == DataChannel.State.CLOSED) {
+                            requestSessionReconcile(eventGeneration, "input_channel.CLOSED")
+                            requestTransportReconnect(eventGeneration, "input_channel.CLOSED", immediate = true)
+                        }
                     }
                 }
 
@@ -609,6 +637,14 @@ class GfnWebRtcEngine(
             session?.sessionId
         } ?: return
         listener.onTransportNeedsReconcile(sessionId, source)
+    }
+
+    private fun requestTransportReconnect(eventGeneration: Long, source: String, immediate: Boolean) {
+        val sessionId = synchronized(lock) {
+            if (generation.get() != eventGeneration || serverEnded) return
+            session?.sessionId
+        } ?: return
+        listener.onTransportNeedsReconnect(sessionId, source, immediate)
     }
 
     private fun createAnswer(pc: PeerConnection, offerSdp: String, eventGeneration: Long) {

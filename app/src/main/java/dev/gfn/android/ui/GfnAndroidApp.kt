@@ -259,7 +259,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.2 Stream Settings Foundation",
+                "独立 Android GFN 客户端 · v5.2.1 Same-Session Reconnect",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -561,7 +561,7 @@ private fun GameDetailCard(
                 }.ifEmpty { listOf("标准 GFN") }.joinToString(" · "),
                 color = MaterialTheme.colorScheme.primary,
             )
-            Text("v5.2 当前 engine capability 仍为 H.264 / SDR8 / 1080p60 / Stereo；最大码率与 Session 级设置已进入 snapshot，HEVC/Main10/HDR 尚未启用。")
+            Text("v5.2.1 保持 H.264 / SDR8 / 1080p60 / Stereo；Reconnect 复用同一 Session ID 与冻结 snapshot，HEVC/Main10/HDR 尚未启用。")
             if (detail.variants.isEmpty()) {
                 Text("当前详情没有可启动 variant。", color = MaterialTheme.colorScheme.error)
             } else {
@@ -604,7 +604,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5.2 使用不可变 ResolvedLaunchProfile 驱动 CloudMatch 与 WebRTC；键盘 packet 语义保持 v5.1.9 soft-freeze。")
+            Text("v5.2.1 Reconnect 继续使用不可变 ResolvedLaunchProfile；键盘 packet 语义保持 v5.1.9 soft-freeze。")
         }
 
         if (resumeRecord != null) {
@@ -679,10 +679,20 @@ private fun SessionScreen(
                             }
                             if (launchProfile == null) {
                                 Text(
-                                    "当前 Session 缺少 v5.2 ResolvedLaunchProfile，禁止用实时 Settings 猜测 WebRTC 参数。",
+                                    "当前 Session 缺少 v5.2+ ResolvedLaunchProfile，禁止用实时 Settings 猜测 WebRTC/Reconnect 参数。",
                                     color = MaterialTheme.colorScheme.error,
                                 )
                             }
+                        }
+                        is StreamState.Reconnecting -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "正在重连 ${streamState.attempt}/3 · ${streamState.source}",
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                "保持原 Session ID 与冻结 ResolvedLaunchProfile；不会创建第二 Session。",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         StreamState.SessionEnded -> Text("服务端已结束当前游戏会话。")
                         else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -733,6 +743,20 @@ private fun StreamingVideoCard(
                 "WSS RX/TX ${diagnostics.signaling.rxCount}/${diagnostics.signaling.txCount} · " +
                     "ICE local/remote ${diagnostics.ice.localCandidateCount}/${diagnostics.ice.remoteCandidateCount}",
             )
+            if (diagnostics.reconnect.active || diagnostics.reconnect.phase == "EXHAUSTED") {
+                Text(
+                    "Reconnect：${diagnostics.reconnect.phase} · " +
+                        "${diagnostics.reconnect.attempt}/${diagnostics.reconnect.maxAttempts} · " +
+                        "sameSession=${diagnostics.reconnect.sameSessionIdVerified.asYesNo()} · " +
+                        "frozenProfile=${diagnostics.reconnect.frozenProfileVerified.asYesNo()}",
+                    color = if (diagnostics.reconnect.lastError == null) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+                diagnostics.reconnect.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
             if (diagnostics.video.firstFrameRendered) {
                 Text(
                     "FIRST FRAME ${diagnostics.video.firstFrameWidth ?: "?"}x${diagnostics.video.firstFrameHeight ?: "?"}",
@@ -1069,7 +1093,7 @@ private fun SettingsScreen(
         item {
             Card(shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("串流设置 · v5.2 Snapshot", style = MaterialTheme.typography.titleMedium)
+                    Text("串流设置 · v5.2+ Snapshot", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "这些值不会被 WebRTC 运行时直接重读。新建 Session 时先和账号 entitlement、当前 engine capability 解析成不可变 ResolvedLaunchProfile，随后 CREATE / CLAIM / WebRTC 共用同一份 snapshot。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1208,9 +1232,9 @@ private fun SettingsScreen(
                     )
                     Text("Session：${sessionStateLabel(sessionState)}")
                     Text("Keyboard：v5.1.9 soft-freeze · en-US Cyberpunk / CS2 真机通过")
-                    Text("v5.2：Persistent StreamSettings → ResolvedLaunchProfile → CREATE / CLAIM / WebRTC")
+                    Text("v5.2.1：同 Session RESUME/Claim → 新 Signaling / PeerConnection / DataChannel")
                     Text("当前仍只开放：H.264 SDR8 · 1080p60 · Stereo；HEVC/Main10/HDR/5.1/120 FPS 未伪装为可用。")
-                    Text("后续：v5.2.1 Reconnect → v5.3 Gamepad → v5.4 Audio → v6 HEVC")
+                    Text("后续：v5.3 Gamepad → v5.4 Audio → v6 HEVC")
                 }
             }
         }
@@ -1248,6 +1272,7 @@ private fun streamStateLabel(state: StreamState): String = when (state) {
     StreamState.IceChecking -> "ICE Checking"
     StreamState.Connected -> "Connected"
     StreamState.FirstFrame -> "FIRST FRAME"
+    is StreamState.Reconnecting -> "Reconnecting ${state.attempt}/3 (${state.source})"
     StreamState.SessionEnded -> "Session Ended"
     is StreamState.Failed -> "Failed"
     StreamState.Closed -> "Closed"

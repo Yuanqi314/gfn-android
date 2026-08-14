@@ -113,6 +113,7 @@ class GfnSessionController(
     private var operationGeneration = 0L
     private var activeJob: Job? = null
     private var reconcileJob: Job? = null
+    private var reconnectJob: Job? = null
     private var activeGame: ActiveGame? = null
 
     private data class ActiveGame(
@@ -124,6 +125,13 @@ class GfnSessionController(
 
     private class QueueAdUnsupportedException(val session: SessionInfo) : Exception(
         "服务端要求 Queue Ad；当前 Android 客户端尚未接广告播放器。",
+    )
+
+    private class SameSessionReconnectViolation(
+        val expectedSessionId: String,
+        val actualSession: SessionInfo,
+    ) : Exception(
+        "Reconnect 必须保持原 Session ID：expected=$expectedSessionId actual=${actualSession.sessionId}",
     )
 
     fun restoreResumeRecordOnce() {
@@ -423,6 +431,146 @@ class GfnSessionController(
     }
 
     /**
+     * v5.2.1 same-session transport recovery.
+     *
+     * 只允许对当前 Session 执行 RESUME/Claim，并继续使用已冻结的 ResolvedLaunchProfile。
+     * 这里绝不调用 createSession；如果服务端返回不同 Session ID，则作为协议边界异常拒绝。
+     */
+    fun recoverForStreamReconnect(
+        sessionId: String,
+        source: String,
+        reconnectAttempt: Int,
+        callback: (StreamReconnectSessionResult) -> Unit,
+    ) {
+        if (reconnectJob?.isActive == true) {
+            Log.i(RECONNECT_TAG, "coalesced sessionId=$sessionId source=$source attempt=$reconnectAttempt")
+            callback(StreamReconnectSessionResult.RetryableFailure("已有 same-session reconnect claim 正在进行。"))
+            return
+        }
+
+        val current = currentSession()
+        if (current == null || current.sessionId != sessionId) {
+            callback(StreamReconnectSessionResult.SessionEnded("当前 Session 已变化或不存在。"))
+            return
+        }
+        val frozenProfile = _activeLaunchProfile.value
+        val record = _resumeRecord.value
+        val active = activeGame ?: record?.takeIf { it.sessionId == sessionId && it.launchProfile != null }?.let { persisted ->
+            ActiveGame(
+                appId = persisted.appId,
+                title = persisted.gameTitle,
+                store = persisted.appStore,
+                profile = persisted.launchProfile!!,
+            )
+        }
+        if (active == null || frozenProfile == null || active.profile != frozenProfile) {
+            callback(StreamReconnectSessionResult.RetryableFailure("当前 Session 缺少可验证的冻结 ResolvedLaunchProfile。"))
+            return
+        }
+        val auth = authController.currentSession()
+        if (auth == null) {
+            callback(StreamReconnectSessionResult.RetryableFailure("Reconnect 时登录态不可用。"))
+            return
+        }
+
+        operationGeneration += 1
+        val operation = operationGeneration
+        val sessionAttempt = orchestrator.beginAttempt()
+        Log.i(
+            RECONNECT_TAG,
+            "BEGIN sameSession=true sessionId=$sessionId source=$source attempt=$reconnectAttempt ${active.profile.summary}",
+        )
+
+        val job = scope.launch {
+            try {
+                val request = SessionClaimRequest(
+                    session = current,
+                    appId = active.appId,
+                    token = auth.gfnToken,
+                    baseUrl = current.streamingBaseUrl,
+                    keyboardLayout = active.profile.keyboardLayout,
+                    gameLanguage = active.profile.gameLanguage,
+                    audioChannels = active.profile.streamConfig.audioChannels,
+                    persistInGameSettings = false,
+                    appLaunchMode = 1,
+                )
+                Log.i(PROFILE_TAG, "RECONNECT_CLAIM sessionId=$sessionId ${active.profile.summary}")
+                var reclaimed = orchestrator.claimSession(request, sessionAttempt)
+                if (!isCurrent(operation)) return@launch
+                verifySameReconnectSession(sessionId, reclaimed)
+                ensureQueueAdsSupported(reclaimed)
+
+                reclaimed = orchestrator.waitUntilReady(
+                    initialSession = reclaimed,
+                    token = auth.gfnToken,
+                    attempt = sessionAttempt,
+                    requiredReadyResponses = 1,
+                    setupTimeoutMillis = 60_000,
+                ) { updated, _ ->
+                    verifySameReconnectSession(sessionId, updated)
+                    ensureQueueAdsSupported(updated)
+                }
+                if (!isCurrent(operation)) return@launch
+                verifySameReconnectSession(sessionId, reclaimed)
+                persist(reclaimed, active)
+                activeGame = active
+                _activeLaunchProfile.value = active.profile
+                _state.value = SessionUiState.Claimed(active.title, active.store, reclaimed)
+                Log.i(
+                    RECONNECT_TAG,
+                    "RECOVERED sessionId=${reclaimed.sessionId} sameSession=true attempt=$reconnectAttempt " +
+                        "signaling=${!reclaimed.signalingUrl.isNullOrBlank()} ${active.profile.summary}",
+                )
+                callback(StreamReconnectSessionResult.Recovered(reclaimed, active.profile))
+            } catch (violation: SameSessionReconnectViolation) {
+                if (!isCurrent(operation)) return@launch
+                // Unexpected replacement Session is never adopted as the active stream. Best-effort stop only
+                // that unexpected ID, then restore ownership of the original Session snapshot.
+                runCatching { port.stopSession(violation.actualSession, auth.gfnToken) }
+                orchestrator.adopt(current, auth.gfnToken)
+                Log.e(RECONNECT_TAG, violation.message ?: "same-session violation")
+                callback(StreamReconnectSessionResult.RetryableFailure(violation.message ?: "Session ID changed during reconnect."))
+            } catch (error: CloudMatchException.Http) {
+                if (!isCurrent(operation)) return@launch
+                if (error.code == 404 || error.code == 410) {
+                    val reason = "Reconnect 确认服务端 Session 已结束（HTTP ${error.code}）。"
+                    Log.i(RECONNECT_TAG, "TERMINAL sessionId=$sessionId source=$source http=${error.code}")
+                    callback(StreamReconnectSessionResult.SessionEnded(reason))
+                    onServerSessionEnded(sessionId, "reconnect.http.${error.code}")
+                } else {
+                    Log.w(RECONNECT_TAG, "HTTP failure sessionId=$sessionId code=${error.code} attempt=$reconnectAttempt")
+                    callback(StreamReconnectSessionResult.RetryableFailure("Reconnect HTTP ${error.code}"))
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (!isCurrent(operation)) return@launch
+                Log.w(
+                    RECONNECT_TAG,
+                    "FAILED sessionId=$sessionId source=$source attempt=$reconnectAttempt error=${error::class.simpleName}",
+                )
+                callback(
+                    StreamReconnectSessionResult.RetryableFailure(
+                        error.message?.takeIf { it.isNotBlank() } ?: error::class.simpleName ?: "Reconnect failed",
+                    ),
+                )
+            }
+        }
+        reconnectJob = job
+        job.invokeOnCompletion {
+            scope.launch {
+                if (reconnectJob === job) reconnectJob = null
+            }
+        }
+    }
+
+    private fun verifySameReconnectSession(expectedSessionId: String, session: SessionInfo) {
+        if (session.sessionId != expectedSessionId) {
+            throw SameSessionReconnectViolation(expectedSessionId, session)
+        }
+    }
+
+    /**
      * WebRTC/control transport 异常断开后的保守服务端复核。
      * 只把 HTTP 404/410 当作“当前 Session 已不存在”的终态证据；其他返回不猜 NVIDIA 语义。
      */
@@ -593,5 +741,6 @@ class GfnSessionController(
     private companion object {
         const val TAG = "GfnSession"
         const val PROFILE_TAG = "GfnLaunchProfile"
+        const val RECONNECT_TAG = "GfnReconnect"
     }
 }

@@ -1,0 +1,41 @@
+=== verify-reconnect.sh ===
+V521_SESSION_SAME_ID_RECLAIM=PASS
+SESSION_ID=same-session
+CREATE_COUNT=1
+CLAIM_COUNT=2
+SETTINGS_RESOLVE_COUNT=1
+PROFILE=1920x1080@60 100Mbps audio=2ch keyboard=en-US language=zh_CN
+V521_STREAM_RECONNECT_STATE_MACHINE=PASS
+CONNECT_SESSION_IDS=same-session, same-session, same-session
+PREPARE_RECONNECT_COUNT=2
+RECOVERY_CALLS=2
+FINAL_STATE=FirstFrame
+V521_KEYBOARD_SOFT_FREEZE_BYTE_IDENTICAL=PASS
+V521_RECONNECT_STATIC_GUARDS=PASS
+V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+
+=== verify-keyboard-stable.sh ===
+V519_KEYBOARD_STABLE_PACKET_FIXTURE=PASS
+A_SCAN=0x001E W_SCAN=0x0011 CAPS_SCAN=0x003A SHIFT_SCAN=0x002A
+V519_KEYBOARD_STABLE_STATIC_GUARDS=PASS
+
+=== v5.2 split regression ===
+V520_STREAM_SETTINGS_RESOLVER=PASS
+PROFILE=1920x1080@60 35Mbps audio=2ch keyboard=en-US language=zh_CN
+AUTO_KEYBOARD=zh-CN
+ENTITLEMENT_MISMATCH_BLOCKED=true
+V520_STREAM_SETTINGS_STORE=PASS
+MIGRATED_KEYBOARD=en-US
+RELOADED=PersistentStreamSettings(keyboardLayoutSelection=zh-CN, resolutionSelection=1920x1080, fpsSelection=60, maxBitrateKbps=35000, audioChannels=2)
+V520_SESSION_PROFILE_PERSISTENCE=PASS
+PROFILE=1920x1080@60 35Mbps audio=2ch keyboard=en-US language=zh_CN
+LEGACY_PROFILE_NULL=true
+V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
+V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+
+=== Android Gradle attempt ===
+./gradlew :app:compileDebugKotlin
+Downloading Gradle 9.5.0: https://services.gradle.org/distributions/gradle-9.5.0-bin.zip
+curl: (6) Could not resolve host: services.gradle.org
+
+Result: build environment stopped before Kotlin/Android project compilation.
