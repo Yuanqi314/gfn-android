@@ -1,5 +1,12 @@
 # 第三版状态
 
+
+## v3.0.1 编译修复
+
+已修复 Compose `weight()` 编译错误：删除 `import androidx.compose.foundation.layout.weight`，保留 `Row {}` 内的 `Modifier.weight(1f)`，由 `RowScope.weight()` 公开 API 解析。
+
+全工程同类作用域 API 显式导入扫描结果：未发现 `weight / align / alignBy / alignByBaseline / matchParentSize` 的其他错误显式 import。
+
 ## 真机已经确认
 
 以下来自当前 Android 真机测试：
