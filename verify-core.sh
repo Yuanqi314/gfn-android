@@ -1,5 +1,30 @@
 #!/usr/bin/env sh
 set -eu
+
+
+# v5.0.2 Android/WebRTC static ABI + manifest guards.
+grep -Fq 'api("io.github.webrtc-sdk:android:144.7559.09")' stream-webrtc/build.gradle.kts || {
+  echo 'ERROR: stream-webrtc 必须用 api 暴露 WebRTC，因为 GfnVideoSurfaceView 公共继承 SurfaceViewRenderer' >&2
+  exit 1
+}
+grep -Fq 'android.permission.ACCESS_NETWORK_STATE' app/src/main/AndroidManifest.xml || {
+  echo 'ERROR: 缺少 ACCESS_NETWORK_STATE，WebRTC NetworkMonitor 可能 JNI SIGABRT' >&2
+  exit 1
+}
+grep -Fq 'android.permission.CHANGE_NETWORK_STATE' app/src/main/AndroidManifest.xml || {
+  echo 'ERROR: 缺少 CHANGE_NETWORK_STATE' >&2
+  exit 1
+}
+echo 'V5_WEBRTC_PUBLIC_ABI=PASS'
+grep -Fq 'android.permission.ACCESS_NETWORK_STATE' stream-webrtc/src/main/AndroidManifest.xml || {
+  echo 'ERROR: stream-webrtc library manifest 缺少 ACCESS_NETWORK_STATE' >&2
+  exit 1
+}
+grep -Fq 'android.permission.CHANGE_NETWORK_STATE' stream-webrtc/src/main/AndroidManifest.xml || {
+  echo 'ERROR: stream-webrtc library manifest 缺少 CHANGE_NETWORK_STATE' >&2
+  exit 1
+}
+echo 'V5_WEBRTC_NETWORK_PERMISSIONS=PASS'
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUILD="$ROOT/build"
 MODULES="$BUILD/module-check"

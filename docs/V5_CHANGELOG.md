@@ -52,3 +52,11 @@
 - Queue/Ready semantics
 - Claim/RESUME body
 - Session identity
+
+## v5.0.2 — WebRTC JNI / NetworkMonitor crash fix
+
+- `io.github.webrtc-sdk:android:144.7559.09` 从 `implementation` 改为 `api`，因为公开的 `GfnVideoSurfaceView` 继承 `SurfaceViewRenderer`。
+- `app` 与 `stream-webrtc` manifest 增加 `ACCESS_NETWORK_STATE` / `CHANGE_NETWORK_STATE`。
+- `GfnWebRtcRuntime` 在进入 native WebRTC 前校验最终安装包是否实际获得两项 normal permission，避免 WebRTC JNI `HandleException()` 把 Java 权限异常升级成 `SIGABRT`。
+- 根据真机 `tombstone_08`：崩溃线程为 `network_thread`，native fatal 位于 `sdk/android/src/jni/jvm.cc:81`，并出现 `android_network_monitor.cc` 证据。
+- 未修改 CloudMatch、Claim/RESUME、GFN signaling envelope、SDP、ICE 注入、H.264 codec 策略。

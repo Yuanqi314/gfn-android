@@ -264,3 +264,7 @@ Auth / Content 回归
 ```
 
 这八层中的第一处失败点，就是下一轮需要分析的位置。
+
+## v5.0.2
+
+修复真机 WebRTC native `SIGABRT` 的 NetworkMonitor 权限链，并将 WebRTC AAR 改为 `api` 公共依赖。详见 `docs/V5_0_2_NATIVE_CRASH_FIX.md`。

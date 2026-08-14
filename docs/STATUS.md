@@ -5,7 +5,7 @@
 - v5.0.1：三项握手字段已补齐；仍强制 HTTP/1.1；未修改 TLS 校验策略。
 - 当前证据等级：**代码/fixture 已修复，真机 WSS 101/Connected 待验证。**
 
-# 第五版状态（v5.0.1）
+# 第五版状态（v5.0）
 
 ## 真机已确认
 
@@ -119,3 +119,11 @@ Claimed Session
 ```
 
 完成这个 Gate 之后才进入 v5.x Audio / Input / Reconnect，再之后才进入 HEVC/Main10/HDR。
+
+## v5.0.2 真机 crash 修复
+
+- v5.0.1 真机 WSS Upgrade 已越过此前 HTTP 400 阶段；后续 WebRTC 初始化发生 native `SIGABRT`。
+- tombstone 定位到 `network_thread -> libjingle_peerconnection_so.so -> sdk/android/src/jni/jvm.cc:81 HandleException`。
+- v5.0.1 Manifest 仅声明 `INTERNET`，缺少 WebRTC NetworkMonitor 所需网络状态权限；v5.0.2 已补齐并增加初始化前校验。
+- WebRTC Maven 依赖改为 `api(...)`，修复公共 ABI 暴露问题。
+- v5 First Frame 仍待真机验证，未标记成功。

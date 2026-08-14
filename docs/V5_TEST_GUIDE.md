@@ -22,7 +22,7 @@ User-Agent: GFN-PC browser UA
 
 如果仍然返回 HTTP 400，请只提供：HTTP code/message、WSS endpoint host/path、RX/TX 计数，不要提供 token、完整 SDP、ICE password 或 TURN credential。
 
-# v5.0.1 真机测试指南
+# v5.0 真机测试指南
 
 ## 前提
 
