@@ -11,7 +11,6 @@ import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.security.KeyStore
-import java.security.SecureRandom
 import java.time.Instant
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -25,18 +24,19 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class AndroidKeystoreTokenStore(context: Context) : TokenStore {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val secureRandom = SecureRandom()
 
     override suspend fun load(): AuthTokens? {
         val encoded = prefs.getString(KEY_BLOB, null) ?: return null
         return runCatching {
             val blob = Base64.decode(encoded, Base64.NO_WRAP)
-            require(blob.size > NONCE_BYTES)
-            val nonce = blob.copyOfRange(0, NONCE_BYTES)
-            val ciphertext = blob.copyOfRange(NONCE_BYTES, blob.size)
+            val encryptedBlob = decodeEncryptedBlob(blob)
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(TAG_BITS, nonce))
-            decodeTokens(cipher.doFinal(ciphertext))
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                getOrCreateKey(),
+                GCMParameterSpec(TAG_BITS, encryptedBlob.iv),
+            )
+            decodeTokens(cipher.doFinal(encryptedBlob.ciphertext))
         }.getOrElse {
             // 当前项目尚处开发期；旧格式、损坏数据或 KeyStore 失效时直接清理，要求重新登录。
             prefs.edit().remove(KEY_BLOB).apply()
@@ -46,16 +46,69 @@ class AndroidKeystoreTokenStore(context: Context) : TokenStore {
 
     override suspend fun save(tokens: AuthTokens) {
         val plaintext = encodeTokens(tokens)
-        val nonce = ByteArray(NONCE_BYTES).also(secureRandom::nextBytes)
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(), GCMParameterSpec(TAG_BITS, nonce))
+
+        // AndroidKeyStore + setRandomizedEncryptionRequired(true) 禁止调用方在加密时提供 IV。
+        // 必须让 Keystore 生成随机 GCM IV，然后通过 cipher.iv 取回并与密文一起保存。
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         val encrypted = cipher.doFinal(plaintext)
-        val blob = nonce + encrypted
+        val iv = cipher.iv ?: error("AndroidKeyStore 未返回 GCM IV")
+        require(iv.isNotEmpty() && iv.size <= MAX_IV_BYTES) { "GCM IV 长度非法: ${iv.size}" }
+
+        val blob = encodeEncryptedBlob(iv, encrypted)
         prefs.edit().putString(KEY_BLOB, Base64.encodeToString(blob, Base64.NO_WRAP)).apply()
     }
 
     override suspend fun clear() {
         prefs.edit().remove(KEY_BLOB).apply()
+    }
+
+
+    private data class EncryptedBlob(
+        val iv: ByteArray,
+        val ciphertext: ByteArray,
+    )
+
+    private fun encodeEncryptedBlob(iv: ByteArray, ciphertext: ByteArray): ByteArray =
+        ByteArrayOutputStream().use { bytes ->
+            DataOutputStream(bytes).use { out ->
+                out.writeInt(BLOB_MAGIC)
+                out.writeInt(BLOB_VERSION)
+                out.writeInt(iv.size)
+                out.write(iv)
+                out.writeInt(ciphertext.size)
+                out.write(ciphertext)
+            }
+            bytes.toByteArray()
+        }
+
+    private fun decodeEncryptedBlob(blob: ByteArray): EncryptedBlob {
+        require(blob.isNotEmpty()) { "加密 token 数据为空" }
+
+        // 兼容 v2/v3 的旧格式：固定 12-byte IV + ciphertext。
+        if (blob.size >= Int.SIZE_BYTES) {
+            val magic = DataInputStream(ByteArrayInputStream(blob)).use { it.readInt() }
+            if (magic == BLOB_MAGIC) {
+                return DataInputStream(ByteArrayInputStream(blob)).use { input ->
+                    require(input.readInt() == BLOB_MAGIC) { "token blob magic 错误" }
+                    require(input.readInt() == BLOB_VERSION) { "不支持的 token blob 版本" }
+                    val ivLength = input.readInt()
+                    require(ivLength in 1..MAX_IV_BYTES) { "GCM IV 长度非法" }
+                    val iv = ByteArray(ivLength).also { input.readFully(it) }
+                    val ciphertextLength = input.readInt()
+                    require(ciphertextLength in 1..MAX_BLOB_BYTES) { "token 密文长度非法" }
+                    val ciphertext = ByteArray(ciphertextLength).also { input.readFully(it) }
+                    require(input.available() == 0) { "token blob 存在尾随数据" }
+                    EncryptedBlob(iv = iv, ciphertext = ciphertext)
+                }
+            }
+        }
+
+        require(blob.size > LEGACY_NONCE_BYTES) { "旧版 token blob 长度非法" }
+        return EncryptedBlob(
+            iv = blob.copyOfRange(0, LEGACY_NONCE_BYTES),
+            ciphertext = blob.copyOfRange(LEGACY_NONCE_BYTES, blob.size),
+        )
     }
 
     private fun getOrCreateKey(): SecretKey {
@@ -144,9 +197,13 @@ class AndroidKeystoreTokenStore(context: Context) : TokenStore {
         const val KEY_ALIAS = "gfn_android_oauth_aes_v1"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
-        const val NONCE_BYTES = 12
+        const val LEGACY_NONCE_BYTES = 12
         const val TAG_BITS = 128
         const val STORAGE_VERSION = 3
+        const val BLOB_MAGIC = 0x47464E34 // ASCII: GFN4
+        const val BLOB_VERSION = 1
+        const val MAX_IV_BYTES = 64
+        const val MAX_BLOB_BYTES = 8 * 1_048_576
         const val MAX_FIELD_BYTES = 1_048_576
     }
 }

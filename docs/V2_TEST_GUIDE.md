@@ -45,7 +45,7 @@ adb logcat -s GfnAuth
 - CloudMatch 未接真实 HTTP；
 - WebRTC/串流未实现；
 - 当前 transport 是 `HttpURLConnection`，请求中途取消可能需要等连接/读取超时返回；
-- `display_name` 暂时沿用 CloudNow 当前成功参数 `Apple TV`，后续需要单独验证 Android 自定义名称。
+- Android App 使用 `display_name = Android`；CloudNow 的 `Apple TV` 仅作为参考，不再用于真机登录。
 
 ## 失败时优先提供
 

@@ -69,3 +69,10 @@
 ```
 
 只有这条链在真实账号环境通过，第二版认证阶段才算最终验收。
+
+
+## v2.1 登录修复
+
+- 修复 AndroidKeyStore AES-GCM 保存 token 时的 `Caller-provided IV not permitted`：加密阶段不再由调用方提供 IV，而由 AndroidKeyStore 自动生成并通过 `Cipher.iv` 保存。
+- 新 token blob 使用显式 IV 长度格式，同时兼容旧版固定 12-byte IV blob 的读取。
+- Android Device Flow 的 `display_name` 从 CloudNow 参考值 `Apple TV` 改为 `Android`。

@@ -37,7 +37,7 @@ CloudNow 的 `AuthManager` 还使用 credential generation 防止旧登录任务
 
 ### 当前保留的不确定项
 
-`display_name = Apple TV` 是 CloudNow 当前已验证参数。本项目第二版暂时保持这一值以减少变量，但它不是 Android 的真实设备描述，也没有证据证明 NVIDIA 要求必须这样填。真机登录稳定后需要单独做 A/B 验证。
+`display_name = Apple TV` 是 CloudNow 当前已验证参数，但它只属于 Device Flow 的设备显示名称。Android App 现已改为 `display_name = Android`；CloudMatch 的 `WINDOWS / DESKTOP` 协议身份不受此字段影响。
 
 ## 后续 CloudMatch 参考
 

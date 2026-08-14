@@ -86,7 +86,7 @@ CloudNow 是当前最重要的已实现参考，但本项目采用 clean-room �
 - `CloudNow/Session/SessionOrchestrator.swift`：后续 Create → Queue → Ready → Teardown；
 - `CloudNow/Streaming/GFNVideoDecoderFactory.swift`：后续 Main10 `profile-id=2` 参考。
 
-`display_name` 当前暂时保持 CloudNow 已验证使用的 `Apple TV`，只是为了减少第二版认证变量；**不能据此推断 NVIDIA 要求 Android 客户端必须使用这个值**。后续真机认证稳定后会单独做 Android display name A/B 验证。
+Android App 现在在 Device Flow 中使用 `display_name = Android`。CloudNow 的 `Apple TV` 仅保留为协议参考值，不再发送给 NVIDIA。
 
 ## 构建
 
@@ -148,3 +148,10 @@ Windows/GFN-PC identity
 - 不记录 access token、refresh token、device code 或 Cookie；
 - Android 本机 MediaCodec / Display capability 保持真实；
 - 后续 Windows/GFN-PC 身份仅用于协议兼容性实验。
+
+
+## v2.1 登录修复
+
+- 修复 AndroidKeyStore AES-GCM 保存 token 时的 `Caller-provided IV not permitted`：加密阶段不再由调用方提供 IV，而由 AndroidKeyStore 自动生成并通过 `Cipher.iv` 保存。
+- 新 token blob 使用显式 IV 长度格式，同时兼容旧版固定 12-byte IV blob 的读取。
+- Android Device Flow 的 `display_name` 从 CloudNow 参考值 `Apple TV` 改为 `Android`。

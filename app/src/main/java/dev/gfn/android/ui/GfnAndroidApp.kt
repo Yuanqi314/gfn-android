@@ -40,6 +40,7 @@ import dev.gfn.android.auth.AuthController
 import dev.gfn.android.auth.AuthUiState
 import dev.gfn.auth.AuthSessionService
 import dev.gfn.auth.NvidiaAuthApi
+import dev.gfn.auth.NvidiaAuthReferenceDefaults
 import dev.gfn.core.model.GameSummary
 import dev.gfn.diagnostics.DiagnosticsSnapshot
 import dev.gfn.identity.GfnClientIdentity
@@ -61,7 +62,11 @@ fun GfnAndroidApp() {
     val scope = rememberCoroutineScope()
     val authController = remember(context, scope) {
         val transport = UrlConnectionHttpTransport()
-        val api = NvidiaAuthApi(transport, sleepSeconds = { seconds -> delay(seconds * 1_000L) })
+        val api = NvidiaAuthApi(
+            transport = transport,
+            config = NvidiaAuthReferenceDefaults.config.copy(displayName = "Android"),
+            sleepSeconds = { seconds -> delay(seconds * 1_000L) },
+        )
         val tokenStore = AndroidKeystoreTokenStore(context)
         AuthController(
             service = AuthSessionService(api, tokenStore),
