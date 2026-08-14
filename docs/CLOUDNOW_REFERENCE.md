@@ -1,132 +1,107 @@
-# CloudNow 参考记录 · 第四版
+# CloudNow 参考记录 · 第五版
 
-CloudNow 是协议与状态机参考，不是 Android 代码模板。
+CloudNow 是协议/行为参考，不是 Android 代码模板。当前固定参考仓库：`owenselles/CloudNow`，取证基准 commit：`f9292868369b0fe41a2d559d0c8f3805193f4389`。
 
-## v4 重点参考
+## v5 重点参考文件
 
-### `CloudNow/Session/CloudMatchClient.swift`
+### `CloudNow/Streaming/SignalingClient.swift`
 
-当前公开实现用于确认：
+用于确认当前已经工作的 GFN signaling 行为：
 
 ```text
-POST /v2/session
-GET  /v2/session/{id}
-PUT  /v2/session/{id}  action=2 / RESUME
-DELETE /v2/session/{id}
+/nvst/sign_in
+peer_id
+version=2
+peer_role=1
+pairing_id=sessionId
+```
+
+连接后：
+
+```text
+peer_info
+ack / heartbeat
+offer
+remote ICE
+answer
+local ICE
+```
+
+Android 不复制 Apple 的 `NWConnection`、DNS race、证书处理等平台实现。第一版使用标准 OkHttp/TLS；只有真机证据证明握手不兼容时才修改 transport。
+
+### `CloudNow/Streaming/SignalingMessageCodec.swift`
+
+用于确认 envelope：
+
+```text
+peer_info
+ackid / ack
+hb
+peer_msg.from / to / msg
+```
+
+其中 `peer_msg.msg` 是 JSON 字符串；offer/ICE/answer 在第二层 JSON 内。
+
+### `CloudNow/Streaming/GFNStreamController.swift`
+
+只参考已经验证的协议顺序：
+
+```text
+Offer
+→ PeerConnection
+→ setRemote
+→ create Answer
+→ Answer codec policy
+→ setLocal
+→ extract local ICE / DTLS
+→ answer + nvstSdp
+→ inject remote host candidates
 ```
 
 以及：
 
 ```text
-GFN-PC / windows identity
-随机 lifecycle clientId
-稳定 deviceId
-Queue / seatSetupInfo
-connectionInfo usage=14 signaling
-ICE servers
-resolved server re-poll
-phantom session cleanup
+server ICE 可能为空
+GFN offer 可能没有 a=candidate
+media ConnectionInfo priority: 2 → 17 → 14 fallback
 ```
 
-Android v4 采用这些协议行为，但不复制 Apple 平台实现。
+不复制 Apple 音频设备、VideoToolbox、tvOS input、重连 UI。
 
-### Resume body
+### `CloudNow/Streaming/SDPMunger.swift`
 
-CloudNow 当前实现明确把 RESUME 做成最小请求，不重新发送：
+v5.0 只吸收：
 
 ```text
-monitor settings
-requestedStreamingFeatures
-HDR capabilities
-physical-resolution metadata
+H.264 codec 收敛放在 Answer 侧
+保留关联 RTX/FEC
+带宽 hint
 ```
 
-Android v4 同样保持最小 Resume。
+H.265/Main10 变换明确不进入 v5.0。
 
-### `CloudNow/Session/SessionOrchestrator.swift`
-
-参考：
+## Android 自己的决策
 
 ```text
-generation
-stale callback rejection
-late-created session cleanup
-Queue 无限等待
-post-queue setup timeout
-连续 Ready
-owned-session stop once
+OkHttp WebSocket + HTTP/1.1
+标准 Android TLS 验证
+直接 org.webrtc PeerConnection
+H.264 / SDR8 / 1080p60
+不自动启用公共 STUN fallback
+不实现 Audio/Input
+不实现 HEVC/Main10/HDR
 ```
 
-Android 实现没有逐行翻译 Swift，而是在纯 Kotlin core 中建立同样的生命周期不变量。
+## 零假设边界
 
-### `CloudNow/UI/StreamView.swift`
-
-用于确认启动 ID 的选择方式：
+当前仍不确定：
 
 ```text
-game.variants.first?.appId
-?? game.variants.first?.id
+真实 Android WSS 是否需要额外 TLS/hostname 兼容
+真实 Offer 消息到达顺序
+真实 zone 是否始终无 server ICE
+真实 H.264 profile/PT 组合
+最终 decoder 是硬件还是软件
 ```
 
-以及实际流程：
-
-```text
-Create / Claim
-↓
-waitUntilReady
-↓
-然后才进入 WebRTC
-```
-
-Android v4 停在 Ready/Claim，不执行最后的 WebRTC 步骤。
-
-### `CloudNow/Session/GamesClient.swift`
-
-继续用于确认 GraphQL variant 顺序和 library 状态。
-
-v4 加固：
-
-```text
-selected variant 优先
-owned variant 次优先
-数值 variant id 作为 launch appId
-cursor cycle protection
-strict completion
-PersistedQueryNotFound → ProtocolDrift
-```
-
-## 我们没有照搬的 CloudNow 决策
-
-```text
-tvOS Big Picture 默认值
-Apple VideoToolbox renderer
-Queue Ad 播放 UI（v4 暂不实现）
-固定欧洲 VPC fallback
-Swift actor / Observation 架构
-WebRTC decoder（v5 才进入）
-```
-
-## 后续继续参考
-
-v5：
-
-```text
-GFNStreamController.swift
-WebRTC signaling
-SDP munger
-```
-
-Main10/HDR：
-
-```text
-GFNVideoDecoderFactory.swift
-GFNVideoDecoderH265.swift
-```
-
-原则始终是：
-
-```text
-参考已经验证的协议行为
-+ 保留 Android 自己的模块设计
-+ 真机结果优先
-```
+这些只由真机 Diagnostics 决定，不从 Apple 实现反推为 Android 必然行为。

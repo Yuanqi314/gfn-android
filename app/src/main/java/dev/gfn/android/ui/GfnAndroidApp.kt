@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +25,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import dev.gfn.account.GfnAccountClient
 import dev.gfn.android.auth.AndroidKeystoreTokenStore
 import dev.gfn.android.auth.AuthController
@@ -48,6 +51,7 @@ import dev.gfn.android.session.AndroidStableDeviceId
 import dev.gfn.android.session.GfnSessionController
 import dev.gfn.android.session.PersistedSessionRecord
 import dev.gfn.android.session.SessionUiState
+import dev.gfn.android.stream.GfnStreamingController
 import dev.gfn.auth.AuthSessionService
 import dev.gfn.auth.NvidiaAuthApi
 import dev.gfn.auth.NvidiaAuthReferenceDefaults
@@ -59,6 +63,9 @@ import dev.gfn.core.model.SessionInfo
 import dev.gfn.diagnostics.DiagnosticsSnapshot
 import dev.gfn.games.GfnGamesClient
 import dev.gfn.identity.GfnClientIdentity
+import dev.gfn.stream.StreamDiagnostics
+import dev.gfn.stream.StreamState
+import dev.gfn.webrtc.GfnVideoSurfaceView
 import dev.gfn.network.UrlConnectionHttpTransport
 import kotlinx.coroutines.delay
 
@@ -110,6 +117,7 @@ fun GfnAndroidApp() {
             scope = scope,
         )
     }
+    val streamingController = remember(context) { GfnStreamingController(context) }
 
     val authState by authController.state.collectAsState()
     val contentState by contentController.state.collectAsState()
@@ -117,6 +125,8 @@ fun GfnAndroidApp() {
     val detailState by contentController.detailState.collectAsState()
     val sessionState by sessionController.state.collectAsState()
     val resumeRecord by sessionController.resumeRecord.collectAsState()
+    val streamState by streamingController.state.collectAsState()
+    val streamDiagnostics by streamingController.diagnostics.collectAsState()
 
     LaunchedEffect(authController) { authController.restoreOnce() }
     LaunchedEffect(sessionController) { sessionController.restoreResumeRecordOnce() }
@@ -185,10 +195,21 @@ fun GfnAndroidApp() {
                     AppTab.Session -> SessionScreen(
                         state = sessionState,
                         resumeRecord = resumeRecord,
+                        streamState = streamState,
+                        streamDiagnostics = streamDiagnostics,
+                        streamingController = streamingController,
                         onResume = sessionController::resumePersisted,
                         onClaim = sessionController::claimCurrent,
-                        onEnd = { sessionController.endSession(cancelledByUser = false) },
-                        onCancel = { sessionController.endSession(cancelledByUser = true) },
+                        onConnectStream = streamingController::connectClaimedSession,
+                        onDisconnectStream = streamingController::disconnect,
+                        onEnd = {
+                            streamingController.disconnect()
+                            sessionController.endSession(cancelledByUser = false)
+                        },
+                        onCancel = {
+                            streamingController.disconnect()
+                            sessionController.endSession(cancelledByUser = true)
+                        },
                         onForget = sessionController::forgetResumeRecord,
                     )
                     AppTab.Diagnostics -> DiagnosticsScreen(
@@ -196,6 +217,8 @@ fun GfnAndroidApp() {
                         contentState = contentState,
                         sessionState = sessionState,
                         resumeRecord = resumeRecord,
+                        streamState = streamState,
+                        streamDiagnostics = streamDiagnostics,
                     )
                     AppTab.Settings -> SettingsScreen(
                         darkTheme = darkTheme,
@@ -532,7 +555,7 @@ private fun GameDetailCard(
                 }.ifEmpty { listOf("标准 GFN") }.joinToString(" · "),
                 color = MaterialTheme.colorScheme.primary,
             )
-            Text("v4 会话测试固定 SDR8；HDR/Main10 不在这一版请求。")
+            Text("v5.0 固定 H.264 / SDR8 / 1080p60 / Stereo；HEVC/Main10/HDR 不在这一版启用。")
             if (detail.variants.isEmpty()) {
                 Text("当前详情没有可启动 variant。", color = MaterialTheme.colorScheme.error)
             } else {
@@ -556,8 +579,13 @@ private fun GameDetailCard(
 private fun SessionScreen(
     state: SessionUiState,
     resumeRecord: PersistedSessionRecord?,
+    streamState: StreamState,
+    streamDiagnostics: StreamDiagnostics,
+    streamingController: GfnStreamingController,
     onResume: () -> Unit,
     onClaim: () -> Unit,
+    onConnectStream: (SessionInfo) -> Unit,
+    onDisconnectStream: () -> Unit,
     onEnd: () -> Unit,
     onCancel: () -> Unit,
     onForget: () -> Unit,
@@ -567,8 +595,8 @@ private fun SessionScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Text("CloudMatch 会话", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("第 4 版只验证 Session Lifecycle，不创建 WebRTC PeerConnection。")
+            Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
+            Text("v5.0 复用已 Claim 的 Session，只新增 WSS → SDP → ICE → H.264 第一帧。")
         }
 
         if (resumeRecord != null) {
@@ -588,8 +616,16 @@ private fun SessionScreen(
             }
         }
 
-        item {
-            SessionStateCard(state)
+        item { SessionStateCard(state) }
+
+        if (state is SessionUiState.Claimed && streamState !is StreamState.Idle && streamState !is StreamState.Closed) {
+            item {
+                StreamingVideoCard(
+                    controller = streamingController,
+                    streamState = streamState,
+                    diagnostics = streamDiagnostics,
+                )
+            }
         }
 
         item {
@@ -599,11 +635,22 @@ private fun SessionScreen(
                 is SessionUiState.Preparing -> Button(onClick = onCancel) { Text("取消并清理 Session") }
 
                 is SessionUiState.Ready -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = onClaim) { Text("验证 Claim / Resume") }
+                    Button(onClick = onClaim) { Text("Claim / Resume") }
                     OutlinedButton(onClick = onEnd) { Text("End Session") }
                 }
 
-                is SessionUiState.Claimed -> OutlinedButton(onClick = onEnd) { Text("End Session") }
+                is SessionUiState.Claimed -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (streamState) {
+                        StreamState.Idle,
+                        StreamState.Closed,
+                        is StreamState.Failed -> Button(onClick = { onConnectStream(state.session) }) {
+                            Text("连接 WebRTC H.264")
+                        }
+                        else -> OutlinedButton(onClick = onDisconnectStream) { Text("断开 WebRTC") }
+                    }
+                    OutlinedButton(onClick = onEnd) { Text("End Session") }
+                }
+
                 is SessionUiState.Error -> if (state.session != null || resumeRecord != null) {
                     OutlinedButton(onClick = onEnd) { Text("尝试 End / Cleanup") }
                 }
@@ -612,6 +659,47 @@ private fun SessionScreen(
                 SessionUiState.Idle,
                 SessionUiState.Ended,
                 SessionUiState.Cancelled -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun StreamingVideoCard(
+    controller: GfnStreamingController,
+    streamState: StreamState,
+    diagnostics: StreamDiagnostics,
+) {
+    val context = LocalContext.current
+    val videoView = remember { GfnVideoSurfaceView(context) }
+    DisposableEffect(videoView, controller) {
+        controller.bindVideoOutput(videoView)
+        onDispose {
+            controller.bindVideoOutput(null)
+            videoView.releaseRenderer()
+        }
+    }
+
+    Card(shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("媒体状态：${streamStateLabel(streamState)}", style = MaterialTheme.typography.titleMedium)
+            AndroidView(
+                factory = { videoView },
+                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            )
+            Text(
+                "WSS RX/TX ${diagnostics.signaling.rxCount}/${diagnostics.signaling.txCount} · " +
+                    "ICE local/remote ${diagnostics.ice.localCandidateCount}/${diagnostics.ice.remoteCandidateCount}",
+            )
+            if (diagnostics.video.firstFrameRendered) {
+                Text(
+                    "FIRST FRAME ${diagnostics.video.firstFrameWidth ?: "?"}x${diagnostics.video.firstFrameHeight ?: "?"}",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            (streamState as? StreamState.Failed)?.let {
+                Text(it.reason, color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -628,7 +716,7 @@ private fun SessionStateCard(state: SessionUiState) {
                 is SessionUiState.Queued -> SessionInfoRows(state.session)
                 is SessionUiState.Preparing -> SessionInfoRows(state.session)
                 is SessionUiState.Ready -> {
-                    Text("已连续确认 Ready；尚未启动视频。", color = MaterialTheme.colorScheme.primary)
+                    Text("Session 已确认可进入 Claim；媒体仍未连接。", color = MaterialTheme.colorScheme.primary)
                     SessionInfoRows(state.session)
                 }
                 is SessionUiState.Claiming -> {
@@ -636,7 +724,7 @@ private fun SessionStateCard(state: SessionUiState) {
                     Text("Session ID：${state.sessionId}")
                 }
                 is SessionUiState.Claimed -> {
-                    Text("RESUME PUT / Claim 已完成；尚未连接 WebRTC。", color = MaterialTheme.colorScheme.primary)
+                    Text("RESUME PUT / Claim 已完成；可启动 v5 WebRTC。", color = MaterialTheme.colorScheme.primary)
                     SessionInfoRows(state.session)
                 }
                 is SessionUiState.Ending -> Text("正在发送 DELETE / 清理本地 resume 记录…")
@@ -658,7 +746,13 @@ private fun SessionInfoRows(session: SessionInfo) {
     session.seatSetupEtaMs?.let { Text("服务器 setup ETA：${it / 1000.0}s") }
     Text("GPU：${session.gpuType ?: "未报告"}")
     Text("Server：${session.serverIp ?: session.sessionControlIp ?: "等待分配"}")
-    Text("ConnectionInfo：${session.connectionInfo.size} 条 · ICE：${session.iceServers.size} 条")
+    Text("ConnectionInfo：${session.connectionInfo.size} 条 · Server ICE：${session.iceServers.size} 条")
+    session.connectionInfo.forEachIndexed { index, info ->
+        Text(
+            "Conn#${index + 1} usage=${info.usage} · ${info.ip ?: "host?"}:${info.port ?: "?"} · ${info.resourcePath ?: "path?"}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
     session.signalingUrl?.let { Text("Signaling：$it") }
     if (session.profile.bitDepth != null || session.profile.colorMode.name != "Unknown") {
         Text("Server profile：${session.profile.bitDepth ?: "?"}-bit · ${session.profile.colorMode}")
@@ -674,6 +768,8 @@ private fun DiagnosticsScreen(
     contentState: ContentUiState,
     sessionState: SessionUiState,
     resumeRecord: PersistedSessionRecord?,
+    streamState: StreamState,
+    streamDiagnostics: StreamDiagnostics,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(20.dp),
@@ -681,7 +777,7 @@ private fun DiagnosticsScreen(
     ) {
         item {
             Text("诊断", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v4 增加 CloudMatch / Queue / Ready / Claim / Resume / End 观测。")
+            Text("v5 分开观察 Session、WSS、SDP、ICE、PeerConnection 和第一帧。")
         }
         item {
             DiagnosticSection(
@@ -720,29 +816,86 @@ private fun DiagnosticsScreen(
                         add("GPU" to (info.gpuType ?: "未报告"))
                         add("Server" to (info.serverIp ?: "未报告"))
                         add("ConnectionInfo" to info.connectionInfo.size.toString())
-                        add("ICE servers" to info.iceServers.size.toString())
+                        add("Server ICE" to info.iceServers.size.toString())
+                        info.connectionInfo.forEachIndexed { index, c ->
+                            add("Conn#${index + 1}" to "usage=${c.usage} ${c.ip ?: "?"}:${c.port ?: "?"} ${c.resourcePath ?: ""}")
+                        }
                     }
                 },
             )
         }
         item {
             DiagnosticSection(
-                "本地能力（媒体阶段尚未启用）",
+                "Signaling",
                 listOf(
-                    "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
-                    "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
-                    "HDR10 解码器" to snapshot.localVideo.hdr10Decoder.asYesNo(),
+                    "媒体状态" to streamStateLabel(streamState),
+                    "WSS connected" to streamDiagnostics.signaling.websocketConnected.asYesNo(),
+                    "Endpoint" to (streamDiagnostics.signaling.endpointHost ?: "待连接"),
+                    "RX" to streamDiagnostics.signaling.rxCount.toString(),
+                    "Last RX" to (streamDiagnostics.signaling.lastRxType ?: "-"),
+                    "TX" to streamDiagnostics.signaling.txCount.toString(),
+                    "Last TX" to (streamDiagnostics.signaling.lastTxType ?: "-"),
+                    "Close" to listOfNotNull(
+                        streamDiagnostics.signaling.closeCode?.toString(),
+                        streamDiagnostics.signaling.closeReason,
+                    ).joinToString(" ").ifBlank { "-" },
                 ),
             )
         }
         item {
             DiagnosticSection(
-                "媒体（v5 才开始）",
+                "SDP",
                 listOf(
-                    "Codec" to "未连接",
-                    "Profile" to "未协商",
-                    "Bit depth" to "未解码",
-                    "WebRTC" to "未创建 PeerConnection",
+                    "Offer" to streamDiagnostics.offer.offerPresent.asYesNo(),
+                    "Offer codecs" to streamDiagnostics.offer.videoCodecs.joinToString().ifBlank { "-" },
+                    "Offer H264 PT" to streamDiagnostics.offer.h264PayloadTypes.joinToString().ifBlank { "-" },
+                    "Answer" to streamDiagnostics.answer.answerPresent.asYesNo(),
+                    "Answer codecs" to streamDiagnostics.answer.videoCodecs.joinToString().ifBlank { "-" },
+                    "Answer H264 PT" to streamDiagnostics.answer.h264PayloadTypes.joinToString().ifBlank { "-" },
+                    "ICE ufrag/pwd" to "${streamDiagnostics.answer.iceUfragPresent.asYesNo()}/${streamDiagnostics.answer.icePasswordPresent.asYesNo()}",
+                    "DTLS fingerprint" to streamDiagnostics.answer.dtlsFingerprintPresent.asYesNo(),
+                ),
+            )
+        }
+        item {
+            DiagnosticSection(
+                "ICE / PeerConnection",
+                listOf(
+                    "Server ICE entries" to streamDiagnostics.ice.serverIceEntries.toString(),
+                    "Effective ICE servers" to streamDiagnostics.ice.effectiveIceServers.toString(),
+                    "Fallback active" to streamDiagnostics.ice.fallbackActive.asYesNo(),
+                    "Local candidates" to streamDiagnostics.ice.localCandidateCount.toString(),
+                    "Remote signaling candidates" to streamDiagnostics.ice.remoteCandidateCount.toString(),
+                    "Injected host candidates" to streamDiagnostics.ice.injectedRemoteCandidateCount.toString(),
+                    "Signaling state" to streamDiagnostics.ice.signalingState,
+                    "ICE gathering" to streamDiagnostics.ice.iceGatheringState,
+                    "ICE connection" to streamDiagnostics.ice.iceConnectionState,
+                    "Peer connection" to streamDiagnostics.ice.peerConnectionState,
+                ),
+            )
+        }
+        item {
+            DiagnosticSection(
+                "视频",
+                listOf(
+                    "Codec" to "H.264 / SDR8（v5.0 固定）",
+                    "Remote video track" to streamDiagnostics.video.remoteVideoTrackPresent.asYesNo(),
+                    "First RTP packet" to streamDiagnostics.video.firstRtpPacketReceived.asYesNo(),
+                    "First surface frame" to streamDiagnostics.video.firstFrameRendered.asYesNo(),
+                    "Resolution" to if (streamDiagnostics.video.firstFrameWidth != null) {
+                        "${streamDiagnostics.video.firstFrameWidth}x${streamDiagnostics.video.firstFrameHeight ?: "?"}"
+                    } else "-",
+                    "Decoder path" to streamDiagnostics.video.decoderPath,
+                ),
+            )
+        }
+        item {
+            DiagnosticSection(
+                "后续能力（v5.0 未启用）",
+                listOf(
+                    "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
+                    "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
+                    "HDR10 解码器" to snapshot.localVideo.hdr10Decoder.asYesNo(),
                 ),
             )
         }
@@ -789,7 +942,7 @@ private fun SettingsScreen(
         item {
             Card(shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("第四版状态", style = MaterialTheme.typography.titleMedium)
+                    Text("第五版状态", style = MaterialTheme.typography.titleMedium)
                     Text(if (authState is AuthUiState.SignedIn) "Auth：真机已验证" else "Auth：等待登录")
                     Text(
                         when (contentState) {
@@ -800,8 +953,8 @@ private fun SettingsScreen(
                         },
                     )
                     Text("Session：${sessionStateLabel(sessionState)}")
-                    Text("v4：CloudMatch Create → Queue → Ready → Claim / Resume → End")
-                    Text("v5：WebRTC Signaling → SDP → H.264 First Frame")
+                    Text("v4：CloudMatch / Claim 已进入 soft-freeze")
+                    Text("v5.0：WSS → SDP → ICE → H.264 First Frame")
                     Text("后续：HEVC Main → Main10 → HDR10")
                 }
             }
@@ -830,6 +983,18 @@ private fun sessionFromState(state: SessionUiState): SessionInfo? = when (state)
     is SessionUiState.Claimed -> state.session
     is SessionUiState.Error -> state.session
     else -> null
+}
+
+private fun streamStateLabel(state: StreamState): String = when (state) {
+    StreamState.Idle -> "Idle"
+    StreamState.OpeningSignaling -> "OpeningSignaling"
+    StreamState.AwaitingOffer -> "AwaitingOffer"
+    StreamState.NegotiatingSdp -> "NegotiatingSDP"
+    StreamState.IceChecking -> "ICE Checking"
+    StreamState.Connected -> "Connected"
+    StreamState.FirstFrame -> "FIRST FRAME"
+    is StreamState.Failed -> "Failed"
+    StreamState.Closed -> "Closed"
 }
 
 private fun Boolean.asYesNo(): String = if (this) "是" else "否"

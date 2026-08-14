@@ -1,279 +1,221 @@
-# 第四版架构
+# 第五版架构
 
 ## 总边界
 
 ```text
 Compose UI
-≠
-Auth
-≠
-GFN Content
-≠
-CloudMatch Session
-≠
-WebRTC
-≠
-MediaCodec
+≠ Auth
+≠ GFN Content
+≠ CloudMatch Session
+≠ GFN Signaling Envelope
+≠ WebRTC PeerConnection
+≠ Video Decoder / Surface
 ```
 
-第 4 版只新增 Session 层，不把媒体逻辑塞进 CloudMatch。
+v5 不把 signaling JSON 塞进 CloudMatch，也不让 WebRTC 重新创建 Session。
 
 ## 调用链
 
 ```text
 GfnAndroidApp
 │
-├── AuthController               [soft-freeze]
-│   └── AuthSessionService
+├── AuthController                 [soft-freeze]
+├── GfnContentController           [soft-freeze]
+├── GfnSessionController           [v4 soft-freeze]
+│   └── Claimed SessionInfo
 │
-├── GfnContentController         [soft-freeze]
-│   ├── GfnAccountClient
-│   └── GfnGamesClient
-│
-└── GfnSessionController         [v4]
-    ├── AuthRefreshingCloudMatchPort
-    │   └── GfnCloudMatchClient
-    ├── SessionOrchestrator
-    ├── AndroidStableDeviceId
-    └── AndroidSessionRecordStore
+└── GfnStreamingController         [v5]
+    └── GfnWebRtcEngine
+        ├── GfnSignalingClient     OkHttp WebSocket transport
+        ├── stream-signaling       envelope / SDP / NVST SDP
+        ├── PeerConnectionFactory  direct org.webrtc API
+        └── GfnVideoSurfaceView    SurfaceViewRenderer
 ```
 
-## Auth 与 401
+## 输入契约
 
-内容和 Session 都不能直接操作 refresh token。
+`GfnWebRtcEngine` 只接受：
 
 ```text
-API request(token=A)
+SessionInfo.isReadyStatus == true
+signalingUrl != null
+```
+
+并强制：
+
+```text
+H264 / SDR8 / 1920x1080 / 60 / Stereo
+```
+
+它不调用 CloudMatch Create/Claim。
+
+## Signaling 状态
+
+```text
+Idle
 ↓
-HTTP 401
+OpeningSignaling
 ↓
-AuthController.refreshForApi(rejectedToken=A)
+AwaitingOffer
 ↓
-Mutex
-├─ token 仍是 A → 真正 refresh
-└─ token 已变 B → 直接复用 B
+NegotiatingSdp
 ↓
-request retry exactly once
-```
-
-403 不进入 refresh。
-
-## GameVariant 到 Session
-
-GraphQL 顶层 `GameSummary.appId` 不能直接假设等于 CloudMatch 启动 ID。
-
-```text
-GameDetail
+IceChecking
 ↓
-variants
+Connected
 ↓
-selected variant 优先
-否则 owned variant 优先
-↓
-variant.launchAppId
+FirstFrame
 ```
 
+失败：
+
 ```text
-launchAppId = variant.appId ?: variant.id
+Failed(reason)
 ```
 
-当前 browse 中数值 variant id 会记录到 `appId`。
-
-## CloudMatch lifecycle identity
-
-每次新 Session：
+用户主动断开：
 
 ```text
-lifecycle clientId = random UUID
-x-device-id        = stable local UUID
+Closed
 ```
 
-Header 由 `GfnRequestContext` 集中构造：
+## WebSocket
 
 ```text
-Authorization       GFNJWT <token>
-nv-client-id        <lifecycle UUID>
-nv-client-type      NATIVE
-nv-client-streamer  NVIDIA-CLASSIC
-nv-device-os        WINDOWS
-nv-device-type      DESKTOP
-nv-device-make      UNKNOWN
-nv-device-model     UNKNOWN
-x-device-id         <stable UUID>
+{signalingUrl}/sign_in
+  peer_id=random
+  version=2
+  peer_role=1
+  pairing_id=sessionId
 ```
 
-Session JSON：
+目前 Android 使用标准 TLS + OkHttp HTTP/1.1。不会在没有真机错误证据时绕过证书验证。
+
+## Signaling envelope
 
 ```text
-clientIdentification = GFN-PC
-clientPlatformName    = windows
+root
+├── peer_info
+├── ackid / ack
+├── hb
+└── peer_msg
+    ├── from
+    ├── to
+    └── msg = JSON string
+        ├── offer + sdp
+        └── candidate + sdpMid + sdpMLineIndex
 ```
 
-## Create
+Answer：
 
 ```text
-POST {providerBase}/v2/session
-    ?keyboardLayout=...
-    &languageCode=...
-```
-
-v4 固定：
-
-```text
-1920x1080 以下的账号已授权分辨率
-<= 60 FPS
-SDR8
-stereo
-appLaunchMode = 1 (Default)
-```
-
-不把 CloudNow 的 tvOS Big Picture 默认值直接复制到 Android。
-
-## Queue 与 Ready
-
-`SessionReadinessTracker`：
-
-```text
-seatSetupStep == 1
-OR queuePosition > 1
-    → InQueue
-```
-
-Queue 中：
-
-```text
-不启动 180 秒 setup timeout
-连续 Ready 计数归零
-```
-
-离开 Queue 后：
-
-```text
-start setup clock
-↓
-status 2/3 连续出现 2 次
-↓
-Ready
-```
-
-## resolved server
-
-Provider endpoint 可能先返回具体 server host。
-
-```text
-poll provider base
-↓
-status 2/3 + resolved server
-↓
-再 GET https://<resolved-server>/v2/session/{id}
-↓
-取得最终 connectionInfo / ICE
-```
-
-## Claim / Resume
-
-恢复前先 GET 当前状态。
-
-仍在 Queue：
-
-```text
-返回 Queue 状态，不发送 RESUME
-```
-
-Ready status 2/3：
-
-```text
-PUT /v2/session/{id}
-{
-  action: 2,
-  data: "RESUME",
-  sessionRequestData: <minimal>
+peer_msg.msg = {
+  type: answer,
+  sdp: <WebRTC Answer>,
+  nvstSdp: <GFN capability descriptor>
 }
 ```
 
-Resume 不重新发送 monitor / HDR / requestedStreamingFeatures。
+## SDP 原则
 
-## End / cleanup
+1. 不先修改服务器 Offer 的 codec 列表。
+2. 有明确 media IP 时只修正 `0.0.0.0/127.0.0.1` 占位地址。
+3. `setRemoteDescription(Offer)`。
+4. libwebrtc 生成 Answer。
+5. 只在 Answer 侧保留 H.264 + 其 RTX/FEC repair PT。
+6. 注入带宽 hints。
+7. `setLocalDescription(Answer)`。
+8. 从本地 Answer 读取 ICE credential / DTLS fingerprint，构造 NVST SDP。
 
-```text
-DELETE /v2/session/{id}
-```
+## ICE
 
-`SessionOrchestrator` 维护 owned session，并保证同一 Session 不重复 stop；DELETE 失败时撤销本地 stop 标记，以便再次重试。
-
-## stale result
-
-```text
-Attempt generation N
-↓
-用户取消
-↓
-generation N+1
-↓
-旧 create 返回 session S
-↓
-N 已 stale
-↓
-DELETE S
-↓
-拒绝 UI 更新
-```
-
-## 本地 resume 数据
-
-只保存非凭据数据：
+服务端 ICE 与有效 ICE 分开：
 
 ```text
-sessionId
-appId
-game/store
-status
-serverIp
-base/routingZone
-clientId/deviceId
-createdAt
+Server ICE entries     = SessionInfo.iceServers
+Effective ICE servers  = 实际 RTCConfiguration
 ```
 
-文件位于 `noBackupFilesDir`。
+v5.0 不启用公共 STUN fallback。
 
-Token 永远由 Auth / AndroidKeyStore 管理，不写入 Session record。
-
-## Queue Ad
-
-CloudNow 已经实现 Queue Ad 播放与事件上报，但 v4 暂不引入这一层。
-
-当前策略：
+GFN Offer 可能不带 `a=candidate`。Answer 发出后，v5 根据 Session 数据构造远端 host candidate：
 
 ```text
-发现 sessionAdsRequired / isAdsRequired / queuePaused / ad payload
-↓
-抛出明确“不支持”状态
-↓
-best-effort DELETE
+media connection priority:
+usage 2
+→ usage 17
+→ usage 14 highest valid port
 ```
 
-避免无限隐藏轮询或留下 Session。
-
-## v5 接口
-
-v4 Ready 后仅展示：
+端口来源：
 
 ```text
-server
-signalingUrl
-connectionInfo
-ICE
-streamingProfile
+selected ConnectionInfo.port
++
+Offer first video m-line port
 ```
 
-不会创建 PeerConnection。
-
-v5 再将 `SessionInfo` 交给：
+IP 来源：
 
 ```text
-StreamingEngine
-↓
-WebRTC signaling / SDP
-↓
-H.264 First Frame
+selected media ConnectionInfo
+resolved server
+sessionControlIp
 ```
+
+只接受可以严格解析成 IPv4 的 dotted/dash-encoded host；不猜其他 host 结构。
+
+## DataChannel
+
+为了让生成的 Answer 与 GFN 预期的 application m-line 保持一致，收到 Offer 后、创建 Answer 前建立：
+
+```text
+input_channel_v1                  ordered
+input_channel_partially_reliable unordered / lifetime 来自 Offer
+stats_channel                     unordered / no retransmit
+```
+
+v5.0 **不实现输入协议**，只建立协商骨架。真实 input packet 在后续 v5.x。
+
+## Video
+
+```text
+RtpReceiver
+↓
+first video packet observer
+↓
+VideoTrack
+↓
+GfnVideoSurfaceView
+↓
+SurfaceViewRenderer
+↓
+onFirstFrameRendered
+```
+
+当前解码工厂：`DefaultVideoDecoderFactory`。
+
+具体真机选择：
+
+```text
+hardware MediaCodec
+或
+software decoder
+```
+
+当前不确定，必须用真实 stats/设备结果确认。
+
+## 后续 Main10/HDR
+
+未来不会把 HDR 解码逻辑塞进 v5 H.264 renderer：
+
+```text
+stream-webrtc       H264/HEVC bring-up
+        │
+        └── future direct decoder boundary
+            → MediaCodec HEVC Main10
+            → SurfaceView
+            → HDR10
+```
+
+Session 与 Signaling API 保持不变。

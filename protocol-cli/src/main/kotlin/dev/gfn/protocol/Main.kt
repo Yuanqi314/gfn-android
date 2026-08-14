@@ -25,6 +25,11 @@ import dev.gfn.network.NetworkRedaction
 import dev.gfn.session.SessionOrchestrator
 import dev.gfn.session.SessionReadinessState
 import dev.gfn.session.SessionScheduler
+import dev.gfn.signaling.GfnSdpTools
+import dev.gfn.signaling.GfnSignalingEndpoint
+import dev.gfn.signaling.GfnSignalingMessageCodec
+import dev.gfn.signaling.NvstSdpConfig
+import dev.gfn.signaling.SignalingPeerPayload
 import java.time.Instant
 import java.util.ArrayDeque
 import java.util.UUID
@@ -240,12 +245,112 @@ private fun <T> runSynchronously(block: suspend () -> T): T {
 }
 
 fun main() {
-    println("=== GFN Android 第四版核心验证 ===")
+    println("=== GFN Android 第五版核心验证 ===")
     verifyV4CloudMatchLifecycle()
+    verifyV5SignalingAndSdp()
     verifyStaleCreateCleanup()
     verifyDeviceFlow()
     verifySessionRestoreAfterUnauthorized()
     verifyContentApis()
+}
+
+
+private fun verifyV5SignalingAndSdp() {
+    println("\n[v5 Signaling / SDP]")
+    val signIn = GfnSignalingEndpoint.signInUrl(
+        signalingUrl = "wss://66-22-144-44.cloudmatchbeta.nvidiagrid.net/nvst/",
+        sessionId = "fixture-session",
+        peerName = "peer-fixture",
+    )
+    check(signIn == "wss://66-22-144-44.cloudmatchbeta.nvidiagrid.net/nvst/sign_in?peer_id=peer-fixture&version=2&peer_role=1&pairing_id=fixture-session")
+
+    val offer = listOf(
+        "v=0",
+        "o=- 1 2 IN IP4 0.0.0.0",
+        "s=-",
+        "t=0 0",
+        "m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99",
+        "c=IN IP4 0.0.0.0",
+        "a=mid:1",
+        "a=rtpmap:96 H264/90000",
+        "a=fmtp:96 packetization-mode=1;profile-level-id=42e01f",
+        "a=rtpmap:97 rtx/90000",
+        "a=fmtp:97 apt=96",
+        "a=rtpmap:98 VP8/90000",
+        "a=rtpmap:99 red/90000",
+        "a=ri.partialReliableThresholdMs:455",
+        "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+        "a=mid:0",
+        "a=rtpmap:111 opus/48000/2",
+        "",
+    ).joinToString("\r\n")
+    val offerPayload = dev.gfn.network.Json.stringify(mapOf("type" to "offer", "sdp" to offer))
+    val envelope = dev.gfn.network.Json.stringify(
+        mapOf(
+            "peer_msg" to mapOf("from" to 1, "to" to 2, "msg" to offerPayload),
+            "ackid" to 7,
+        ),
+    )
+    val decoded = GfnSignalingMessageCodec.decode(envelope)
+    val offerSummary = GfnSdpTools.summarize(offer, isOffer = true)
+    check(offerSummary.videoCodecs.contains("H264"))
+    check(offerSummary.videoCodecs.none { it.equals("opus", ignoreCase = true) })
+    check(decoded.acknowledgementId == 7)
+    check(decoded.peerFrom == 1)
+    check((decoded.payload as? SignalingPeerPayload.Offer)?.sdp == offer)
+
+    val candidateEnvelope = GfnSignalingMessageCodec.encodeIceCandidate(
+        candidate = "candidate:1 1 UDP 2130706431 80.84.170.153 47998 typ host",
+        sdpMid = "1",
+        sdpMLineIndex = 0,
+        from = 2,
+        to = 1,
+        acknowledgementId = 8,
+    )
+    val candidateRoot = dev.gfn.network.Json.parseObject(candidateEnvelope)
+    check(candidateRoot.containsKey("peer_msg"))
+    check(!GfnSignalingMessageCodec.isTcpIceCandidate("candidate:1 1 UDP 1 1.2.3.4 9 typ host"))
+    check(GfnSignalingMessageCodec.isTcpIceCandidate("candidate:1 1 TCP 1 1.2.3.4 9 typ host tcptype active"))
+
+    val answer = listOf(
+        "v=0",
+        "o=- 1 2 IN IP4 127.0.0.1",
+        "s=-",
+        "t=0 0",
+        "a=ice-ufrag:fixtureUfrag",
+        "a=ice-pwd:fixturePassword",
+        "a=fingerprint:sha-256 AA:BB:CC",
+        "m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99",
+        "a=mid:1",
+        "a=rtpmap:96 H264/90000",
+        "a=rtpmap:97 rtx/90000",
+        "a=fmtp:97 apt=96",
+        "a=rtpmap:98 VP8/90000",
+        "a=rtpmap:99 red/90000",
+        "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+        "a=mid:0",
+        "a=rtpmap:111 opus/48000/2",
+        "",
+    ).joinToString("\r\n")
+    check(GfnSdpTools.partialReliableThresholdMs(offer) == 455)
+    val h264 = GfnSdpTools.preferH264InAnswer(answer)
+    check(h264.contains("m=video 9 UDP/TLS/RTP/SAVPF 96 97 99"))
+    check(!h264.contains("a=rtpmap:98 VP8/90000"))
+    val bounded = GfnSdpTools.injectBandwidth(h264, 20_000)
+    check(bounded.contains("b=AS:20000"))
+    val creds = GfnSdpTools.extractIceCredentials(bounded)
+    check(creds.ufrag == "fixtureUfrag")
+    check(creds.password == "fixturePassword")
+    check(creds.fingerprintSha256 == "AA:BB:CC")
+    val nvst = GfnSdpTools.buildNvstSdp(
+        creds,
+        NvstSdpConfig(width = 1920, height = 1080, fps = 60, maxBitrateKbps = 20_000),
+    )
+    check(nvst.contains("a=video.bitDepth:8"))
+    check(nvst.contains("a=video.maxFPS:60"))
+    check(nvst.contains("a=msid:input_1"))
+    check(!nvst.contains("10-bit", ignoreCase = true))
+    println("WSS sign_in → peer envelope → H.264 Answer → NVST SDP fixture 验证通过")
 }
 
 private fun verifyV4CloudMatchLifecycle() {

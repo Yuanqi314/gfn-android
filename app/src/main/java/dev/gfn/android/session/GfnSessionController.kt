@@ -198,8 +198,6 @@ class GfnSessionController(
                 Log.i(TAG, "CloudMatch Session Ready：status=${session.status}, queue=${session.queuePosition}")
             } catch (unsupported: QueueAdUnsupportedException) {
                 if (isCurrent(operation)) handleUnsupportedQueueAd(unsupported, active)
-            } catch (unsupported: QueueAdUnsupportedException) {
-                if (isCurrent(operation)) handleUnsupportedQueueAd(unsupported, active)
             } catch (cancelled: CancellationException) {
                 if (isCurrent(operation)) _state.value = SessionUiState.Cancelled
                 throw cancelled

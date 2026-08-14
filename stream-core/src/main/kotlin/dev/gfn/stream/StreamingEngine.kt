@@ -3,6 +3,7 @@ package dev.gfn.stream
 import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionInfo
 
+/** v5.0 只允许 H.264；HEVC / AV1 保留枚举但 Android v5 engine 会拒绝它们。 */
 enum class VideoCodecPreference {
     H264,
     Hevc,
@@ -13,30 +14,88 @@ data class StreamConfig(
     val width: Int = 1920,
     val height: Int = 1080,
     val fps: Int = 60,
+    val maxBitrateKbps: Int = 20_000,
     val codec: VideoCodecPreference = VideoCodecPreference.H264,
     val colorMode: RequestedColorMode = RequestedColorMode.CompatibilitySdr,
+    val audioChannels: Int = 2,
 )
 
 sealed interface StreamState {
     data object Idle : StreamState
-    data object Connecting : StreamState
-    data object Playing : StreamState
+    data object OpeningSignaling : StreamState
+    data object AwaitingOffer : StreamState
+    data object NegotiatingSdp : StreamState
+    data object IceChecking : StreamState
+    data object Connected : StreamState
+    data object FirstFrame : StreamState
     data class Failed(val reason: String) : StreamState
     data object Closed : StreamState
 }
 
+data class SignalingDiagnostics(
+    val websocketConnected: Boolean = false,
+    val endpointHost: String? = null,
+    val rxCount: Int = 0,
+    val txCount: Int = 0,
+    val lastRxType: String? = null,
+    val lastTxType: String? = null,
+    val lastRxEpochMillis: Long? = null,
+    val lastTxEpochMillis: Long? = null,
+    val closeCode: Int? = null,
+    val closeReason: String? = null,
+)
+
+data class SdpDiagnostics(
+    val offerPresent: Boolean = false,
+    val answerPresent: Boolean = false,
+    val videoCodecs: List<String> = emptyList(),
+    val h264PayloadTypes: List<Int> = emptyList(),
+    val iceUfragPresent: Boolean = false,
+    val icePasswordPresent: Boolean = false,
+    val dtlsFingerprintPresent: Boolean = false,
+)
+
+data class IceDiagnostics(
+    val serverIceEntries: Int = 0,
+    val effectiveIceServers: Int = 0,
+    val fallbackActive: Boolean = false,
+    val localCandidateCount: Int = 0,
+    val remoteCandidateCount: Int = 0,
+    val injectedRemoteCandidateCount: Int = 0,
+    val signalingState: String = "NEW",
+    val iceGatheringState: String = "NEW",
+    val iceConnectionState: String = "NEW",
+    val peerConnectionState: String = "NEW",
+)
+
+data class VideoDiagnostics(
+    val remoteVideoTrackPresent: Boolean = false,
+    val firstRtpPacketReceived: Boolean = false,
+    val firstFrameRendered: Boolean = false,
+    val firstFrameWidth: Int? = null,
+    val firstFrameHeight: Int? = null,
+    val decoderPath: String = "libwebrtc DefaultVideoDecoderFactory（具体硬件/软件 decoder 待真机确认）",
+)
+
+data class StreamDiagnostics(
+    val signaling: SignalingDiagnostics = SignalingDiagnostics(),
+    val offer: SdpDiagnostics = SdpDiagnostics(),
+    val answer: SdpDiagnostics = SdpDiagnostics(),
+    val ice: IceDiagnostics = IceDiagnostics(),
+    val video: VideoDiagnostics = VideoDiagnostics(),
+)
+
 interface StreamingEngine {
     val state: StreamState
+    val diagnostics: StreamDiagnostics
 
-    suspend fun connect(session: SessionInfo, config: StreamConfig)
+    fun connect(session: SessionInfo, config: StreamConfig)
 
-    suspend fun disconnect()
+    fun disconnect()
 }
 
 /**
- * Future Android implementation boundary.
- *
- * H.264/HEVC SDR may use the standard WebRTC decoder path. Main10/HDR can be moved to a
- * direct MediaCodec -> SurfaceView path without changing UI, CloudMatch, or session modules.
+ * Android v5 的输出目标最终落到 SurfaceViewRenderer；未来 Main10/HDR 可以换成
+ * direct MediaCodec -> SurfaceView，而不改变 Session / Signaling 模块。
  */
 interface VideoOutputTarget

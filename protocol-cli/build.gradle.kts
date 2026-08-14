@@ -21,4 +21,5 @@ dependencies {
     implementation(project(":gfn-session"))
     implementation(project(":gfn-cloudmatch"))
     implementation(project(":diagnostics"))
+    implementation(project(":stream-signaling"))
 }

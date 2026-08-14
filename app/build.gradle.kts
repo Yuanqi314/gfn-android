@@ -11,8 +11,8 @@ android {
         applicationId = "dev.gfn.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0-dev"
+        versionCode = 5
+        versionName = "0.5.0-dev"
     }
 
     buildFeatures {
@@ -41,6 +41,8 @@ dependencies {
     implementation(project(":gfn-identity"))
     implementation(project(":diagnostics"))
     implementation(project(":stream-core"))
+    implementation(project(":stream-signaling"))
+    implementation(project(":stream-webrtc"))
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.material3:material3:1.5.0-alpha25")

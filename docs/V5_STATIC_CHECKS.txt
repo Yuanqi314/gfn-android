@@ -1,0 +1,15 @@
+v5.0 静态/类型验证
+
+1. stream-signaling 分模块 Kotlin 编译：PASS
+2. protocol-cli v5 signaling/SDP fixture：PASS
+3. stream-webrtc Kotlin API-shaped stub compile：PASS
+   - 桩签名依据当前官方 WebRTC/OkHttp API 表面构造
+   - 用于抓 Kotlin override / 构造参数 / nullable / 重复声明
+   - 不等价于 Android AAR/SDK 真编译
+4. GfnStreamingController 类型检查：PASS
+5. App Kotlin parser：PASS
+6. 错误 foundation.layout.weight import：未重新引入
+7. v5.0 H.264/SDR8 锁定：已检查
+8. 运行时代码未新增 token / TURN credential 明文日志
+
+当前环境限制：没有 Android SDK，无法完成 AGP + Compose + libwebrtc AAR 的最终 APK 构建。
