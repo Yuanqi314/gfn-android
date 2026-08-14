@@ -28,7 +28,7 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Install Android SDK 37
-  run: |
+        run: |
     yes | sdkmanager --licenses >/dev/null || true
 
     echo "Available Android 37 packages:"
