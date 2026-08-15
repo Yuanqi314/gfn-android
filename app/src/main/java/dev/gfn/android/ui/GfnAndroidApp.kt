@@ -260,7 +260,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v6.0.1 HEVC Negotiation Compat",
+                "独立 Android GFN 客户端 · v6.0.2 HEVC Tier-Flag A/B",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -605,7 +605,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v6.0.1 在不可变 ResolvedLaunchProfile 上增加 HEVC Main pre-createAnswer codec preference 与完整 Logcat 取证；H.264 保持 fallback。")
+            Text("v6.0.2 仅对首个 video m-line 的 HEVC Main 做 tier-flag=1→0 单字段 A/B；发生在 setRemoteDescription 前，H.264 fallback 保持不变。")
         }
 
         if (resumeRecord != null) {
@@ -1050,7 +1050,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "后续能力（v6.0.1 未启用）",
+                "后续能力（v6.0.2 未启用）",
                 listOf(
                     "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
                     "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
@@ -1313,7 +1313,7 @@ private fun SettingsScreen(
                     Text("v5.2.1：同 Session RESUME/Claim → 新 Signaling / PeerConnection / DataChannel")
                     Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
                     Text("v5.4 Audio：2ch Stereo；6ch multiopus 模式真机可正常播放；离散 Native 5.1 仍未验证。")
-                    Text("v6.0.1 HEVC Main negotiation compatibility：pre-answer preference + Logcat evidence；仍未开放 Main10 / HDR / 120 FPS。")
+                    Text("v6.0.2 HEVC Main tier-only A/B：只改 profile-id=1 的 tier-flag 1→0；Main10 / HDR / 120 FPS 仍冻结。")
                 }
             }
         }

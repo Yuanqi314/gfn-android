@@ -1,4 +1,4 @@
-# 当前状态 · v6.0.1 HEVC Main Negotiation Compatibility
+# 当前状态 · v6.0.2 HEVC Main Tier-Flag A/B
 
 ## 真机已确认
 
@@ -89,19 +89,37 @@ native 6-channel Android playout
 ```
 
 
-## v6.0 真机裁决 / v6.0.1 当前目标
+## v6.0.1 真机裁决 / v6.0.2 当前目标
 
 真机已经确认：
 
 ```text
 Requested codec = Hevc
-Local decoder codecs includes H265
+ResolvedLaunchProfile = Hevc
+GFN Offer H265 Main = profile-id=1;tier-flag=1;level-id=153
+Local receiver H265 = generic params={}
+setCodecPreferences = applied=true
+RAW_ANSWER HEVC = empty
 Negotiated codec = H264
 Codec fallback = YES
 Reason = libwebrtc createAnswer 未接受 HEVC Main；同 Session 回退 H264
+Actual decoder = H264
 ```
 
-因此 H264 fallback PASS，但 HEVC Main negotiated/decoded/rendered 尚未 PASS。v6.0.1 第一优先级是 `receiver capability + raw createAnswer + pre-createAnswer setCodecPreferences`；Main10/HDR 继续禁止进入。统一 Logcat tag：`GfnHevcCompat`。
+因此 H264 fallback PASS，但 HEVC Main negotiated/decoded/rendered 尚未 PASS。v6.0.2 只做首个 video m-line 的 H265 Main `tier-flag=1→0` 单字段 A/B，并且 rewrite 位于 `setRemoteDescription()` 之前。第一验收点是 RAW_ANSWER 是否出现 H265 Main，不是“有没有画面”。
+
+本版仍禁止同时修改：
+
+```text
+level-id
+profile-id
+Main10/HDR/AV1
+H264 fallback
+decoder factory
+CloudMatch / NVST
+```
+
+统一 Logcat tag：`GfnHevcCompat`。实验成功后，rewrite 必须在 production 方案中移除，后续改为 Android `MediaCodecInfo.CodecProfileLevel` 真能力探测 + 准确 capability advertisement。
 
 ## v6.0 HEVC Main / SDR8
 

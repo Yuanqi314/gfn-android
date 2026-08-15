@@ -116,7 +116,7 @@ CLOUDMATCH_LAYOUT_QUERIES=$(grep -Fc 'keyboardLayout=${enc(request.keyboardLayou
 echo 'V520_STREAM_SETTINGS_SNAPSHOT_GUARDS=PASS'
 ./verify-stream-settings.sh
 
-# v6.0 HEVC Main / SDR8 regression plus v6.0.1 pre-createAnswer negotiation compatibility.
+# v6.0 HEVC Main / SDR8 regression plus v6.0.2 tier-only A/B negotiation compatibility.
 ./verify-hevc.sh
 ./verify-hevc-compat.sh
 

@@ -248,3 +248,16 @@ If video renders while `Negotiated codec=H264` or `Codec fallback=true`, that is
 | Main10/HDR | exists separately | exists separately | **not enabled** |
 
 The v6.0 true-device result selected HEVC but negotiated H264. v6.0.1 therefore targets the earlier PeerConnection negotiation layer before changing any H265 fmtp field.
+
+## HEVC — v6.0.2 tier-flag causal A/B
+
+| Layer | Evidence | gfn-android v6.0.2 decision |
+| --- | --- | --- |
+| Remote Offer | GFN exposes H265 Main `profile-id=1;tier-flag=1;level-id=153` | Keep original evidence log; treatment rewrites only Main tier 1→0 |
+| Local receiver | Android WebRTC exposes generic H265 params | Do not infer that hardware is Tier0; this is metadata insufficiency |
+| libwebrtc identity | Current pinned m144 H265 equality distinguishes profile/tier/tx-mode; level is not the direct identity key | Test only `tier-flag`; do not co-vary `level-id` |
+| Timing | H265 disappears in raw `createAnswer()` before MediaCodec | Rewrite treatment must occur before `setRemoteDescription()` |
+| Decoder | Failed baseline never created HEVC MediaCodec | Decoder factory is frozen for this A/B |
+| Production | SDP rewrite changes the remote capability declaration | Diagnostic only; remove rewrite before production and advertise real local capability instead |
+
+The v6.0.2 verdict is intentionally deferred to true-device RAW_ANSWER evidence. Static checks can prove the treatment is single-field and correctly placed, but cannot prove that GFN/libwebrtc will negotiate HEVC on the device.

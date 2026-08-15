@@ -1,0 +1,85 @@
+v6.0.2 HEVC Main Tier-Flag A/B — static/offline checks
+Baseline HEAD: f4b79c01ce610d89d7be56017e9cfca0a77d468c
+
+PASS — verify-hevc-compat.sh
+  V602_TIER_AB_CALL_ORDER=PASS
+  V602_SINGLE_FIELD_SOURCE_GUARD=PASS
+  V602_HEVC_COMPAT_STATIC_GUARDS=PASS
+  V602_HEVC_TIER_ONLY_SDP_FIXTURE=PASS
+  V602_HEVC_PREFERENCE_PLANNER=PASS
+  V602_LOGCAT_PHASE_FIXTURE=PASS
+  V602_HEVC_COMPAT_VERIFY=PASS
+
+Tier-only fixture invariants verified:
+  - dynamic PT discovery; no PT103 hard-code
+  - first video m-line only
+  - H265 only
+  - profile-id=1 only
+  - source tier-flag=1 only
+  - rewritten tier-flag=0 only
+  - level-id=153 preserved
+  - tx-mode=SRST preserved
+  - Main10/profile-id=2 preserved
+  - already-Tier0 H265 preserved
+  - H265 attrs not listed in first video m-line preserved
+  - second video media section preserved
+  - H264 preserved
+  - RTX apt associations preserved
+  - m-line payload order preserved
+  - LF / CRLF / trailing CRLF preserved
+  - second application is idempotent
+
+PASS — verify-hevc.sh
+  V600_HEVC_VERIFY=PASS
+  Existing H264/HEVC Main policy, Answer selection, settings and store fixtures remain green.
+
+PASS — verify-reconnect-engine.sh
+  V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+  V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
+  V602_WEBRTC_ENGINE_HEVC_COMPAT_API_SHAPED_COMPILE=PASS
+
+PASS — verify-audio.sh
+  V540_AUDIO_VERIFY=PASS
+
+PASS — verify-stream-settings.sh
+  V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+
+PASS — verify-wire-ab.sh
+  V514_KEYBOARD_WIRE_AB_ONLY_SCAN_BYTES=PASS
+  Note: this historical experiment is itself evidence of the pre-existing baseline conflict below.
+
+PRE-EXISTING BASELINE CONFLICT — verify-keyboard-stable.sh
+  The baseline HEAD tracks:
+    stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt
+  but verify-keyboard-stable.sh and verify-core.sh require that file to be absent.
+  git diff confirms v6.0.2 did not modify this file.
+  Packet fixture passes, then the stable-baseline static guard exits 1.
+
+PARTIAL / BLOCKED BY SAME BASELINE CONFLICT — verify-gamepad.sh
+  PASS before keyboard tail-call:
+    V530_GAMEPAD_PACKET_FIXTURE=PASS
+    V530_GAMEPAD_CONTROLLER_FIXTURE=PASS
+    V530_VIDEO_SURFACE_GAMEPAD_ROUTE_COMPILE=PASS
+  Overall script cannot PASS because it invokes verify-keyboard-stable.sh at the end.
+
+PARTIAL / BLOCKED BY SAME BASELINE CONFLICT — verify-reconnect.sh
+  PASS before keyboard tail-call:
+    V521_SESSION_SAME_ID_RECLAIM=PASS
+    V521_STREAM_RECONNECT_STATE_MACHINE=PASS
+  Overall script cannot PASS because it invokes verify-keyboard-stable.sh at the end.
+
+NOT CLAIMED PASS — verify-core.sh
+  A repository-wide run exceeded the execution window after earlier checks passed.
+  Its later keyboard-stable guard is known to fail on the unchanged baseline conflict above.
+  Individual relevant verifiers were therefore run separately and recorded here.
+
+ENVIRONMENT BLOCKED — Android Gradle compile
+  Command attempted:
+    sh ./gradlew :app:compileDebugKotlin --offline
+  Repository gradlew attempted to fetch Gradle 9.5.0 from services.gradle.org.
+  Current container has no external DNS/network access; curl exited 6 before Gradle started.
+  Therefore APK/full Android Gradle compilation is NOT claimed as passed or failed.
+
+True-device status:
+  NOT RUN in this environment.
+  v6.0.2 verdict still requires real-device RAW_ANSWER evidence.

@@ -241,6 +241,22 @@ data class VideoRtxAssociation(
     val apt: Int,
 )
 
+/**
+ * Result of the v6.0.2 HEVC Main tier-only A/B rewrite.
+ *
+ * Payload types are diagnostics scoped to the current first video m-line. The rewrite target is
+ * discovered from codec name + fmtp, never from a hard-coded dynamic PT.
+ */
+data class HevcTierFlagRewriteResult(
+    val sdp: String,
+    val candidatePayloadTypes: List<Int>,
+    val rewrittenPayloadTypes: List<Int>,
+    val fromTierFlag: String,
+    val toTierFlag: String,
+) {
+    val changed: Boolean get() = rewrittenPayloadTypes.isNotEmpty()
+}
+
 data class AudioCodecDescription(
     val payloadType: Int,
     val name: String,
@@ -695,6 +711,29 @@ object GfnSdpTools {
         }
     }
 
+    private fun rewriteFmtpParameterValue(
+        fmtp: String,
+        name: String,
+        expectedValue: String,
+        replacementValue: String,
+    ): String? {
+        var changed = false
+        val rewritten = fmtp.split(';').map { token ->
+            val equalsIndex = token.indexOf('=')
+            if (equalsIndex < 0) return@map token
+            val key = token.substring(0, equalsIndex).trim()
+            val rawValue = token.substring(equalsIndex + 1)
+            if (!key.equals(name, ignoreCase = true) || rawValue.trim() != expectedValue) {
+                return@map token
+            }
+            val leadingWhitespace = rawValue.takeWhile(Char::isWhitespace)
+            val trailingWhitespace = rawValue.takeLastWhile(Char::isWhitespace)
+            changed = true
+            token.substring(0, equalsIndex + 1) + leadingWhitespace + replacementValue + trailingWhitespace
+        }
+        return if (changed) rewritten.joinToString(";") else null
+    }
+
     fun injectBandwidth(sdp: String, videoKbps: Int, audioKbps: Int = 128): String {
         val separator = separator(sdp)
         val input = lines(sdp)
@@ -718,6 +757,89 @@ object GfnSdpTools {
             .replace("c=IN IP4 127.0.0.1", "c=IN IP4 $serverIp")
             .replace(" 0.0.0.0 ", " $serverIp ")
             .replace(" 127.0.0.1 ", " $serverIp ")
+    }
+
+    /**
+     * v6.0.2 diagnostic-only A/B: in the first video media section, find H265 Main candidates
+     * by codec/fmtp and rewrite only tier-flag=1 to tier-flag=0. profile-id, level-id, tx-mode,
+     * RTX apt, m-line payload order and every non-target media section remain byte-semantically
+     * unchanged. The server's dynamic PT value is never assumed.
+     */
+    fun rewriteFirstVideoHevcMainTierFlagForAb(
+        sdp: String,
+        fromTierFlag: String = "1",
+        toTierFlag: String = "0",
+    ): HevcTierFlagRewriteResult {
+        val firstVideoPayloads = firstVideoPayloadOrder(sdp).toSet()
+        val candidates = firstVideoCodecDetails(sdp)
+            .asSequence()
+            .filter { it.payloadType in firstVideoPayloads }
+            .filter { it.normalizedName == "H265" }
+            .filter { it.profileId == "1" }
+            .filter { it.tierFlag == fromTierFlag }
+            .map { it.payloadType }
+            .distinct()
+            .toList()
+        if (candidates.isEmpty()) {
+            return HevcTierFlagRewriteResult(
+                sdp = sdp,
+                candidatePayloadTypes = emptyList(),
+                rewrittenPayloadTypes = emptyList(),
+                fromTierFlag = fromTierFlag,
+                toTierFlag = toTierFlag,
+            )
+        }
+
+        val candidateSet = candidates.toSet()
+        val rewrittenPayloadTypes = linkedSetOf<Int>()
+        val output = mutableListOf<String>()
+        var inFirstVideo = false
+        var seenVideo = false
+        for (line in lines(sdp)) {
+            if (line.startsWith("m=video") && !seenVideo) {
+                seenVideo = true
+                inFirstVideo = true
+                output += line
+                continue
+            }
+            if (line.startsWith("m=")) {
+                if (inFirstVideo) inFirstVideo = false
+                output += line
+                continue
+            }
+            if (!inFirstVideo || !line.startsWith("a=fmtp:")) {
+                output += line
+                continue
+            }
+
+            val rest = line.removePrefix("a=fmtp:")
+            val payloadType = rest.substringBefore(' ').toIntOrNull()
+            if (payloadType == null || payloadType !in candidateSet) {
+                output += line
+                continue
+            }
+            val fmtp = rest.substringAfter(' ', "")
+            val rewrittenFmtp = rewriteFmtpParameterValue(
+                fmtp = fmtp,
+                name = "tier-flag",
+                expectedValue = fromTierFlag,
+                replacementValue = toTierFlag,
+            )
+            if (rewrittenFmtp == null) {
+                output += line
+            } else {
+                output += "a=fmtp:$payloadType $rewrittenFmtp"
+                rewrittenPayloadTypes += payloadType
+            }
+        }
+
+        return HevcTierFlagRewriteResult(
+            sdp = output.joinToString(separator(sdp)),
+            candidatePayloadTypes = candidates,
+            rewrittenPayloadTypes = rewrittenPayloadTypes.toList(),
+            fromTierFlag = fromTierFlag,
+            toTierFlag = toTierFlag,
+        )
     }
 
     fun extractIceCredentials(sdp: String): IceCredentialsPresence {

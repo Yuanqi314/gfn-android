@@ -38,7 +38,7 @@ import org.webrtc.SessionDescription
 import org.json.JSONObject
 import org.webrtc.VideoTrack
 
-/** v6.0.1: HEVC Main pre-answer preference + full negotiation evidence; Main10/HDR remain disabled. */
+/** v6.0.2: HEVC Main tier-only A/B before setRemoteDescription; Main10/HDR remain disabled. */
 class GfnWebRtcEngine(
     context: Context,
     private val listener: Listener,
@@ -411,7 +411,15 @@ class GfnWebRtcEngine(
         createExpectedDataChannels(pc, partialReliableThresholdMs, eventGeneration)
 
         val mediaIp = resolveMediaIp(currentSession)
-        val fixedOffer = mediaIp?.let { GfnSdpTools.rewriteOfferConnectionAddresses(offerSdp, it) } ?: offerSdp
+        val addressFixedOffer = mediaIp?.let { GfnSdpTools.rewriteOfferConnectionAddresses(offerSdp, it) } ?: offerSdp
+        val fixedOffer = if (selectedVideoCodec == VideoCodecPreference.Hevc) {
+            val tierAbRewrite = GfnSdpTools.rewriteFirstVideoHevcMainTierFlagForAb(addressFixedOffer)
+            GfnHevcCompatLog.tierFlagAbRewrite(eventGeneration, tierAbRewrite)
+            GfnHevcCompatLog.sdp(eventGeneration, "OFFER_TIER_AB", tierAbRewrite.sdp)
+            tierAbRewrite.sdp
+        } else {
+            addressFixedOffer
+        }
         pc.setRemoteDescription(
             setObserver(
                 onSuccess = {
@@ -826,7 +834,7 @@ class GfnWebRtcEngine(
     }
 
     /**
-     * v6.0.1 single-variable compatibility experiment. This runs only after the remote Offer has
+     * v6.0.2 single-variable compatibility experiment. This runs only after the remote Offer has
      * been applied (so Unified Plan has materialized the receive transceivers) and strictly before
      * createAnswer(). Failure is diagnostic-only: the existing raw-answer/H.264 fallback path must
      * remain available instead of turning a preference API error into a session failure.

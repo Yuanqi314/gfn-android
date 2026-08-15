@@ -1,0 +1,19 @@
+v6.0.2 HEVC Main Tier-Flag A/B — focused verifier output
+
+V602_TIER_AB_CALL_ORDER=PASS
+V602_SINGLE_FIELD_SOURCE_GUARD=PASS
+V602_HEVC_COMPAT_STATIC_GUARDS=PASS
+V602_HEVC_TIER_ONLY_SDP_FIXTURE=PASS
+TARGET=pt=117,profile=1,tier=0,level=153,tx=SRST,rtx=[118]
+GfnHevcCompat gen=7 phase=OFFER_TIER_AB_REWRITE applied=true from=1 to=0 candidates=[117] rewritten=[117]
+V602_HEVC_PREFERENCE_PLANNER=PASS
+V602_LOGCAT_PHASE_FIXTURE=PASS
+V602_HEVC_COMPAT_VERIFY=PASS
+
+V600_HEVC_VERIFY=PASS
+V602_WEBRTC_ENGINE_HEVC_COMPAT_API_SHAPED_COMPILE=PASS
+V540_AUDIO_VERIFY=PASS
+V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+
+No true-device GFN session was available in the container. The decisive next observation remains:
+  RAW_ANSWER hevcMain != empty after the tier-only treatment.
