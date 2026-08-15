@@ -2,6 +2,7 @@ package dev.gfn.android.settings
 
 import android.util.Log
 import dev.gfn.core.model.SubscriptionInfo
+import dev.gfn.stream.VideoCodecPreference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,8 @@ class GfnStreamSettingsController(
     fun setFps(fps: Int) = update("fps") { copy(fpsSelection = fps) }
 
     fun setMaxBitrateKbps(kbps: Int) = update("maxBitrate") { copy(maxBitrateKbps = kbps) }
+
+    fun setVideoCodec(codec: VideoCodecPreference) = update("videoCodec") { copy(videoCodec = codec) }
 
     fun setAudioChannels(channels: Int) = update("audioChannels") { copy(audioChannels = channels) }
 

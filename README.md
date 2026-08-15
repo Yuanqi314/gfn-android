@@ -1,8 +1,60 @@
-# GFN Android Lab · v5.4 Audio Foundation
+# GFN Android Lab · v6.0 HEVC Main / SDR8
 
-这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
+这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已经确认 H.264/1080p60、键鼠、Session keyboard layout、stream settings、same-session reconnect 主链以及 experimental 6ch 音频播放可工作。v6.0 在此稳定基线上只新增 **HEVC Main (`profile-id=1`) + SDR8**，H.264 继续作为同 Session fallback；Main10/HDR/AV1 不混入本轮。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
+
+## v6.0 本轮新增
+
+v6.0 按 CloudNow + OpenNOW 双参考仓库交叉取证，只吸收两边共同支持且适合当前 Android 架构的最小 HEVC 语义：
+
+```text
+Settings: H.264 / HEVC Main SDR8
+        ↓ immutable ResolvedLaunchProfile
+DefaultVideoDecoderFactory.supportedCodecs
++ actual GFN Offer
+        ↓
+explicit H265 profile-id=1
+        ↓ createAnswer
+actual Answer intersection
+        ↓
+HEVC Main or same-session H264 fallback
+```
+
+严格不启用：
+
+```text
+Main10/profile-id=2
+HDR10
+10-bit
+AV1
+120 FPS
+H265 tier/level forced rewrite
+```
+
+CloudMatch 视频请求字段保持 v5.4 byte-identical，codec 选择只进入 frozen stream profile + SDP/WebRTC，保证真机 A/B 只有一个新视频变量。
+
+验证入口：
+
+```text
+./verify-hevc.sh
+./verify-reconnect-engine.sh
+./verify-audio.sh
+./verify-stream-settings.sh
+./verify-keyboard-stable.sh
+./verify-gamepad.sh
+```
+
+详细见：
+
+```text
+docs/V6_0_HEVC_MAIN_SDR.md
+docs/V6_0_REFERENCE_ADOPTION.md
+docs/V6_0_TEST_GUIDE.md
+docs/REFERENCE_MATRIX.md
+```
+
+当前 HEVC 尚待真机裁决；有画面并不自动等于 HEVC 成功，必须同时确认 `Negotiated codec=Hevc`、Offer/Answer HEVC Main PT 非空且 `Codec fallback=false`。
 
 ## v5.4 本轮新增
 

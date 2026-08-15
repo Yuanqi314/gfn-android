@@ -201,6 +201,8 @@ data class SdpSummary(
     val answerPresent: Boolean = false,
     val videoCodecs: List<String> = emptyList(),
     val h264PayloadTypes: List<Int> = emptyList(),
+    val hevcPayloadTypes: List<Int> = emptyList(),
+    val hevcMainPayloadTypes: List<Int> = emptyList(),
     val iceUfragPresent: Boolean = false,
     val icePasswordPresent: Boolean = false,
     val dtlsFingerprintPresent: Boolean = false,
@@ -247,7 +249,7 @@ data class NvstSdpConfig(
     val partialReliableThresholdMs: Int = 300,
 )
 
-/** v5.4: H.264/SDR8 视频基线 + Stereo/multiopus 音频 Answer 变换。 */
+/** v6.0: H.264/HEVC Main SDR8 视频选择 + Stereo/multiopus 音频 Answer 变换。 */
 object GfnSdpTools {
     fun summarize(sdp: String, isOffer: Boolean): SdpSummary {
         val lines = lines(sdp)
@@ -270,11 +272,25 @@ object GfnSdpTools {
         val codecs = videoRtpMaps.mapNotNull { line ->
             line.substringAfter(' ', "").substringBefore('/').takeIf { it.isNotBlank() }
         }.distinct()
+        val videoFmtpByPt = firstVideoAttributeLines(sdp, "a=fmtp:").associate { line ->
+            val rest = line.removePrefix("a=fmtp:")
+            rest.substringBefore(' ') to rest.substringAfter(' ', "")
+        }
         val h264Pts = videoRtpMaps.mapNotNull { line ->
             val rest = line.removePrefix("a=rtpmap:")
             val pt = rest.substringBefore(' ').toIntOrNull() ?: return@mapNotNull null
-            val codec = rest.substringAfter(' ', "").substringBefore('/').uppercase()
+            val codec = normalizeVideoCodecName(rest.substringAfter(' ', "").substringBefore('/'))
             pt.takeIf { codec == "H264" }
+        }
+        val hevcPts = videoRtpMaps.mapNotNull { line ->
+            val rest = line.removePrefix("a=rtpmap:")
+            val ptText = rest.substringBefore(' ')
+            val pt = ptText.toIntOrNull() ?: return@mapNotNull null
+            val codec = normalizeVideoCodecName(rest.substringAfter(' ', "").substringBefore('/'))
+            pt.takeIf { codec == "H265" }
+        }
+        val hevcMainPts = hevcPts.filter { pt ->
+            videoFmtpByPt[pt.toString()]?.containsParameter("profile-id", "1") == true
         }
         val target = firstVideoTarget(sdp)
         val videoMid = target?.mid
@@ -284,6 +300,8 @@ object GfnSdpTools {
             answerPresent = !isOffer,
             videoCodecs = codecs,
             h264PayloadTypes = h264Pts,
+            hevcPayloadTypes = hevcPts,
+            hevcMainPayloadTypes = hevcMainPts,
             iceUfragPresent = lines.any { it.startsWith("a=ice-ufrag:") },
             icePasswordPresent = lines.any { it.startsWith("a=ice-pwd:") },
             dtlsFingerprintPresent = lines.any { it.startsWith("a=fingerprint:sha-256 ") },
@@ -293,36 +311,49 @@ object GfnSdpTools {
     }
 
     /**
-     * 只在 Answer 上做 codec 收敛：保留 H.264、其 RTX apt，以及 RED/ULPFEC/FLEXFEC。
-     * 不修改服务器 Offer，避免破坏 FEC/SSRC 关系。
+     * Converge the first video Answer section to one receive codec while retaining its RTX and
+     * repair payloads. The server Offer remains untouched. For v6.0 HEVC, profile-id=1 is required
+     * explicitly so Main10 is never pulled into the SDR8 experiment.
      */
-    fun preferH264InAnswer(sdp: String): String {
+    fun preferVideoCodecInAnswer(
+        sdp: String,
+        codec: String,
+        preferredHevcProfileId: Int? = null,
+    ): String {
         val separator = separator(sdp)
         val input = lines(sdp)
-        val h264Pts = linkedSetOf<String>()
+        val targetCodec = normalizeVideoCodecName(codec)
+        val rtpCodecByPt = linkedMapOf<String, String>()
+        val fmtpByPt = linkedMapOf<String, String>()
         val repairPts = linkedSetOf<String>()
 
-        input.forEach { line ->
-            if (!line.startsWith("a=rtpmap:")) return@forEach
+        firstVideoAttributeLines(sdp, "a=rtpmap:").forEach { line ->
             val rest = line.removePrefix("a=rtpmap:")
             val pt = rest.substringBefore(' ')
-            val codec = rest.substringAfter(' ', "").substringBefore('/').lowercase()
-            if (codec == "h264") h264Pts += pt
-            if (codec == "red" || codec == "ulpfec" || codec == "flexfec-03") repairPts += pt
+            val name = normalizeVideoCodecName(rest.substringAfter(' ', "").substringBefore('/'))
+            rtpCodecByPt[pt] = name
+            if (name == "RED" || name == "ULPFEC" || name == "FLEXFEC-03") repairPts += pt
         }
-        if (h264Pts.isEmpty()) return sdp
+        firstVideoAttributeLines(sdp, "a=fmtp:").forEach { line ->
+            val rest = line.removePrefix("a=fmtp:")
+            fmtpByPt[rest.substringBefore(' ')] = rest.substringAfter(' ', "")
+        }
+
+        var primaryPts = rtpCodecByPt.filterValues { it == targetCodec }.keys.toCollection(linkedSetOf())
+        if (targetCodec == "H265" && preferredHevcProfileId != null) {
+            primaryPts = primaryPts.filterTo(linkedSetOf()) { pt ->
+                fmtpByPt[pt]?.containsParameter("profile-id", preferredHevcProfileId.toString()) == true
+            }
+        }
+        if (primaryPts.isEmpty()) return sdp
 
         val allowed = linkedSetOf<String>().apply {
-            addAll(h264Pts)
+            addAll(primaryPts)
             addAll(repairPts)
         }
-        input.forEach { line ->
-            if (!line.startsWith("a=fmtp:")) return@forEach
-            val rest = line.removePrefix("a=fmtp:")
-            val pt = rest.substringBefore(' ')
-            val params = rest.substringAfter(' ', "")
+        fmtpByPt.forEach { (pt, params) ->
             val apt = Regex("(?:^|[;\\s])apt=(\\d+)").find(params)?.groupValues?.getOrNull(1)
-            if (apt != null && h264Pts.contains(apt)) allowed += pt
+            if (apt != null && primaryPts.contains(apt)) allowed += pt
         }
 
         val output = mutableListOf<String>()
@@ -348,6 +379,8 @@ object GfnSdpTools {
         }
         return output.joinToString(separator)
     }
+
+    fun preferH264InAnswer(sdp: String): String = preferVideoCodecInAnswer(sdp, "H264")
 
     /** Return codecs declared by the first game-audio m-line only. */
     fun firstAudioCodecs(sdp: String): List<AudioCodecDescription> {
@@ -679,6 +712,30 @@ object GfnSdpTools {
             "a=ri.enablePartiallyReliableTransferHid:0",
             "",
         ).joinToString("\r\n")
+    }
+
+    private fun firstVideoAttributeLines(sdp: String, prefix: String): List<String> {
+        val result = mutableListOf<String>()
+        var inFirstVideo = false
+        var seenVideo = false
+        for (line in lines(sdp)) {
+            if (line.startsWith("m=video") && !seenVideo) {
+                seenVideo = true
+                inFirstVideo = true
+                continue
+            }
+            if (line.startsWith("m=")) {
+                if (inFirstVideo) break
+                inFirstVideo = false
+            }
+            if (inFirstVideo && line.startsWith(prefix)) result += line
+        }
+        return result
+    }
+
+    private fun normalizeVideoCodecName(value: String): String = when (value.trim().uppercase()) {
+        "HEVC" -> "H265"
+        else -> value.trim().uppercase()
     }
 
     fun firstVideoTarget(sdp: String): VideoMediaTarget? {

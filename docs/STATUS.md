@@ -1,4 +1,4 @@
-# 当前状态 · v5.4 Audio Foundation
+# 当前状态 · v6.0 HEVC Main / SDR8
 
 ## 真机已确认
 
@@ -10,7 +10,7 @@ CloudMatch Create / Provision                  ✅
 Claim / RESUME                                 ✅
 GFN WebSocket / SDP / ICE                      ✅
 H.264 RTP / Decode / Surface                   ✅
-Audio 有声（旧 2ch 路径）                       ✅
+Audio playback                                 ✅
 Wheel direction                                ✅
 Fullscreen landscape / aspect fit              ✅
 control_channel Session End                    ✅
@@ -19,25 +19,28 @@ Cyberpunk 2077 keyboardLayout=en-US fix        ✅
 CS2 keyboard regression                        ✅
 Stream settings snapshot                       ✅
 1920x1080@60 H.264 / 2ch / 100 Mbps            ✅ 当前环境
+experimental 6ch mode audio playback           ✅ 当前环境
 same-session reconnect keeps Session ID        ✅
 ```
 
+`6ch mode audio playback ✅` 只表示开启 6ch 后串流音频可正常播放；**没有做离散 5.1 声道素材验证，因此不能标记为 native/discrete 5.1 verified。**
+
 ## v5.2.1 Reconnect 已知缺陷
 
-真机已确认：断网后自动重连界面中的 Session 没有变化，same-session recovery 主约束成立。
+真机已确认：断网后 recovery 保持同一个 Session ID。
 
-已知未修问题：
+仍保留独立 backlog：
 
 ```text
 第一次 reconnect → 可能持续黑屏
 再次断开 / reconnect → 可恢复画面
 ```
 
-按当前开发决定继续保留为独立 backlog，不混入 v5.4 Audio。
+用户已决定暂不处理；v6.0 不修改该视频 reconnect 生命周期。
 
 ## Keyboard soft-freeze
 
-生产语义保持：
+生产语义继续保持：
 
 ```text
 Windows VK
@@ -46,11 +49,9 @@ Windows VK
 + ordered input_channel_v1
 ```
 
-Cyberpunk 2077 的已验证修复继续是 Session `keyboardLayout=en-US`。v5.4 不修改键盘 packet semantics。
+Cyberpunk 2077 已验证修复是新 Session `keyboardLayout=en-US`。v6.0 不修改 keyboard packet semantics。
 
 ## v5.3 Gamepad
-
-状态：
 
 ```text
 IMPLEMENTED                          ✅
@@ -58,57 +59,100 @@ OFFLINE PACKET / CONTROLLER FIXTURE  ✅
 TRUE-DEVICE                          SKIPPED（当前没有可用手柄）
 ```
 
-这不是失败结论。后续获得手柄时可直接按 `docs/V5_3_TEST_GUIDE.md` 补测。
+这不是失败结论。
 
 ## v5.4 Audio
 
-### 2ch production path
+### 2ch
 
 ```text
-CloudMatch audioChannels=2
-        ↓
-GFN Offer / Opus
-        ↓
-Answer: Opus stereo=1（存在 Opus fmtp 时）
-        ↓
-JavaAudioDeviceModule.setUseStereoOutput(true)
-        ↓
-Android media route (USAGE_GAME / CONTENT_TYPE_MUSIC)
-        ↓
-ADM 2ch stereo configuration
+Opus stereo=1
++ JavaAudioDeviceModule.setUseStereoOutput(true)
 ```
 
-v5.4 修正了一个实际架构问题：旧 `JavaAudioDeviceModule` 没有启用 `setUseStereoOutput(true)`，因此不能把旧“有声”直接等价为真正 2ch native stereo。
-
-### 6ch experimental path
+### 6ch
 
 ```text
-PersistentStreamSettings.audioChannels=6
-        ↓ immutable ResolvedLaunchProfile
-CloudMatch audioMode / surroundAudioInfo = 6ch request
-        ↓
-GFN Offer 必须出现 multiopus/48000/6
-        ↓
-若 libwebrtc createAnswer 拒绝该 audio m-line：
-只重建第一条 game-audio section
-复用 Offer exact multiopus fmtp
-复用 Answer bundle transport
-        ↓
-setLocalDescription / server negotiation
-        ↓
-Android upstream Java ADM local playout = 2ch
+CloudMatch 6ch request
+→ GFN multiopus/48000/6
+→ Answer repair when required
+→ current Android ADM configured 2ch
 ```
 
-**边界：v5.4 的 6ch 是 multiopus negotiation / receive / 2ch-ADM probe，不是 native 5.1 输出。**
+真机结果：**开启 6ch 后音频播放正常。**
 
-当前 profile 明确区分：
+尚未验证：
 
 ```text
-audioChannels              = {2, 6}     # 可请求
-nativeAudioOutputChannels  = {2}        # 可原样输出
+discrete 5.1 channel separation
+native 6-channel Android playout
 ```
 
-如果要真正输出 5.1，需要后续独立实现自定义 Android AudioDeviceModule / PCM playout 路径，不能通过把 UI 写成“5.1”来伪装完成。
+## v6.0 HEVC Main / SDR8
+
+### 新增能力
+
+```text
+Video codec:
+  H.264 · SDR8（default / stable fallback）
+  HEVC Main · SDR8
+```
+
+唯一新增视频变量是 HEVC Main：
+
+```text
+profile-id=1
+CompatibilitySdr
+1920x1080@60
+```
+
+明确未启用：
+
+```text
+profile-id=2 / Main10
+10-bit
+HDR10
+AV1
+120 FPS
+H265 tier/level forced rewrite
+```
+
+### 决策链
+
+```text
+PersistentStreamSettings.videoCodec
+        ↓ resolve once
+ResolvedLaunchProfile.streamConfig.codec
+        ↓
+local DefaultVideoDecoderFactory capabilities
++ actual GFN Offer
+        ↓
+H264 or explicit H265 Main(profile-id=1)
+        ↓ createAnswer
+actual Answer intersection
+        ↓
+selected codec
+or same-session H264 fallback
+```
+
+HEVC 成功必须由 diagnostics 同时确认：
+
+```text
+requested=Hevc
+local codecs includes H265/HEVC
+offer HEVC Main PT != empty
+answer HEVC Main PT != empty
+negotiated=Hevc
+fallback=false
+firstRtp=true
+firstFrame=true
+```
+
+“有画面”本身不是 HEVC 成功证据，因为 v6.0 允许 H.264 fallback。
+
+### CloudMatch 边界
+
+v6.0 没有修改 v5.4 的 CloudMatch color/requestedStreamingFeatures 语义。codec preference 只在 Settings snapshot + SDP/WebRTC 层处理，避免同时改变第二个协议变量。
 
 ## Stream Settings snapshot
 
@@ -122,22 +166,20 @@ ResolvedLaunchProfile
 CREATE / persist / CLAIM / WebRTC / Reconnect
 ```
 
-Audio 2ch/6ch 同样属于 snapshot；活动 Session 中改设置只影响下一新 Session。
+活动 Session 中修改 codec 只影响下一次新 Session。
 
 ## 后续顺序
 
 ```text
-v5.4 Audio true-device stereo / 6ch probe（可按设备条件补测）
+v6.0 HEVC Main SDR8 true-device
         ↓
-v6.0 HEVC Main SDR8
-        ↓
-v6.1 Main10 SDR10
+v6.1 Main10 SDR（不启 HDR）
         ↓
 v6.2 HDR10
 ```
 
-Reconnect 首次黑屏与 v5.3 Gamepad 真机验证均继续作为独立 backlog，不阻塞 v6.0。
+Reconnect 首次黑屏、v5.3 Gamepad true-device、离散 5.1 分离验证继续作为独立 backlog，不阻塞 HEVC 主线。
 
 ## 构建边界
 
-纯 Kotlin SDP/settings fixtures、Android/WebRTC API-shaped compile、keyboard/gamepad/reconnect regression 可在当前容器验证。完整 Android Gradle build 仍受 Gradle 9.5.0 未缓存且 `services.gradle.org` DNS 不可用限制；不能声称最终 APK 全工程编译通过。
+当前容器可执行 pure Kotlin SDP/policy/settings fixtures、WebRTC API-shaped compile 与既有 keyboard/gamepad/audio regressions。完整 Android Gradle build 仍受 Gradle 9.5.0 wrapper 缓存/网络条件限制；未真正进入 Android Gradle compile 前不能声称 APK 全工程编译通过。

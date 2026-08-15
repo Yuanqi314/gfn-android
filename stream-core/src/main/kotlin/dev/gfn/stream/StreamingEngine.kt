@@ -3,7 +3,7 @@ package dev.gfn.stream
 import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionInfo
 
-/** v5.0 只允许 H.264；HEVC / AV1 保留枚举但 Android v5 engine 会拒绝它们。 */
+/** Video codec intent. v6.0 enables HEVC Main for SDR8 while AV1 remains unavailable. */
 enum class VideoCodecPreference {
     H264,
     Hevc,
@@ -78,6 +78,20 @@ object StreamCapabilityProfiles {
         audioChannels = setOf(2, 6),
         nativeAudioOutputChannels = setOf(2),
     )
+
+    /**
+     * v6.0 adds HEVC Main as an SDR8 receive codec while preserving H.264 as the stable fallback.
+     * Main10/HDR are deliberately excluded so codec negotiation is the only new video variable.
+     */
+    val V60_ANDROID_WEBRTC = StreamEngineCapabilities(
+        resolutions = setOf(StreamResolution(1920, 1080)),
+        frameRates = setOf(60),
+        maxBitrateKbpsRange = 5_000..100_000,
+        codecs = setOf(VideoCodecPreference.H264, VideoCodecPreference.Hevc),
+        colorModes = setOf(RequestedColorMode.CompatibilitySdr),
+        audioChannels = setOf(2, 6),
+        nativeAudioOutputChannels = setOf(2),
+    )
 }
 
 sealed interface StreamState {
@@ -112,6 +126,8 @@ data class SdpDiagnostics(
     val answerPresent: Boolean = false,
     val videoCodecs: List<String> = emptyList(),
     val h264PayloadTypes: List<Int> = emptyList(),
+    val hevcPayloadTypes: List<Int> = emptyList(),
+    val hevcMainPayloadTypes: List<Int> = emptyList(),
     val iceUfragPresent: Boolean = false,
     val icePasswordPresent: Boolean = false,
     val dtlsFingerprintPresent: Boolean = false,
@@ -222,6 +238,11 @@ data class ControlDiagnostics(
 )
 
 data class VideoDiagnostics(
+    val requestedCodec: String = "H264",
+    val negotiatedCodec: String? = null,
+    val localDecoderCodecs: List<String> = emptyList(),
+    val codecFallbackUsed: Boolean = false,
+    val codecFallbackReason: String? = null,
     val remoteVideoTrackPresent: Boolean = false,
     val firstRtpPacketReceived: Boolean = false,
     val firstFrameRendered: Boolean = false,

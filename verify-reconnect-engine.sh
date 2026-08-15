@@ -118,7 +118,10 @@ import java.nio.ByteBuffer
 import org.webrtc.DataChannel
 import org.webrtc.PeerConnectionFactory
 
-object GfnWebRtcRuntime { fun factory(context: Context): PeerConnectionFactory = PeerConnectionFactory() }
+object GfnWebRtcRuntime {
+    fun factory(context: Context): PeerConnectionFactory = PeerConnectionFactory()
+    fun decoderCodecNames(context: Context): Set<String> = setOf("H264", "H265")
+}
 data class GfnAudioRouteSnapshot(val likelyMaxChannels: Int? = 2, val summary: String = "stub")
 object GfnAndroidAudioRouteProbe { fun detect(context: Context): GfnAudioRouteSnapshot = GfnAudioRouteSnapshot() }
 
@@ -300,6 +303,7 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$ROOT/stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt" \
   "$ROOT/stream-signaling/src/main/kotlin/dev/gfn/signaling/GfnSignalingProtocol.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnGamepadInputController.kt" \
+  "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoCodecNegotiationPolicy.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt" \
   -d "$BUILD/check.jar" > "$BUILD/compile.log" 2>&1
 

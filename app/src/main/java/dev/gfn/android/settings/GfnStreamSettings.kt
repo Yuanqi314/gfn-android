@@ -26,6 +26,11 @@ data class StreamAudioChoice(
     val label: String,
 )
 
+data class StreamCodecChoice(
+    val codec: VideoCodecPreference,
+    val label: String,
+)
+
 /**
  * Persistent user intent. Values here are never read directly by the live WebRTC engine.
  * A new Session resolves this object exactly once into [ResolvedLaunchProfile].
@@ -35,6 +40,7 @@ data class PersistentStreamSettings(
     val resolutionSelection: String = GfnStreamSettingsCatalog.RESOLUTION_AUTO,
     val fpsSelection: Int = GfnStreamSettingsCatalog.FPS_AUTO,
     val maxBitrateKbps: Int = GfnStreamSettingsCatalog.DEFAULT_MAX_BITRATE_KBPS,
+    val videoCodec: VideoCodecPreference = VideoCodecPreference.H264,
     val audioChannels: Int = GfnStreamSettingsCatalog.DEFAULT_AUDIO_CHANNELS,
 )
 
@@ -47,7 +53,7 @@ data class ResolvedLaunchProfile(
 ) {
     val summary: String
         get() = "${streamConfig.width}x${streamConfig.height}@${streamConfig.fps} " +
-            "${streamConfig.maxBitrateKbps / 1_000}Mbps audio=${streamConfig.audioChannels}ch " +
+            "${streamConfig.maxBitrateKbps / 1_000}Mbps codec=${streamConfig.codec} audio=${streamConfig.audioChannels}ch " +
             "keyboard=$keyboardLayout language=$gameLanguage"
 }
 
@@ -60,7 +66,7 @@ object GfnStreamSettingsCatalog {
     const val DEFAULT_AUDIO_CHANNELS = 2
     const val BITRATE_STEP_KBPS = 5_000
 
-    private val capabilities = StreamCapabilityProfiles.V54_ANDROID_WEBRTC
+    private val capabilities = StreamCapabilityProfiles.V60_ANDROID_WEBRTC
 
     val resolutionChoices: List<StreamResolutionChoice> = buildList {
         add(StreamResolutionChoice(RESOLUTION_AUTO, "自动（按账号能力）", automatic = true))
@@ -82,6 +88,11 @@ object GfnStreamSettingsCatalog {
         add(StreamFpsChoice(FPS_AUTO, "自动（按当前引擎）", automatic = true))
         capabilities.frameRates.sortedDescending().forEach { add(StreamFpsChoice(it, "$it FPS")) }
     }
+
+    val codecChoices: List<StreamCodecChoice> = listOf(
+        StreamCodecChoice(VideoCodecPreference.H264, "H.264 · SDR8（稳定 fallback）"),
+        StreamCodecChoice(VideoCodecPreference.Hevc, "HEVC Main · SDR8"),
+    ).filter { it.codec in capabilities.codecs }
 
     val audioChoices: List<StreamAudioChoice> =
         capabilities.audioChannels.sorted().map { channels ->
@@ -105,6 +116,7 @@ object GfnStreamSettingsCatalog {
             resolutionSelection = normalizeResolution(settings.resolutionSelection),
             fpsSelection = normalizeFps(settings.fpsSelection),
             maxBitrateKbps = normalizeBitrate(settings.maxBitrateKbps),
+            videoCodec = normalizeVideoCodec(settings.videoCodec),
             audioChannels = normalizeAudio(settings.audioChannels),
         )
 
@@ -113,6 +125,9 @@ object GfnStreamSettingsCatalog {
 
     fun normalizeFps(value: Int): Int =
         value.takeIf { candidate -> fpsChoices.any { it.fps == candidate } } ?: FPS_AUTO
+
+    fun normalizeVideoCodec(value: VideoCodecPreference): VideoCodecPreference =
+        value.takeIf { candidate -> codecChoices.any { it.codec == candidate } } ?: VideoCodecPreference.H264
 
     fun normalizeAudio(value: Int): Int =
         value.takeIf { candidate -> audioChoices.any { it.channels == candidate } } ?: DEFAULT_AUDIO_CHANNELS
@@ -125,7 +140,7 @@ object GfnStreamSettingsCatalog {
 }
 
 object GfnStreamSettingsResolver {
-    private val capabilities = StreamCapabilityProfiles.V54_ANDROID_WEBRTC
+    private val capabilities = StreamCapabilityProfiles.V60_ANDROID_WEBRTC
 
     fun resolve(
         persistent: PersistentStreamSettings,
@@ -150,7 +165,7 @@ object GfnStreamSettingsResolver {
         ) {
             throw StreamProfileResolutionException(
                 "账号 entitlement 未包含 ${resolution.width}x${resolution.height}@$fps；" +
-                    "v5.4 当前 Android WebRTC 引擎只开放已验证的 1080p60。",
+                    "v6.0 当前 Android WebRTC 引擎只开放 1080p60 SDR8。",
             )
         }
 
@@ -159,7 +174,7 @@ object GfnStreamSettingsResolver {
             height = resolution.height,
             fps = fps,
             maxBitrateKbps = settings.maxBitrateKbps,
-            codec = VideoCodecPreference.H264,
+            codec = settings.videoCodec,
             colorMode = RequestedColorMode.CompatibilitySdr,
             audioChannels = settings.audioChannels,
         )
@@ -193,7 +208,7 @@ object GfnStreamSettingsResolver {
                     capabilities.frameRates.any { fps -> it.fps >= fps }
             }
         } ?: throw StreamProfileResolutionException(
-            "账号 entitlement 与 v5.2 当前引擎能力没有交集；当前仅开放 1920x1080@60。",
+            "账号 entitlement 与 v6.0 当前引擎能力没有交集；当前仅开放 1920x1080@60。",
         )
     }
 

@@ -1,6 +1,7 @@
 package dev.gfn.android.settings
 
 import android.content.Context
+import dev.gfn.stream.VideoCodecPreference
 
 /** Persistent next-Session stream settings. Existing v5.1.8 keyboard preference is migrated in-place. */
 class AndroidStreamSettingsStore(context: Context) {
@@ -17,6 +18,9 @@ class AndroidStreamSettingsStore(context: Context) {
                 KEY_MAX_BITRATE,
                 GfnStreamSettingsCatalog.DEFAULT_MAX_BITRATE_KBPS,
             ),
+            videoCodec = prefs.getString(KEY_VIDEO_CODEC, null)?.let { raw ->
+                runCatching { VideoCodecPreference.valueOf(raw) }.getOrNull()
+            } ?: VideoCodecPreference.H264,
             audioChannels = prefs.getInt(KEY_AUDIO_CHANNELS, GfnStreamSettingsCatalog.DEFAULT_AUDIO_CHANNELS),
         ),
     )
@@ -28,6 +32,7 @@ class AndroidStreamSettingsStore(context: Context) {
             .putString(KEY_RESOLUTION, normalized.resolutionSelection)
             .putInt(KEY_FPS, normalized.fpsSelection)
             .putInt(KEY_MAX_BITRATE, normalized.maxBitrateKbps)
+            .putString(KEY_VIDEO_CODEC, normalized.videoCodec.name)
             .putInt(KEY_AUDIO_CHANNELS, normalized.audioChannels)
             .apply()
         return normalized
@@ -40,6 +45,7 @@ class AndroidStreamSettingsStore(context: Context) {
         const val KEY_RESOLUTION = "resolutionSelection"
         const val KEY_FPS = "fpsSelection"
         const val KEY_MAX_BITRATE = "maxBitrateKbps"
+        const val KEY_VIDEO_CODEC = "videoCodec"
         const val KEY_AUDIO_CHANNELS = "audioChannels"
     }
 }

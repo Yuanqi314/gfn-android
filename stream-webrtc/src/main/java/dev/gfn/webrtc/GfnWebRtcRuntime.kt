@@ -15,6 +15,7 @@ internal object GfnWebRtcRuntime {
     private val eglBase: EglBase by lazy { EglBase.create() }
     private var initialized = false
     private var factory: PeerConnectionFactory? = null
+    private var decoderCodecNames: Set<String> = emptySet()
 
     fun eglContext(): EglBase.Context = eglBase.eglBaseContext
 
@@ -44,13 +45,17 @@ internal object GfnWebRtcRuntime {
                     .build(),
             )
             .createAudioDeviceModule()
+        val videoDecoderFactory = DefaultVideoDecoderFactory(eglContext())
+        decoderCodecNames = videoDecoderFactory.supportedCodecs
+            .map { it.name.uppercase() }
+            .toSortedSet()
         val created = try {
             PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm)
                 .setVideoEncoderFactory(
                     DefaultVideoEncoderFactory(eglContext(), true, false),
                 )
-                .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglContext()))
+                .setVideoDecoderFactory(videoDecoderFactory)
                 .createPeerConnectionFactory()
         } finally {
             // PeerConnectionFactory 在创建时取得 ADM 的 native 引用；调用方释放自己的引用。
@@ -58,6 +63,11 @@ internal object GfnWebRtcRuntime {
         }
         factory = created
         created
+    }
+
+    fun decoderCodecNames(context: Context): Set<String> {
+        factory(context)
+        return synchronized(lock) { decoderCodecNames.toSet() }
     }
 
     /**

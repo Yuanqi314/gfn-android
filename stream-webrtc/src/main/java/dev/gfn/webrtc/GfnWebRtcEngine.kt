@@ -19,6 +19,7 @@ import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
 import dev.gfn.stream.StreamingEngine
 import dev.gfn.stream.VideoDiagnostics
+import dev.gfn.stream.VideoCodecPreference
 import java.net.URI
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
@@ -37,7 +38,7 @@ import org.webrtc.SessionDescription
 import org.json.JSONObject
 import org.webrtc.VideoTrack
 
-/** v5.4: Claimed Session -> GFN WSS -> SDP -> ICE -> H.264 + audio -> SurfaceViewRenderer。 */
+/** v6.0: Claimed Session -> GFN WSS -> SDP -> ICE -> H.264/HEVC Main SDR8 + audio -> SurfaceViewRenderer。 */
 class GfnWebRtcEngine(
     context: Context,
     private val listener: Listener,
@@ -51,6 +52,7 @@ class GfnWebRtcEngine(
 
     private val appContext: Context = context.applicationContext
     private val factory: PeerConnectionFactory = GfnWebRtcRuntime.factory(appContext)
+    private val localDecoderCodecs: Set<String> = GfnWebRtcRuntime.decoderCodecNames(appContext)
     private val lock = Any()
     private val generation = AtomicLong(0)
 
@@ -79,6 +81,8 @@ class GfnWebRtcEngine(
     private var inputController: GfnKeyboardMouseInputController? = null
     private var gamepadController: GfnGamepadInputController? = null
     private var partialReliableThresholdMs = 300
+    private var effectiveVideoCodec: VideoCodecPreference = VideoCodecPreference.H264
+    private var videoCodecFallbackReason: String? = null
     private var serverEnded = false
 
     override fun connect(session: SessionInfo, config: StreamConfig) {
@@ -113,6 +117,8 @@ class GfnWebRtcEngine(
             pendingLocalIce.clear()
             observedReceiverIds.clear()
             partialReliableThresholdMs = 300
+            effectiveVideoCodec = config.codec
+            videoCodecFallbackReason = null
             serverEnded = false
             controlDataChannel = null
             diagnostics = StreamDiagnostics(
@@ -141,6 +147,11 @@ class GfnWebRtcEngine(
                     } else {
                         null
                     },
+                ),
+                video = VideoDiagnostics(
+                    requestedCodec = config.codec.name,
+                    localDecoderCodecs = localDecoderCodecs.sorted(),
+                    decoderPath = decoderPathFor(config.codec),
                 ),
             )
             state = StreamState.OpeningSignaling
@@ -283,7 +294,7 @@ class GfnWebRtcEngine(
     private fun validate(session: SessionInfo, config: StreamConfig): String? = when {
         !session.isReadyStatus -> "v5 只接受已 Ready/Claimed 的 Session（status=${session.status}）。"
         session.signalingUrl.isNullOrBlank() -> "Claimed Session 缺少 signalingUrl。"
-        else -> StreamCapabilityProfiles.V54_ANDROID_WEBRTC.rejectionReason(config)
+        else -> StreamCapabilityProfiles.V60_ANDROID_WEBRTC.rejectionReason(config)
     }
 
     fun unbindVideoOutput(output: GfnVideoSurfaceView) {
@@ -356,23 +367,23 @@ class GfnWebRtcEngine(
                     offerPresent = true,
                     videoCodecs = offerSummary.videoCodecs,
                     h264PayloadTypes = offerSummary.h264PayloadTypes,
+                    hevcPayloadTypes = offerSummary.hevcPayloadTypes,
+                    hevcMainPayloadTypes = offerSummary.hevcMainPayloadTypes,
                     iceUfragPresent = offerSummary.iceUfragPresent,
                     icePasswordPresent = offerSummary.icePasswordPresent,
                     dtlsFingerprintPresent = offerSummary.dtlsFingerprintPresent,
                 ),
             )
         }
-        if (offerSummary.h264PayloadTypes.isEmpty()) {
-            fail("GFN Offer 未包含 H.264 payload type；v5.4 不允许回退 HEVC/AV1。")
-            return
-        }
+        val selectedVideoCodec = selectVideoCodecForOffer(offerSummary) ?: return
+        synchronized(lock) { effectiveVideoCodec = selectedVideoCodec }
         if (config.audioChannels >= 6 && !surroundOfferPresent) {
             fail("已请求 5.1/6ch，但 GFN Offer 未包含 multiopus/6；停止本次实验性 surround 连接。")
             return
         }
         synchronized(lock) {
             if (peerConnection != null) {
-                fail("v5.4 收到重复 Offer；当前版本不做 renegotiation。")
+                fail("v6.0 收到重复 Offer；当前版本不做 renegotiation。")
                 return
             }
         }
@@ -757,14 +768,82 @@ class GfnWebRtcEngine(
         listener.onTransportNeedsReconnect(sessionId, source, immediate)
     }
 
+    private fun decoderPathFor(codec: VideoCodecPreference): String = when (codec) {
+        VideoCodecPreference.H264 ->
+            "libwebrtc DefaultVideoDecoderFactory -> H264（具体硬件/软件 decoder 待真机确认）"
+        VideoCodecPreference.Hevc ->
+            "libwebrtc DefaultVideoDecoderFactory -> H265（实际 decoder 名称及硬件/软件路径待真机确认）"
+        VideoCodecPreference.Av1 ->
+            "AV1（v6.0 未启用）"
+    }
+
+    private fun selectVideoCodecForOffer(offerSummary: dev.gfn.signaling.SdpSummary): VideoCodecPreference? {
+        val decision = GfnVideoCodecNegotiationPolicy.selectForOffer(
+            requested = config.codec,
+            localDecoderCodecs = localDecoderCodecs,
+            h264Available = offerSummary.h264PayloadTypes.isNotEmpty(),
+            hevcMainAvailable = offerSummary.hevcMainPayloadTypes.isNotEmpty(),
+        ).getOrElse { error ->
+            fail(error.message ?: "无法选择视频 codec。")
+            return null
+        }
+        videoCodecFallbackReason = decision.fallbackReason
+        updateVideo {
+            it.copy(
+                negotiatedCodec = decision.codec.name,
+                localDecoderCodecs = localDecoderCodecs.sorted(),
+                codecFallbackUsed = decision.fallbackReason != null,
+                codecFallbackReason = decision.fallbackReason,
+                decoderPath = decoderPathFor(decision.codec),
+            )
+        }
+        return decision.codec
+    }
+
+    private fun selectVideoCodecInAnswer(rawAnswer: String): String? {
+        val selected = synchronized(lock) { effectiveVideoCodec }
+        val hevcCandidate = if (selected == VideoCodecPreference.Hevc) {
+            GfnSdpTools.preferVideoCodecInAnswer(
+                rawAnswer,
+                codec = "H265",
+                preferredHevcProfileId = 1,
+            )
+        } else {
+            rawAnswer
+        }
+        val hevcSummary = GfnSdpTools.summarize(hevcCandidate, isOffer = false)
+        val h264Candidate = GfnSdpTools.preferVideoCodecInAnswer(rawAnswer, codec = "H264")
+        val h264Summary = GfnSdpTools.summarize(h264Candidate, isOffer = false)
+        val decision = GfnVideoCodecNegotiationPolicy.selectAfterAnswer(
+            selected = selected,
+            h264Available = h264Summary.h264PayloadTypes.isNotEmpty(),
+            hevcMainAvailable = hevcSummary.hevcMainPayloadTypes.isNotEmpty(),
+        ).getOrElse { error ->
+            fail(error.message ?: "Answer 未形成可用视频 codec 交集。")
+            return null
+        }
+        if (decision.codec != selected) synchronized(lock) { effectiveVideoCodec = decision.codec }
+        if (decision.fallbackReason != null) videoCodecFallbackReason = decision.fallbackReason
+        updateVideo {
+            it.copy(
+                negotiatedCodec = decision.codec.name,
+                localDecoderCodecs = localDecoderCodecs.sorted(),
+                codecFallbackUsed = videoCodecFallbackReason != null,
+                codecFallbackReason = videoCodecFallbackReason,
+                decoderPath = decoderPathFor(decision.codec),
+            )
+        }
+        return if (decision.codec == VideoCodecPreference.Hevc) hevcCandidate else h264Candidate
+    }
+
     private fun createAnswer(pc: PeerConnection, offerSdp: String, eventGeneration: Long) {
         pc.createAnswer(
             object : SdpObserver {
                 override fun onCreateSuccess(description: SessionDescription) {
                     if (generation.get() != eventGeneration) return
-                    val h264Answer = GfnSdpTools.preferH264InAnswer(description.description)
+                    val videoAnswer = selectVideoCodecInAnswer(description.description) ?: return
                     val audioMunge = GfnSdpTools.mungeAudioAnswer(
-                        answer = h264Answer,
+                        answer = videoAnswer,
                         offer = offerSdp,
                         requestedChannels = config.audioChannels,
                     )
@@ -804,9 +883,24 @@ class GfnWebRtcEngine(
                             limitation = audioMunge.limitation ?: current.limitation,
                         )
                     }
-                    if (answerSummary.h264PayloadTypes.isEmpty()) {
-                        fail("生成的 Answer 未保留 H.264；停止连接。")
+                    val finalCodec = synchronized(lock) { effectiveVideoCodec }
+                    val finalCodecAccepted = when (finalCodec) {
+                        VideoCodecPreference.H264 -> answerSummary.h264PayloadTypes.isNotEmpty()
+                        VideoCodecPreference.Hevc -> answerSummary.hevcMainPayloadTypes.isNotEmpty()
+                        VideoCodecPreference.Av1 -> false
+                    }
+                    if (!finalCodecAccepted) {
+                        fail("生成的 Answer 未保留 ${finalCodec.name} 可用 payload；停止连接。")
                         return
+                    }
+                    updateVideo { current ->
+                        current.copy(
+                            negotiatedCodec = finalCodec.name,
+                            localDecoderCodecs = localDecoderCodecs.sorted(),
+                            codecFallbackUsed = videoCodecFallbackReason != null,
+                            codecFallbackReason = videoCodecFallbackReason,
+                            decoderPath = decoderPathFor(finalCodec),
+                        )
                     }
                     updateDiagnostics {
                         it.copy(
@@ -814,6 +908,8 @@ class GfnWebRtcEngine(
                                 answerPresent = true,
                                 videoCodecs = answerSummary.videoCodecs,
                                 h264PayloadTypes = answerSummary.h264PayloadTypes,
+                                hevcPayloadTypes = answerSummary.hevcPayloadTypes,
+                                hevcMainPayloadTypes = answerSummary.hevcMainPayloadTypes,
                                 iceUfragPresent = answerSummary.iceUfragPresent,
                                 icePasswordPresent = answerSummary.icePasswordPresent,
                                 dtlsFingerprintPresent = answerSummary.dtlsFingerprintPresent,
@@ -1028,6 +1124,8 @@ class GfnWebRtcEngine(
             pendingLocalIce.clear()
             observedReceiverIds.clear()
             partialReliableThresholdMs = 300
+            effectiveVideoCodec = VideoCodecPreference.H264
+            videoCodecFallbackReason = null
         }
         if (oldTrack != null && oldOutput != null) runCatching {
             oldTrack.removeSink(oldOutput)

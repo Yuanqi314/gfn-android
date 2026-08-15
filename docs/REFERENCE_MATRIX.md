@@ -38,7 +38,7 @@ v5.1.9 已完成 Cyberpunk 2077 + CS2 回归，Keyboard packet semantics 进入 
 | Resolution setting | Yes | Yes | Auto + 当前 1920x1080 | Resolver fixture；默认路径既有真机 |
 | FPS setting | Yes | Yes | Auto + 当前 60 FPS | Resolver fixture；默认路径既有真机 |
 | Max bitrate setting | Yes | Yes | 5–100 Mbps client guard, 20 Mbps default | 100 Mbps 当前真机环境通过；不外推为服务端全局上限 |
-| Audio mode setting | Yes | stereo-focused | 2ch native + 6ch experimental request | v5.4 fixture；6ch true-device 未验证 |
+| Audio mode setting | Yes | stereo-focused | 2ch native + 6ch experimental request | v5.4 fixture；6ch 模式音频播放真机正常，离散 5.1 未验证 |
 | Codec choice exposed | Yes | Yes | **No**，当前固定 H.264 | 保守冻结 |
 | Main10/HDR exposed | implementation-dependent | Yes | **No** | 后续版本单独取证 |
 | Immutable launch snapshot | settings copied into session flow | settings passed through session flow | `ResolvedLaunchProfile` | Resolver + persistence fixtures |
@@ -168,7 +168,7 @@ v5.3 intentionally does not enable type13 rumble/haptics or the partially-reliab
 | rejected multiopus answer repair | rebuilds game-audio section | no equivalent path found | rebuild first game-audio only; reuse Offer fmtp + Answer transport/BUNDLE | SDP fixture |
 | exact 5.1 channel mapping | Offer-driven | n/a | Offer-driven; fixture uses `0,4,1,2,3,5` | fixture only |
 | native physical 5.1 playout | custom multichannel audio device | not established | **No**; upstream Android Java ADM configured 2ch | explicit capability guard |
-| 6ch output label | native when route supports it | n/a | **experimental negotiation/2ch-ADM probe** | UI/static guard |
+| 6ch output label | native when route supports it | n/a | **experimental negotiation/2ch-ADM probe** | UI/static guard + true-device audio playback; discrete 5.1 unverified |
 
 ### v5.4 evidence boundary
 
@@ -185,12 +185,49 @@ OpenNOW is useful as a second witness for Opus `stereo=1`/audio-bandwidth Answer
 
 ---
 
-## HEVC — v6.0 placeholder
+## HEVC — v6.0
 
-| Feature | CloudNow | OpenNOW | gfn-android | Verified |
+| Feature | CloudNow | OpenNOW | gfn-android v6.0 | Verified |
 |---|---|---|---|---|
-| codec request | TODO | TODO | H.264 only | - |
-| Offer detection | TODO | TODO | H.264 path | - |
-| HEVC preference | TODO | TODO | TODO | - |
-| H.264 fallback | TODO | TODO | current baseline | - |
-| decoder selection | TODO | TODO | libwebrtc H.264 | - |
+| HEVC/H265 user selection | Yes | Yes | H.264 / HEVC Main | settings fixture |
+| HEVC with SDR8 | Yes | Yes (`8bit_420`) | `CompatibilitySdr` only | capability fixture/static guard |
+| Main profile preference | profile-id=1 for SDR | profile-id=1 compatibility preference | **explicit profile-id=1 required** | SDP fixture |
+| Main10/profile-id=2 | custom factory/decoder path exists | separate 10-bit color modes | **not exposed** | static guard |
+| Local decoder capability | decoder factory capability | receiver codec capabilities | `DefaultVideoDecoderFactory.supportedCodecs` | API-shaped compile/static guard |
+| Offer inspection | codec/PT parsing | codec/PT parsing | H264 / HEVC / explicit HEVC Main PT diagnostics | SDP fixture |
+| Answer filtering | preferred codec + RTX | codec preference + fallback | H264 or H265 Main + linked RTX + legacy repair PT | SDP fixture |
+| H.264 fallback | Yes | Yes | same Session, explicit reason | policy fixture |
+| HEVC tier/level rewrite | safety rewrite exists | helper exists | **not adopted in v6.0** | deliberate scope |
+| Codec encoded into CloudMatch JSON | No requirement | no requirement adopted | **No change from v5.4** | v5.4-v6.0 byte comparison |
+| AV1 | separate support | supported | **not exposed** | static guard |
+
+### v6.0 reference boundary
+
+CloudNow and OpenNOW agree on the important architecture boundary: H.265 codec selection is separable from HDR/Main10, and local receive capability plus the actual SDP intersection must decide whether H.265 can be used. gfn-android adopts that minimum common evidence.
+
+Not adopted yet:
+
+```text
+Main10/profile-id=2
+HDR metadata / HDR render path
+AV1
+forced H265 tier/level rewrite
+custom H265 decoder
+```
+
+The current H.264 production CloudMatch request remains byte-identical to v5.4. Codec selection is intentionally isolated to the frozen stream profile and SDP/WebRTC path so the v6.0 true-device test has one new video variable.
+
+### v6.0 true-device success boundary
+
+```text
+Requested codec      = Hevc
+Local decoder codecs contains H265/HEVC
+Offer HEVC Main PT   != empty
+Answer HEVC Main PT  != empty
+Negotiated codec     = Hevc
+Codec fallback       = false
+First RTP            = true
+First frame          = true
+```
+
+If video renders while `Negotiated codec=H264` or `Codec fallback=true`, that is a successful fallback test, not a successful HEVC test.

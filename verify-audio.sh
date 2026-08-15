@@ -228,7 +228,8 @@ KT
 cat > "$BUILD/runtime/WebRtc.kt" <<'KT'
 package org.webrtc
 class EglBase { val eglBaseContext: Context = Context(); class Context; companion object { fun create()=EglBase() } }
-class DefaultVideoDecoderFactory(c:EglBase.Context)
+class VideoCodecInfo(val name:String)
+class DefaultVideoDecoderFactory(c:EglBase.Context) { val supportedCodecs: Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"), VideoCodecInfo("H265")) }
 class DefaultVideoEncoderFactory(c:EglBase.Context, a:Boolean, b:Boolean)
 class PeerConnectionFactory {
     class InitializationOptions { companion object { fun builder(c:android.content.Context)=Builder() }; class Builder { fun setEnableInternalTracer(v:Boolean)=this; fun createInitializationOptions()=InitializationOptions() } }

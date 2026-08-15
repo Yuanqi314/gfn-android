@@ -117,3 +117,17 @@ Dolby / spatial audio
 microphone
 HEVC / Main10 / HDR
 ```
+
+## 8. 后续真机结果
+
+在 v6.0 开发前的真机测试中，用户开启 `6ch` 后确认**音频可以正常播放**。
+
+这将 v5.4 状态更新为：
+
+```text
+multiopus/6 request + session playback       TRUE-DEVICE WORKING
+physical discrete 5.1 channel separation    NOT VERIFIED
+native Android 6-channel output             NOT CLAIMED
+```
+
+因此后续版本可以继续保留 6ch 选择，但任何 UI/文档都不得把“播放正常”改写为“离散 5.1 已验证”。

@@ -229,6 +229,7 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
                         onResolutionSelected = streamSettingsController::setResolution,
                         onFpsSelected = streamSettingsController::setFps,
                         onMaxBitrateSelected = streamSettingsController::setMaxBitrateKbps,
+                        onVideoCodecSelected = streamSettingsController::setVideoCodec,
                         onAudioChannelsSelected = streamSettingsController::setAudioChannels,
                         onToggleTheme = { darkTheme = !darkTheme },
                     )
@@ -259,7 +260,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.4 Audio Foundation",
+                "独立 Android GFN 客户端 · v6.0 HEVC Main SDR8",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -604,7 +605,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5.4 Audio 继续使用不可变 ResolvedLaunchProfile；键盘 packet 语义保持 v5.1.9 soft-freeze，v5.3 Gamepad 真机验证因无手柄暂跳过。")
+            Text("v6.0 HEVC Main SDR8 继续使用不可变 ResolvedLaunchProfile；H.264 保持 fallback，键盘 packet 语义保持 v5.1.9 soft-freeze。")
         }
 
         if (resumeRecord != null) {
@@ -915,9 +916,13 @@ private fun DiagnosticsScreen(
                     "Offer" to streamDiagnostics.offer.offerPresent.asYesNo(),
                     "Offer codecs" to streamDiagnostics.offer.videoCodecs.joinToString().ifBlank { "-" },
                     "Offer H264 PT" to streamDiagnostics.offer.h264PayloadTypes.joinToString().ifBlank { "-" },
+                    "Offer HEVC PT" to streamDiagnostics.offer.hevcPayloadTypes.joinToString().ifBlank { "-" },
+                    "Offer HEVC Main PT" to streamDiagnostics.offer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
                     "Answer" to streamDiagnostics.answer.answerPresent.asYesNo(),
                     "Answer codecs" to streamDiagnostics.answer.videoCodecs.joinToString().ifBlank { "-" },
                     "Answer H264 PT" to streamDiagnostics.answer.h264PayloadTypes.joinToString().ifBlank { "-" },
+                    "Answer HEVC PT" to streamDiagnostics.answer.hevcPayloadTypes.joinToString().ifBlank { "-" },
+                    "Answer HEVC Main PT" to streamDiagnostics.answer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
                     "ICE ufrag/pwd" to "${streamDiagnostics.answer.iceUfragPresent.asYesNo()}/${streamDiagnostics.answer.icePasswordPresent.asYesNo()}",
                     "DTLS fingerprint" to streamDiagnostics.answer.dtlsFingerprintPresent.asYesNo(),
                 ),
@@ -1014,7 +1019,12 @@ private fun DiagnosticsScreen(
             DiagnosticSection(
                 "视频",
                 listOf(
-                    "Codec" to "H.264 / SDR8（v5.0 固定）",
+                    "Requested codec" to streamDiagnostics.video.requestedCodec,
+                    "Negotiated codec" to (streamDiagnostics.video.negotiatedCodec ?: "-"),
+                    "Local decoder codecs" to streamDiagnostics.video.localDecoderCodecs.joinToString().ifBlank { "-" },
+                    "Codec fallback" to streamDiagnostics.video.codecFallbackUsed.asYesNo(),
+                    "Fallback reason" to (streamDiagnostics.video.codecFallbackReason ?: "-"),
+                    "Color" to "SDR8（Main10/HDR 未启用）",
                     "Remote video track" to streamDiagnostics.video.remoteVideoTrackPresent.asYesNo(),
                     "First RTP packet" to streamDiagnostics.video.firstRtpPacketReceived.asYesNo(),
                     "First surface frame" to streamDiagnostics.video.firstFrameRendered.asYesNo(),
@@ -1027,7 +1037,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "后续能力（v5.0 未启用）",
+                "后续能力（v6.0 未启用）",
                 listOf(
                     "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
                     "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
@@ -1065,12 +1075,14 @@ private fun SettingsScreen(
     onResolutionSelected: (String) -> Unit,
     onFpsSelected: (Int) -> Unit,
     onMaxBitrateSelected: (Int) -> Unit,
+    onVideoCodecSelected: (dev.gfn.stream.VideoCodecPreference) -> Unit,
     onAudioChannelsSelected: (Int) -> Unit,
     onToggleTheme: () -> Unit,
 ) {
     var keyboardLayoutMenuOpen by remember { mutableStateOf(false) }
     var resolutionMenuOpen by remember { mutableStateOf(false) }
     var fpsMenuOpen by remember { mutableStateOf(false) }
+    var codecMenuOpen by remember { mutableStateOf(false) }
     var audioMenuOpen by remember { mutableStateOf(false) }
 
     val settings = GfnStreamSettingsCatalog.normalize(streamSettings)
@@ -1085,6 +1097,7 @@ private fun SettingsScreen(
     val resolutionChoice = GfnStreamSettingsCatalog.resolutionChoices
         .first { it.code == settings.resolutionSelection }
     val fpsChoice = GfnStreamSettingsCatalog.fpsChoices.first { it.fps == settings.fpsSelection }
+    val codecChoice = GfnStreamSettingsCatalog.codecChoices.first { it.codec == settings.videoCodec }
     val audioChoice = GfnStreamSettingsCatalog.audioChoices.first { it.channels == settings.audioChannels }
     val activeOrResumable = hasFrozenLaunchProfile || (
         sessionState !is SessionUiState.Idle &&
@@ -1169,6 +1182,29 @@ private fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
+                    Text("视频编码", fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(onClick = { codecMenuOpen = true }) { Text(codecChoice.label) }
+                    DropdownMenu(
+                        expanded = codecMenuOpen,
+                        onDismissRequest = { codecMenuOpen = false },
+                    ) {
+                        GfnStreamSettingsCatalog.codecChoices.forEach { choice ->
+                            DropdownMenuItem(
+                                text = { Text(choice.label) },
+                                onClick = {
+                                    codecMenuOpen = false
+                                    onVideoCodecSelected(choice.codec)
+                                },
+                            )
+                        }
+                    }
+                    if (settings.videoCodec == dev.gfn.stream.VideoCodecPreference.Hevc) {
+                        Text(
+                            "HEVC 仅启用 Main/profile-id=1 + SDR8；若本机 decoder、GFN Offer 或 libwebrtc Answer 不接受，会在同一 Session 明确回退 H.264。",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+
                     Text("分辨率", fontWeight = FontWeight.SemiBold)
                     OutlinedButton(onClick = { resolutionMenuOpen = true }) { Text(resolutionChoice.label) }
                     DropdownMenu(
@@ -1220,14 +1256,14 @@ private fun SettingsScreen(
                         }
                     }
 
-                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 SDR8 · ADM Stereo 2ch")
+                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 / HEVC Main SDR8 · ADM 2ch + experimental multiopus 6ch")
                     Text(
-                        "5.1/6ch 为实验性 multiopus negotiation/receive probe；当前 upstream Android Java ADM 仍配置 2ch，实际 6→2 行为待真机，不等于原生 5.1。",
+                        "5.1/6ch 为实验性 multiopus negotiation/receive probe；当前真机已确认 6ch 模式可以正常播放音频，但 upstream Android Java ADM 仍配置 2ch，因此该结果不能证明离散原生 5.1。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (settings.audioChannels >= 6) {
                         Text(
-                            "已选择实验 6ch：下一新 Session 若 Offer 不含 multiopus/6 会明确停止连接；若协商成功，本版继续观察 2ch ADM 下的实际结果，不预设一定能正常下混。",
+                            "已选择实验 6ch：下一新 Session 若 Offer 不含 multiopus/6 会明确停止连接；当前真机已验证协商后音频可正常播放，但离散 5.1 声道分离仍未验证。",
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
@@ -1239,7 +1275,7 @@ private fun SettingsScreen(
                         )
                     } else {
                         Text(
-                            "下一 Session intent：keyboard=$effectiveKeyboardLayout · resolution=${resolutionChoice.code} · fps=${fpsChoice.fps} · max=${settings.maxBitrateKbps / 1_000}Mbps · audio=${settings.audioChannels}ch",
+                            "下一 Session intent：keyboard=$effectiveKeyboardLayout · resolution=${resolutionChoice.code} · fps=${fpsChoice.fps} · max=${settings.maxBitrateKbps / 1_000}Mbps · codec=${settings.videoCodec} · audio=${settings.audioChannels}ch",
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -1249,7 +1285,7 @@ private fun SettingsScreen(
         item {
             Card(shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("第五版状态", style = MaterialTheme.typography.titleMedium)
+                    Text("第六版状态", style = MaterialTheme.typography.titleMedium)
                     Text(if (authState is AuthUiState.SignedIn) "Auth：真机已验证" else "Auth：等待登录")
                     Text(
                         when (contentState) {
@@ -1263,8 +1299,8 @@ private fun SettingsScreen(
                     Text("Keyboard：v5.1.9 soft-freeze · en-US Cyberpunk / CS2 真机通过")
                     Text("v5.2.1：同 Session RESUME/Claim → 新 Signaling / PeerConnection / DataChannel")
                     Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
-                    Text("v5.4 Audio：2ch 原生 Stereo；6ch 仅开放 multiopus 协商/2ch-ADM 实验，Native 5.1 仍未实现。")
-                    Text("仍未开放：HEVC / Main10 / HDR / 120 FPS。下一主线：v6.0 HEVC Main SDR。")
+                    Text("v5.4 Audio：2ch Stereo；6ch multiopus 模式真机可正常播放；离散 Native 5.1 仍未验证。")
+                    Text("v6.0 HEVC Main SDR8：已实现；仍未开放 Main10 / HDR / 120 FPS。")
                 }
             }
         }

@@ -1,0 +1,25 @@
+v6.0 HEVC Main / SDR8 static and fixture checks
+
+PASS: v6.0 capability profile exposes H264 + Hevc only.
+PASS: v6.0 color mode remains CompatibilitySdr only.
+PASS: Main10/HDR/AV1 are not user-facing v6.0 codec choices.
+PASS: HEVC selection persists through AndroidStreamSettingsStore.
+PASS: ResolvedLaunchProfile carries video codec as immutable StreamConfig.codec.
+PASS: DefaultVideoDecoderFactory.supportedCodecs is inspected and the same decoder factory is used by PeerConnectionFactory.
+PASS: Offer policy requires explicit HEVC Main profile-id=1 plus local H265/HEVC capability.
+PASS: Answer policy filters to H265 Main/profile-id=1 and can fall back to H264.
+PASS: H264 answer semantics retain the legacy v5.4 H264/RTX/repair behavior.
+PASS: gfn-cloudmatch CloudMatchProtocol.kt is byte-identical to v5.4 baseline.
+PASS: SessionController and StreamingController are byte-identical to v5.4 baseline.
+PASS: Keyboard mapper/controller/forensics and GfnInputProtocol are byte-identical to v5.4 baseline.
+PASS: Gamepad controller is byte-identical to v5.4 baseline.
+PASS: verify-hevc.sh passes.
+PASS: verify-reconnect-engine.sh API-shaped engine compile passes.
+PASS: verify-audio.sh passes.
+PASS: verify-stream-settings.sh passes.
+PASS: verify-keyboard-stable.sh passes.
+PASS: verify-gamepad.sh passes.
+PASS: all verify-*.sh pass `sh -n` syntax validation.
+
+NOT VERIFIED: full Android Gradle compile. The wrapper attempts to download Gradle 9.5.0 and fails before project compilation because services.gradle.org cannot be resolved in the current environment.
+NOT VERIFIED: HEVC true-device decode/render.
