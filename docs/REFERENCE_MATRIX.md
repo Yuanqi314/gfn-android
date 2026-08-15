@@ -359,3 +359,42 @@ HEVC + PreferSdr10 frozen Session
 ```
 
 This boundary does **not** equal 10-bit render PASS. v6.1.1 must separately prove 10-bit decode/output/render fidelity.
+
+---
+
+## HEVC — v6.1.0 TRUE-DEVICE closeout
+
+| Layer | `46.log` evidence | Final decision |
+|---|---|---|
+| Session intent | `PreferSdr10`; CloudMatch bitDepth=1, HDR off | PASS |
+| Android capability | hardware Main10 / High / Level 6.2 / 1080p60 | PASS |
+| WebRTC advertisement | explicit H265 profile-id=2 | PASS |
+| Server Offer | original Main10 profile-id=2 / tier-flag=1 / level-id=153 | unchanged / PASS |
+| Matcher | targetProfile=2, Main candidate excluded, workload safe | PASS |
+| RAW/FINAL Answer | Main10 lineage retained, fallback=false | PASS |
+| NVST | bitDepth=10, hdr=false | PASS |
+| Media | HEVC RTP, bound H265 decoder, FIRST_FRAME, stable ~60fps | decode-to-frame PASS |
+| Final sample precision | not established by negotiation/frame evidence | v6.1.1 |
+| HDR | OFF | v6.2 |
+
+## HEVC — v6.1.1 10-bit forensics Stage A/B
+
+| Layer | Evidence source | Current action |
+|---|---|---|
+| Actual elementary stream | `EncodedImage` -> SPS NAL type33 | parse actual luma/chroma bit depth without mutating frame bytes |
+| Framing | Annex-B / length-prefixed / single NAL | recognize before SPS parse; unresolved is not an 8-bit verdict |
+| Decoder path | existing profile-bound H265 decoder | diagnostics decorator only; same `EncodedImage` forwarded |
+| Exact M144 renderer request | pinned `SurfaceViewRenderer.init` + `EglBase.CONFIG_PLAIN` source | statically closed as RGB888 request |
+| Runtime EGL config | current EGL14 context/surface | one-shot read-only R/G/B/A/config-ID query on render thread |
+| Custom 10-bit EGL | no evidence gate yet | NOT ENABLED |
+| P010/direct MediaCodec Surface | later escalation only | NOT ENABLED |
+| HDR | separate milestone | OFF |
+
+Decision rule:
+
+```text
+SPS10 + EGL8   -> custom 10-bit EGL becomes justified candidate
+SPS10 + EGL10+ -> inspect texture/buffer preservation first
+SPS8           -> server/session investigation; renderer stays frozen
+SPS unresolved -> parser/framing investigation; no bit-depth verdict
+```

@@ -262,7 +262,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v6.1.0 HEVC Main10 Capability & Negotiation",
+                "独立 Android GFN 客户端 · v6.1.1 Main10 10-bit Forensics",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -607,7 +607,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v6.0.4 HEVC Main/SDR8 已 Production PASS；v6.1.0 在同一 production capability 框架上新增独立 Main10/profile-id=2 + SDR10 协商，HDR 仍关闭。")
+            Text("v6.0.4 Main/SDR8 与 v6.1.0 Main10/SDR10 协商均已真机 PASS；v6.1.1 冻结协商，仅新增 SPS 实际位深与 EGL config 只读取证，HDR 仍关闭。")
         }
 
         if (resumeRecord != null) {
@@ -1074,7 +1074,7 @@ private fun DiagnosticsScreen(
                     "Codec fallback" to streamDiagnostics.video.codecFallbackUsed.asYesNo(),
                     "Fallback reason" to (streamDiagnostics.video.codecFallbackReason ?: "-"),
                     "Color intent" to streamDiagnostics.video.requestedColorMode,
-                    "HDR activation" to "OFF（v6.1.0）",
+                    "HDR activation" to "OFF（v6.1.1）",
                     "Remote video track" to streamDiagnostics.video.remoteVideoTrackPresent.asYesNo(),
                     "First RTP packet" to streamDiagnostics.video.firstRtpPacketReceived.asYesNo(),
                     "First surface frame" to streamDiagnostics.video.firstFrameRendered.asYesNo(),
@@ -1087,7 +1087,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "HDR diagnostics（v6.1.0 只读，未激活）",
+                "HDR diagnostics（v6.1.1 只读，未激活）",
                 listOf(
                     "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
                     "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
@@ -1270,7 +1270,7 @@ private fun SettingsScreen(
                         }
                         Text(
                             if (settings.colorMode == RequestedColorMode.PreferSdr10) {
-                                "v6.1.0 Main10/profile-id=2 + SDR10：要求真实 Main10/High decoder、原始 GFN Main10 Offer 和 RAW/FINAL Answer 全部匹配；禁止静默回退 H.264。HDR Session 仍关闭，本阶段不宣称 10-bit render PASS。"
+                                "v6.1.0 Main10/SDR10 协商已真机 PASS。v6.1.1 保持同一 profile-id=2/CloudMatch/NVST/decoder binding，只新增实际 HEVC SPS 位深与 EGL config 取证；HDR Session 仍关闭，当前仍不宣称 10-bit render PASS。"
                             } else {
                                 "HEVC Main/profile-id=1 + SDR8：保持 v6.0.4 Production PASS 路径；不兼容时允许同 Session 明确回退 H.264。"
                             },
@@ -1374,7 +1374,7 @@ private fun SettingsScreen(
                     Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
                     Text("v5.4 Audio：2ch Stereo；6ch multiopus 模式真机可正常播放；离散 Native 5.1 仍未验证。")
                     Text("v6.0.4 closeout：HEVC Main / SDR8 Production PASS（原始 Tier1 Offer、绑定 decoder、FIRST_FRAME、~60fps）。")
-                    Text("v6.1.0：Main10 / SDR10 capability + negotiation 开发中；HDR capability 可诊断但 Session/HDR output 仍关闭，10-bit render 留到 v6.1.1。")
+                    Text("v6.1.0 closeout：Main10 / SDR10 capability + Session + negotiation + decode-to-frame 真机 PASS。v6.1.1：只读 SPS actual bit depth + exact M144/runtime EGL config 取证；未启用自定义 10-bit renderer，HDR 仍关闭。")
                 }
             }
         }

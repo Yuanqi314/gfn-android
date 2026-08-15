@@ -94,8 +94,8 @@ This is an environment/network block; full Android/Kotlin Gradle compile is NOT 
 v6.0.4 true-device closeout:
 45.log = HEVC Main / SDR8 Production PASS.
 
-v6.1.0 true-device result:
-NOT YET VERIFIED.
+v6.1.0 true-device closeout:
+46.log = Main10 / SDR10 capability + Session request + negotiation + decode-to-frame TRUE-DEVICE PASS.
 
 v6.1.1 10-bit output/render result:
-NOT CLAIMED BY v6.1.0.
+NOT CLAIMED BY v6.1.0; moved to dedicated SPS/EGL fidelity forensics.

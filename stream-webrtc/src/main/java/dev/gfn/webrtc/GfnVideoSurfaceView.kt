@@ -8,9 +8,9 @@ import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 
 /**
- * H.264 SDR 视频输出 + Android 输入捕获面。
- * 只负责分流 Android KeyEvent/MotionEvent；键鼠与 gamepad 的 GFN mapping/state/transport
- * 分别由 GfnKeyboardMouseInputController / GfnGamepadInputController 处理。
+ * WebRTC 视频输出 + Android 输入捕获面。
+ * v6.1.1 只增加只读 EGL config 取证，不改变既有 SurfaceViewRenderer 的 config、drawer 或
+ * render lifecycle。键鼠与 gamepad 的 GFN mapping/state/transport 仍由各自 controller 处理。
  */
 class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
     interface InputListener {
@@ -50,6 +50,17 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
                     onResolutionChanged?.invoke(width, height)
                 }
             },
+        )
+        GfnHevc10BitDiagnostics.logPinnedWebRtcEglRequest()
+        val forensicViewId = System.identityHashCode(this)
+        addFrameListener(
+            { _ ->
+                GfnHevc10BitDiagnostics.logRuntimeEglConfig(
+                    viewId = forensicViewId,
+                    result = GfnEglConfigProbe.queryCurrentEgl14(),
+                )
+            },
+            0f,
         )
         setEnableHardwareScaler(true)
         setMirror(false)

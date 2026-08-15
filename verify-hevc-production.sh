@@ -188,6 +188,15 @@ KT
 
 cat > "$BUILD/Snapshot.kt" <<'KT'
 package dev.gfn.webrtc
+
+import org.webrtc.VideoDecoder
+
+internal class GfnHevcBitstreamProbeVideoDecoder(
+    val delegate: VideoDecoder,
+    val decoderComponent: String,
+    val expectedProfile: GfnHevcProfile?,
+) : VideoDecoder
+
 data class GfnVideoCodecCapabilitySnapshot(
     val source: String,
     val index: Int,
@@ -236,6 +245,12 @@ private fun remote(pt: Int, profile: String, tier: String, level: String, txMode
             if (txMode != null) put("tx-mode", txMode)
         },
     )
+private fun boundName(decoder: org.webrtc.VideoDecoder?): String? = when (decoder) {
+    is GfnHevcBitstreamProbeVideoDecoder -> (decoder.delegate as? BoundDecoder)?.codecName
+    is BoundDecoder -> decoder.codecName
+    else -> null
+}
+
 private fun local(pt: Int, profile: String?, tier: String?, level: String?) =
     RtpCapabilities.CodecCapability(
         pt, "H265", 90000,
@@ -269,8 +284,8 @@ fun main() {
     check(main10.codecName == "main10.hevc" && main10.profile == GfnHevcProfile.Main10)
     val advertised = factory.getSupportedCodecs().filter { it.name == "H265" }
     check(advertised.map { it.params?.get("profile-id") } == listOf("1", "2")) { advertised.map { it.params } }
-    check((factory.createDecoder(advertised[0]) as BoundDecoder).codecName == "main.hevc")
-    check((factory.createDecoder(advertised[1]) as BoundDecoder).codecName == "main10.hevc")
+    check(boundName(factory.createDecoder(advertised[0])) == "main.hevc")
+    check(boundName(factory.createDecoder(advertised[1])) == "main10.hevc")
     // A generic H265 create request is ambiguous when Main/Main10 are bound to different
     // components; production code must fail closed rather than silently default to Main.
     check(factory.createDecoder(org.webrtc.VideoCodecInfo("H265", emptyMap(), emptyList())) == null)
@@ -288,7 +303,7 @@ fun main() {
     check(requireNotNull(sharedFactory.productionCapability).codecName == "shared.hevc")
     check(requireNotNull(sharedFactory.main10ProductionCapability).codecName == "shared.hevc")
     check(
-        (sharedFactory.createDecoder(org.webrtc.VideoCodecInfo("H265", emptyMap(), emptyList())) as BoundDecoder).codecName ==
+        boundName(sharedFactory.createDecoder(org.webrtc.VideoCodecInfo("H265", emptyMap(), emptyList()))) ==
             "shared.hevc",
     )
 

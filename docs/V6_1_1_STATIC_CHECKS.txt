@@ -1,0 +1,117 @@
+GFN Android v6.1.1 - 10-bit Forensics Stage A/B static verification
+Baseline: v6.1.0 clean package corresponding to GitHub e0f60f8c9120fc8c7bd11e425079358232c4ae09
+Version: 0.6.1.1-dev / code 24
+
+Scope:
+- v6.1.0 Main10/SDR10 negotiation is frozen.
+- Stage A adds read-only actual HEVC SPS/bit-depth forensics before the existing decoder.
+- Stage B adds exact pinned-M144 CONFIG_PLAIN closure plus read-only runtime EGLConfig query.
+- No custom RGB10/P010 renderer and no HDR activation are enabled.
+
+Dedicated v6.1.1 verifier:
+V611_HEVC_10BIT_SOURCE_GUARDS=PASS
+V611_HEVC_SPS_PARSER_FIXTURE=PASS
+SPS profile=2 tier=1 level=153 coded=1920x1088 display=1920x1080 bitDepth=10/10
+V611_EGL_API_SHAPED_COMPILE=PASS
+V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS
+EGL_REQUEST=8/8/8 actual8=8/8/8 actual10=10/10/10
+V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
+V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS
+
+Production HEVC / Main10 regression:
+V604_HEVC_PRODUCTION_SOURCE_GUARDS=PASS
+V610_MAIN10_PRODUCTION_SOURCE_GUARDS=PASS
+V604_HEVC_FACTORY_BINDING_FIXTURE=PASS
+V604_HEVC_VIDEO_CAPS_NULLABILITY_FIXTURE=PASS
+V604_HEVC_COMPATIBILITY_FIXTURE=PASS
+V610_MAIN10_FACTORY_BINDING_FIXTURE=PASS
+V610_GENERIC_H265_COMPONENT_AMBIGUITY_GUARD=PASS
+V610_MAIN10_COMPATIBILITY_FIXTURE=PASS
+V610_MAIN10_STRICT_NO_H264_FALLBACK=PASS
+MAIN=main.hevc:{profile-id=1, tier-flag=1, level-id=156}
+MAIN10=main10.hevc:{profile-id=2, tier-flag=1, level-id=186}
+MATCHED_MAIN=[103] MATCHED_MAIN10=[107]
+V604_HEVC_PRODUCTION_VERIFY=PASS
+V610_MAIN10_PRODUCTION_VERIFY=PASS
+
+Answer lineage:
+V604_HEVC_LINEAGE_SOURCE_GUARD=PASS
+V610_MAIN10_LINEAGE_SOURCE_GUARD=PASS
+V604_HEVC_ANSWER_LINEAGE_FIXTURE=PASS
+V610_MAIN10_ANSWER_LINEAGE_FIXTURE=PASS
+MATCHED_MAIN=[103] MATCHED_MAIN10=[107]
+V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
+V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
+
+Main10 cross-layer Session regression:
+V610_MAIN10_CROSS_LAYER_SOURCE_GUARDS=PASS
+V610_MAIN10_SETTINGS_SNAPSHOT_FIXTURE=PASS
+PROFILE=1920x1080@60 20Mbps codec=Hevc color=PreferSdr10 audio=2ch keyboard=en-US language=en_US
+V610_MAIN10_CLOUDMATCH_SDR10_FIXTURE=PASS
+V610_HDR_SESSION_ACTIVATION_OFF=PASS
+V610_MAIN10_VERIFY=PASS
+
+Engine API-shaped compile:
+V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
+V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
+V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
+
+Stream Settings regression:
+V520_STREAM_SETTINGS_RESOLVER=PASS
+V520_STREAM_SETTINGS_STORE=PASS
+V520_SESSION_PROFILE_PERSISTENCE=PASS
+V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
+V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+
+Audio regression:
+V540_AUDIO_SNAPSHOT_CHAIN=PASS
+V540_AUDIO_STATIC_GUARDS=PASS
+V540_AUDIO_SDP_FIXTURE=PASS
+V540_AUDIO_SETTINGS_FIXTURE=PASS
+V540_AUDIO_RUNTIME_API_SHAPED_COMPILE=PASS
+V540_AUDIO_VERIFY=PASS
+
+Legacy v6.0 HEVC regression:
+V600_HEVC_STATIC_GUARDS=PASS
+V600_HEVC_SDP_FIXTURE=PASS
+V600_HEVC_POLICY_FIXTURE=PASS
+V600_HEVC_SETTINGS_FIXTURE=PASS
+V600_HEVC_STORE_FIXTURE=PASS
+V600_HEVC_VERIFY=PASS
+
+Final source audit:
+SHELL_SYNTAX=PASS
+TRAILING_WHITESPACE_COUNT=0
+RUNTIME_TIER_REWRITE_RESIDUE=NONE
+HARDCODED_HEVC_DECODER=NONE
+HARDCODED_GFN_HEVC_PT=NONE
+CUSTOM_10BIT_RENDER_TARGET=OFF
+HDR_SESSION_ACTIVATION=OFF
+V611_VERSION_AND_CORE_HOOK=PASS
+
+Exact WebRTC M144 source closure:
+- Dependency remains api("io.github.webrtc-sdk:android:144.7559.09").
+- Source closure used: webrtc-sdk/webrtc b1800a61db8320af5c14456c13622d8b85b1ed39.
+- SurfaceViewRenderer.init(sharedContext, rendererEvents) delegates to EglBase.CONFIG_PLAIN.
+- EglBase.CONFIG_PLAIN requests RED=8, GREEN=8, BLUE=8.
+- Runtime selected EGLConfig is intentionally NOT assumed; true-device EGL_CONFIG log is required.
+
+Android Gradle build attempt:
+sh ./gradlew :app:compileDebugKotlin --no-daemon
+GRADLE_EXIT=6
+BLOCKED BEFORE COMPILATION: curl could not resolve services.gradle.org while downloading Gradle 9.5.0.
+Full Android/Kotlin Gradle compile is NOT claimed PASS.
+
+Known pre-existing baseline verifier inconsistency:
+verify-keyboard-stable.sh packet fixture = PASS, then script exits 1 because it requires
+stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt to be absent.
+The exact v6.1.0 baseline already contains that file, and v6.1.1 does not modify it.
+Full verify-core.sh is therefore NOT claimed green and this unrelated historical residue is not deleted to fabricate a pass.
+
+True-device state:
+v6.0.4 Main/SDR8 = TRUE-DEVICE PRODUCTION PASS (45.log).
+v6.1.0 Main10/SDR10 capability + Session request + negotiation + decode-to-frame = TRUE-DEVICE PASS (46.log).
+v6.1.1 Stage A/B implementation = READY FOR TRUE-DEVICE FORENSICS.
+v6.1.1 full 10-bit decode/output/render fidelity = NOT YET VERIFIED.
+HDR10 = OFF / v6.2.

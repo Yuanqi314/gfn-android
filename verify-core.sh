@@ -121,6 +121,7 @@ sh ./verify-hevc.sh
 sh ./verify-hevc-production.sh
 sh ./verify-hevc-answer-lineage.sh
 sh ./verify-main10.sh
+sh ./verify-hevc-10bit-forensics.sh
 
 # v5.4 audio: native stereo output plus explicit experimental multiopus/downmix probe.
 ./verify-audio.sh

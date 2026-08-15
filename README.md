@@ -1,67 +1,71 @@
-# GFN Android Lab · v6.1.0 HEVC Main10 / SDR10 Capability & Negotiation
+# GFN Android Lab · v6.1.1 HEVC Main10 / SDR10 10-bit Forensics
 
-这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已把 v6.0.4 **HEVC Main / SDR8 Production PASS** 闭环：原始 GFN Tier1 Offer、真实 Android High-Tier capability、绑定硬件 decoder、RAW/FINAL H265、`fallback=false`、`video/hevc`、FIRST_FRAME 与约 60fps 稳态全部成立。
+这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 **HEVC Main / SDR8 Production PASS**；`46.log` 已关闭 v6.1.0 **HEVC Main10 / SDR10 capability + Session request + negotiation + decode-to-frame TRUE-DEVICE PASS**。
 
-v6.1.0 在冻结 v6.0.4 Main/SDR8 行为的同时，开始 **HEVC Main10 / SDR10** 的 capability + negotiation 阶段。HDR Session / HDR render 仍关闭；真实 10-bit output/render fidelity 留给 v6.1.1。
+v6.1.1 冻结已经通过的 CloudMatch / ResolvedLaunchProfile / Main10 capability / SDP / Answer / NVST / decoder-component binding，只新增两条只读取证链：
+
+```text
+Stage A
+WebRTC EncodedImage
+        ↓
+GfnHevcBitstreamProbe
+        ↓
+实际 HEVC SPS
+        ↓
+profile / tier / level / dimensions / bitDepthLuma / bitDepthChroma
+        ↓
+原 EncodedImage 原样交给既有 H265 decoder
+
+Stage B
+pinned WebRTC M144 SurfaceViewRenderer
+        ↓
+CONFIG_PLAIN 静态请求
+        ↓
+runtime EGL current config query
+        ↓
+R/G/B/A 实际 channel depth
+```
+
+这一版**不请求 RGB10A2/P010，不替换 renderer，不激活 HDR**。只有真机同时证明 `SPS=10-bit` 且当前 EGL target 为 8bpc，才进入下一阶段 custom 10-bit EGL；如果 SPS 本身不是 10-bit，则先回查 Session/服务端，不改 renderer。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.0.4 closeout
+## 已关闭里程碑
 
 ```text
-HEVC Main / SDR8
-original Tier1 Offer
-+ explicit Main/High local advertisement
-+ exact decoder component binding
-+ RAW/FINAL H265
-+ fallback=false
-+ c2.qti.hevc.decoder / video/hevc
-+ FIRST_FRAME
-+ ~60fps stable
-= Production PASS
+v6.0.4  Main / SDR8 production                 TRUE-DEVICE PASS
+v6.1.0  Main10 / SDR10 capability+negotiation  TRUE-DEVICE PASS
 ```
 
-实验 `tier-flag=1 -> 0` rewrite 已关闭且不再进入 production path。
+## v6.1.1 当前取证边界
 
-## v6.1.0 本轮新增
+已经实现：
 
 ```text
-PersistentStreamSettings.colorMode
-        ↓ resolve once
-ResolvedLaunchProfile
-        ↓
-HEVC + PreferSdr10
-        ↓
-CloudMatch bitDepth=1 / sdrHdrMode=0 / HDR metadata=null
-        ↓
-Android MediaCodec Main10 independent probe
-        ↓
-explicit H265 profile-id=2 advertisement
-        ↓
-exact Main10 decoder-component binding
-        ↓
-original GFN profile-id=2 / tier-flag=1 Offer
-        ↓
-profile + tier + tx-mode + level + workload safety gate
-        ↓
-RAW/FINAL Answer Main10 lineage
-        ↓
-strict fallback=false or Session failure
-        ↓
-NVST bitDepth=10 / hdr=false
+GfnHevcBitstreamProbe.kt
+GfnHevc10BitDiagnostics.kt
+GfnEglConfigProbe.kt
+
+Annex-B 3/4-byte start code
+length-prefixed 1/2/3/4-byte NAL length
+single-NAL fallback
+SPS NAL type 33
+EBSP -> RBSP
+profile_tier_level
+bit_depth_luma_minus8 / bit_depth_chroma_minus8
+coded/display dimensions
+bounded scan budget
+runtime EGLConfig R/G/B/A query
 ```
 
-Main 与 Main10 使用独立 Android profile 探测，绝不从 Main 能力推断 Main10，也不把 HDR-only profile 当 Main10。Main/SDR8 继续允许已验证的 H264 fallback；Main10/SDR10 禁止静默回退 H264。
-
-本版本只要求 Main10 **capability + Session request + negotiation** 正确，不宣称现有 libwebrtc renderer 已保持 10-bit。v6.1.1 将单独验证 decode/output/render bit depth；如果不能证明，则再评估 direct `MediaCodec -> Surface`。
-
-HDR 边界保持：
+严格未启用：
 
 ```text
-PreferHdr10              OFF / rejected
-CloudMatch sdrHdrMode    0
-HDR display metadata     OFF
-HDR render activation    OFF
+custom RGB10A2 renderer
+P010 output request
+custom SurfaceTexture/HardwareBuffer path
+direct MediaCodec -> Surface
+HDR Session / HDR output
 ```
 
 验证入口：
@@ -71,6 +75,7 @@ sh ./verify-hevc.sh
 sh ./verify-hevc-production.sh
 sh ./verify-hevc-answer-lineage.sh
 sh ./verify-main10.sh
+sh ./verify-hevc-10bit-forensics.sh
 sh ./verify-reconnect-engine.sh
 sh ./verify-stream-settings.sh
 sh ./verify-audio.sh
@@ -80,14 +85,16 @@ sh ./verify-audio.sh
 
 ```text
 docs/STATUS.md
-docs/V6_0_4_HEVC_MAIN_PRODUCTION_CAPABILITY.md
 docs/V6_1_0_MAIN10_CAPABILITY_NEGOTIATION.md
-docs/V6_1_0_TEST_GUIDE.md
+docs/V6_1_1_10BIT_FORENSICS.md
+docs/V6_1_1_WEBRTC_M144_EGL_CLOSURE.md
+docs/V6_1_1_TEST_GUIDE.md
 docs/REFERENCE_MATRIX.md
 ```
 
-完整 Android Gradle/APK build 仍需 Android/Gradle 环境或 GitHub Actions 验证；离线 API-shaped compile 不替代真实 APK build，也不替代 Main10 真机结果。
+完整 Android Gradle/APK build 仍需 Android/Gradle 环境或 GitHub Actions 验证；离线 API-shaped compile 不替代真实 APK build。v6.1.1 的最终 `10-bit render PASS` 也必须由真机 Stage A/B/C 证据裁决。
 
+---
 ## v6.0 历史基线
 
 v6.0 按 CloudNow + OpenNOW 双参考仓库交叉取证，只吸收两边共同支持且适合当前 Android 架构的最小 HEVC 语义：

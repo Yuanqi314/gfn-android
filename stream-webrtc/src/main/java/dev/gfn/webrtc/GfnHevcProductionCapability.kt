@@ -379,28 +379,62 @@ internal class GfnHevcAwareVideoDecoderFactory(
     override fun createDecoder(info: VideoCodecInfo): VideoDecoder? {
         if (normalizeCodecName(info.name) != "H265") return fallbackFactory.createDecoder(info)
         val profile = GfnHevcProfile.fromSdpProfileId(info.params.orEmpty().parameter("profile-id"))
-        return when (profile) {
-            GfnHevcProfile.Main -> {
-                if (productionCapability == null) null else boundMainFactory?.createDecoder(info)
-            }
-            GfnHevcProfile.Main10 -> {
-                if (main10ProductionCapability == null) null else boundMain10Factory?.createDecoder(info)
-            }
-            null -> genericHevcFactory()?.createDecoder(info)
-        }
+        val binding = when (profile) {
+            GfnHevcProfile.Main -> explicitHevcBinding(
+                capability = productionCapability,
+                factory = boundMainFactory,
+            )
+            GfnHevcProfile.Main10 -> explicitHevcBinding(
+                capability = main10ProductionCapability,
+                factory = boundMain10Factory,
+            )
+            null -> genericHevcBinding()
+        } ?: return null
+        val decoder = binding.factory.createDecoder(info) ?: return null
+        return GfnHevcBitstreamProbeVideoDecoder(
+            delegate = decoder,
+            decoderComponent = binding.decoderComponent,
+            expectedProfile = binding.expectedProfile,
+        )
+    }
+
+    private data class HevcDecoderBinding(
+        val factory: HardwareVideoDecoderFactory,
+        val decoderComponent: String,
+        val expectedProfile: GfnHevcProfile?,
+    )
+
+    private fun explicitHevcBinding(
+        capability: GfnHevcDecoderCapability?,
+        factory: HardwareVideoDecoderFactory?,
+    ): HevcDecoderBinding? {
+        if (capability == null || factory == null) return null
+        return HevcDecoderBinding(
+            factory = factory,
+            decoderComponent = capability.codecName,
+            expectedProfile = capability.profile,
+        )
     }
 
     /**
      * Some libwebrtc paths can request an H265 decoder without carrying profile-id back to Java.
      * Never guess Main when Main/Main10 were proven by different components. A generic request is
      * safe only when exactly one HEVC production capability exists or both profiles resolve to the
-     * same MediaCodec component.
+     * same MediaCodec component. If both profiles share one component, the forensic wrapper labels
+     * the Java request as generic instead of inventing a profile; the SPS provides the actual proof.
      */
-    private fun genericHevcFactory(): HardwareVideoDecoderFactory? = when {
-        productionCapability != null && main10ProductionCapability == null -> boundMainFactory
-        productionCapability == null && main10ProductionCapability != null -> boundMain10Factory
+    private fun genericHevcBinding(): HevcDecoderBinding? = when {
+        productionCapability != null && main10ProductionCapability == null ->
+            explicitHevcBinding(productionCapability, boundMainFactory)
+        productionCapability == null && main10ProductionCapability != null ->
+            explicitHevcBinding(main10ProductionCapability, boundMain10Factory)
         productionCapability != null && main10ProductionCapability != null &&
-            productionCapability.codecName == main10ProductionCapability.codecName -> boundMainFactory
+            productionCapability.codecName == main10ProductionCapability.codecName && boundMainFactory != null ->
+            HevcDecoderBinding(
+                factory = boundMainFactory,
+                decoderComponent = productionCapability.codecName,
+                expectedProfile = null,
+            )
         else -> null
     }
 

@@ -233,3 +233,34 @@ It cannot, by itself, prove that libwebrtc's texture/render path preserved 10-bi
 After v6.1.0 succeeds, v6.1.1 must establish actual 10-bit evidence at decoder output/render boundaries.
 
 If the current `AndroidVideoDecoder -> SurfaceTexture/EGL -> SurfaceViewRenderer` path cannot expose sufficient bit-depth evidence or preserves only 8-bit output, the direct `MediaCodec -> Surface` path should be evaluated there, not preemptively mixed into v6.1.0.
+
+## 14. Closeout — `46.log` TRUE-DEVICE PASS
+
+The v6.1.0 gate is now closed by true-device evidence:
+
+```text
+PreferSdr10 frozen Session
+CloudMatch bitDepth=1 / sdrHdrMode=0 / hdr=false
+real Main10 / High / Level 6.2 hardware capability
+explicit profile-id=2 local advertisement
+original GFN Main10 Offer unchanged
+compatibility targetProfile=2 true
+RAW_ANSWER Main10 lineage
+FINAL_ANSWER Main10 lineage
+fallback=false
+NVST bitDepth=10 / hdr=false
+HEVC RTP
+bound c2.qti.hevc.decoder
+FIRST_FRAME
+~60fps stable
+```
+
+Verdict:
+
+```text
+v6.1.0 Main10 / SDR10
+Capability + Session request + Negotiation + Decode-to-frame
+TRUE-DEVICE PASS
+```
+
+10-bit sample/output/render fidelity remains outside this closeout and is handled by v6.1.1.
