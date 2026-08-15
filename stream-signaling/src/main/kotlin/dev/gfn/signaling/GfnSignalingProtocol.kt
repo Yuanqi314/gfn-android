@@ -216,6 +216,30 @@ data class VideoMediaTarget(
     val port: Int?,
 )
 
+data class VideoCodecDescription(
+    val payloadType: Int,
+    val name: String,
+    val clockRate: Int?,
+    val fmtp: String?,
+    val parameters: Map<String, String>,
+    val rtxPayloadTypes: List<Int> = emptyList(),
+) {
+    val normalizedName: String
+        get() = when (name.trim().uppercase()) {
+            "HEVC" -> "H265"
+            else -> name.trim().uppercase()
+        }
+
+    val profileId: String? get() = parameters["profile-id"]
+    val tierFlag: String? get() = parameters["tier-flag"]
+    val levelId: String? get() = parameters["level-id"]
+    val txMode: String? get() = parameters["tx-mode"]
+}
+
+data class VideoRtxAssociation(
+    val payloadType: Int,
+    val apt: Int,
+)
 
 data class AudioCodecDescription(
     val payloadType: Int,
@@ -252,49 +276,15 @@ data class NvstSdpConfig(
 /** v6.0: H.264/HEVC Main SDR8 视频选择 + Stereo/multiopus 音频 Answer 变换。 */
 object GfnSdpTools {
     fun summarize(sdp: String, isOffer: Boolean): SdpSummary {
-        val lines = lines(sdp)
-        val videoRtpMaps = buildList {
-            var inFirstVideo = false
-            var videoSeen = false
-            for (line in lines) {
-                if (line.startsWith("m=video") && !videoSeen) {
-                    inFirstVideo = true
-                    videoSeen = true
-                    continue
-                }
-                if (line.startsWith("m=")) {
-                    if (inFirstVideo) break
-                    inFirstVideo = false
-                }
-                if (inFirstVideo && line.startsWith("a=rtpmap:")) add(line)
-            }
-        }
-        val codecs = videoRtpMaps.mapNotNull { line ->
-            line.substringAfter(' ', "").substringBefore('/').takeIf { it.isNotBlank() }
-        }.distinct()
-        val videoFmtpByPt = firstVideoAttributeLines(sdp, "a=fmtp:").associate { line ->
-            val rest = line.removePrefix("a=fmtp:")
-            rest.substringBefore(' ') to rest.substringAfter(' ', "")
-        }
-        val h264Pts = videoRtpMaps.mapNotNull { line ->
-            val rest = line.removePrefix("a=rtpmap:")
-            val pt = rest.substringBefore(' ').toIntOrNull() ?: return@mapNotNull null
-            val codec = normalizeVideoCodecName(rest.substringAfter(' ', "").substringBefore('/'))
-            pt.takeIf { codec == "H264" }
-        }
-        val hevcPts = videoRtpMaps.mapNotNull { line ->
-            val rest = line.removePrefix("a=rtpmap:")
-            val ptText = rest.substringBefore(' ')
-            val pt = ptText.toIntOrNull() ?: return@mapNotNull null
-            val codec = normalizeVideoCodecName(rest.substringAfter(' ', "").substringBefore('/'))
-            pt.takeIf { codec == "H265" }
-        }
-        val hevcMainPts = hevcPts.filter { pt ->
-            videoFmtpByPt[pt.toString()]?.containsParameter("profile-id", "1") == true
-        }
+        val allLines = lines(sdp)
+        val details = firstVideoCodecDetails(sdp)
+        val codecs = details.map { it.name }.distinct()
+        val h264Pts = details.filter { it.normalizedName == "H264" }.map { it.payloadType }
+        val hevcPts = details.filter { it.normalizedName == "H265" }.map { it.payloadType }
+        val hevcMainPts = details.filter {
+            it.normalizedName == "H265" && it.profileId == "1"
+        }.map { it.payloadType }
         val target = firstVideoTarget(sdp)
-        val videoMid = target?.mid
-        val videoPort = target?.port
         return SdpSummary(
             offerPresent = isOffer,
             answerPresent = !isOffer,
@@ -302,13 +292,66 @@ object GfnSdpTools {
             h264PayloadTypes = h264Pts,
             hevcPayloadTypes = hevcPts,
             hevcMainPayloadTypes = hevcMainPts,
-            iceUfragPresent = lines.any { it.startsWith("a=ice-ufrag:") },
-            icePasswordPresent = lines.any { it.startsWith("a=ice-pwd:") },
-            dtlsFingerprintPresent = lines.any { it.startsWith("a=fingerprint:sha-256 ") },
-            firstVideoMid = videoMid,
-            firstVideoPort = videoPort,
+            iceUfragPresent = allLines.any { it.startsWith("a=ice-ufrag:") },
+            icePasswordPresent = allLines.any { it.startsWith("a=ice-pwd:") },
+            dtlsFingerprintPresent = allLines.any { it.startsWith("a=fingerprint:sha-256 ") },
+            firstVideoMid = target?.mid,
+            firstVideoPort = target?.port,
         )
     }
+
+    /**
+     * Parse the first video media section without interpreting payload numbers as stable codec
+     * identities. Dynamic PTs remain session-local; compatibility decisions must use codec/fmtp.
+     */
+    fun firstVideoCodecDetails(sdp: String): List<VideoCodecDescription> {
+        val rtp = linkedMapOf<Int, Pair<String, Int?>>()
+        val fmtp = linkedMapOf<Int, String>()
+        firstVideoAttributeLines(sdp, "a=rtpmap:").forEach { line ->
+            val rest = line.removePrefix("a=rtpmap:")
+            val pt = rest.substringBefore(' ').toIntOrNull() ?: return@forEach
+            val encoding = rest.substringAfter(' ', "")
+            val parts = encoding.split('/')
+            val name = parts.getOrNull(0)?.trim()?.takeIf(String::isNotBlank) ?: return@forEach
+            rtp[pt] = name to parts.getOrNull(1)?.toIntOrNull()
+        }
+        firstVideoAttributeLines(sdp, "a=fmtp:").forEach { line ->
+            val rest = line.removePrefix("a=fmtp:")
+            val pt = rest.substringBefore(' ').toIntOrNull() ?: return@forEach
+            fmtp[pt] = rest.substringAfter(' ', "").trim()
+        }
+        val rtxByPrimary = linkedMapOf<Int, MutableList<Int>>()
+        rtp.forEach { (pt, value) ->
+            if (normalizeVideoCodecName(value.first) != "RTX") return@forEach
+            val apt = parseFmtpParameters(fmtp[pt]).get("apt")?.toIntOrNull() ?: return@forEach
+            rtxByPrimary.getOrPut(apt) { mutableListOf() }.add(pt)
+        }
+        return rtp.map { (pt, value) ->
+            val fmtpText = fmtp[pt]
+            VideoCodecDescription(
+                payloadType = pt,
+                name = value.first,
+                clockRate = value.second,
+                fmtp = fmtpText,
+                parameters = parseFmtpParameters(fmtpText),
+                rtxPayloadTypes = rtxByPrimary[pt].orEmpty().sorted(),
+            )
+        }
+    }
+
+    fun firstVideoPayloadOrder(sdp: String): List<Int> =
+        firstMediaSection(sdp, "video").firstOrNull()
+            ?.split(Regex("\\s+"))
+            ?.drop(3)
+            ?.mapNotNull(String::toIntOrNull)
+            .orEmpty()
+
+    fun firstVideoRtxAssociations(sdp: String): List<VideoRtxAssociation> =
+        firstVideoCodecDetails(sdp).filter { it.normalizedName == "RTX" }.mapNotNull { codec ->
+            codec.parameters["apt"]?.toIntOrNull()?.let { apt ->
+                VideoRtxAssociation(payloadType = codec.payloadType, apt = apt)
+            }
+        }
 
     /**
      * Converge the first video Answer section to one receive codec while retaining its RTX and
@@ -633,6 +676,24 @@ object GfnSdpTools {
     private fun String.containsParameter(name: String, value: String): Boolean =
         Regex("(?:^|[;\\s])${Regex.escape(name)}=${Regex.escape(value)}(?:$|[;\\s])", RegexOption.IGNORE_CASE)
             .containsMatchIn(this)
+
+    private fun parseFmtpParameters(fmtp: String?): Map<String, String> {
+        if (fmtp.isNullOrBlank()) return emptyMap()
+        return buildMap {
+            fmtp.split(';').forEach { token ->
+                val part = token.trim()
+                if (part.isEmpty()) return@forEach
+                val separator = part.indexOf('=')
+                if (separator < 0) {
+                    put(part.lowercase(), "")
+                } else {
+                    val key = part.substring(0, separator).trim().lowercase()
+                    val value = part.substring(separator + 1).trim()
+                    if (key.isNotEmpty()) put(key, value)
+                }
+            }
+        }
+    }
 
     fun injectBandwidth(sdp: String, videoKbps: Int, audioKbps: Int = 128): String {
         val separator = separator(sdp)

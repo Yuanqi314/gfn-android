@@ -7,8 +7,26 @@ import android.media.AudioAttributes
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
+import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpCapabilities
 import org.webrtc.audio.JavaAudioDeviceModule
+
+internal data class GfnVideoCodecCapabilitySnapshot(
+    val source: String,
+    val index: Int,
+    val preferredPayloadType: Int? = null,
+    val name: String,
+    val mimeType: String? = null,
+    val clockRate: Int? = null,
+    val parameters: Map<String, String> = emptyMap(),
+) {
+    val normalizedName: String
+        get() = when (name.trim().uppercase()) {
+            "HEVC" -> "H265"
+            else -> name.trim().uppercase()
+        }
+}
 
 internal object GfnWebRtcRuntime {
     private val lock = Any()
@@ -16,6 +34,8 @@ internal object GfnWebRtcRuntime {
     private var initialized = false
     private var factory: PeerConnectionFactory? = null
     private var decoderCodecNames: Set<String> = emptySet()
+    private var decoderCodecCapabilities: List<GfnVideoCodecCapabilitySnapshot> = emptyList()
+    private var receiverCodecCapabilities: List<GfnVideoCodecCapabilitySnapshot> = emptyList()
 
     fun eglContext(): EglBase.Context = eglBase.eglBaseContext
 
@@ -46,9 +66,20 @@ internal object GfnWebRtcRuntime {
             )
             .createAudioDeviceModule()
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglContext())
-        decoderCodecNames = videoDecoderFactory.supportedCodecs
+        val supportedDecoderCodecs = videoDecoderFactory.supportedCodecs.toList()
+        decoderCodecNames = supportedDecoderCodecs
             .map { it.name.uppercase() }
             .toSortedSet()
+        decoderCodecCapabilities = supportedDecoderCodecs.mapIndexed { index, codec ->
+            GfnVideoCodecCapabilitySnapshot(
+                source = "DefaultVideoDecoderFactory",
+                index = index,
+                name = codec.name,
+                mimeType = "video/${codec.name}",
+                clockRate = 90_000,
+                parameters = codec.params.orEmpty().toSortedMap(),
+            )
+        }
         val created = try {
             PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm)
@@ -61,6 +92,10 @@ internal object GfnWebRtcRuntime {
             // PeerConnectionFactory 在创建时取得 ADM 的 native 引用；调用方释放自己的引用。
             adm.release()
         }
+        receiverCodecCapabilities = created
+            .getRtpReceiverCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO)
+            .codecs
+            .mapIndexed { index, codec -> codec.toSnapshot("PeerConnectionFactory.receiver", index) }
         factory = created
         created
     }
@@ -69,6 +104,35 @@ internal object GfnWebRtcRuntime {
         factory(context)
         return synchronized(lock) { decoderCodecNames.toSet() }
     }
+
+    fun decoderCodecCapabilities(context: Context): List<GfnVideoCodecCapabilitySnapshot> {
+        factory(context)
+        return synchronized(lock) { decoderCodecCapabilities.toList() }
+    }
+
+    fun receiverCodecCapabilities(context: Context): List<GfnVideoCodecCapabilitySnapshot> {
+        factory(context)
+        return synchronized(lock) { receiverCodecCapabilities.toList() }
+    }
+
+    fun liveVideoReceiverCodecCapabilities(context: Context): List<RtpCapabilities.CodecCapability> =
+        factory(context)
+            .getRtpReceiverCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO)
+            .codecs
+            .toList()
+
+    private fun RtpCapabilities.CodecCapability.toSnapshot(
+        source: String,
+        index: Int,
+    ): GfnVideoCodecCapabilitySnapshot = GfnVideoCodecCapabilitySnapshot(
+        source = source,
+        index = index,
+        preferredPayloadType = preferredPayloadType,
+        name = name,
+        mimeType = mimeType,
+        clockRate = clockRate,
+        parameters = parameters.orEmpty().toSortedMap(),
+    )
 
     /**
      * WebRTC NetworkMonitor 会通过 ConnectivityManager 注册网络回调。

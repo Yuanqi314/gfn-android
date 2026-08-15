@@ -241,6 +241,10 @@ data class VideoDiagnostics(
     val requestedCodec: String = "H264",
     val negotiatedCodec: String? = null,
     val localDecoderCodecs: List<String> = emptyList(),
+    val localReceiverCodecs: List<String> = emptyList(),
+    val preAnswerCodecPreferenceAttempted: Boolean = false,
+    val preAnswerCodecPreferenceApplied: Boolean = false,
+    val preAnswerCodecPreferenceError: String? = null,
     val codecFallbackUsed: Boolean = false,
     val codecFallbackReason: String? = null,
     val remoteVideoTrackPresent: Boolean = false,
@@ -266,6 +270,7 @@ data class ReconnectDiagnostics(
 data class StreamDiagnostics(
     val signaling: SignalingDiagnostics = SignalingDiagnostics(),
     val offer: SdpDiagnostics = SdpDiagnostics(),
+    val rawAnswer: SdpDiagnostics = SdpDiagnostics(),
     val answer: SdpDiagnostics = SdpDiagnostics(),
     val ice: IceDiagnostics = IceDiagnostics(),
     val video: VideoDiagnostics = VideoDiagnostics(),

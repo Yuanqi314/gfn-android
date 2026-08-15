@@ -228,13 +228,24 @@ KT
 cat > "$BUILD/runtime/WebRtc.kt" <<'KT'
 package org.webrtc
 class EglBase { val eglBaseContext: Context = Context(); class Context; companion object { fun create()=EglBase() } }
-class VideoCodecInfo(val name:String)
-class DefaultVideoDecoderFactory(c:EglBase.Context) { val supportedCodecs: Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"), VideoCodecInfo("H265")) }
+class VideoCodecInfo(val name:String, val params:Map<String,String> = emptyMap())
+class DefaultVideoDecoderFactory(c:EglBase.Context) { val supportedCodecs: Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"), VideoCodecInfo("H265", mapOf("profile-id" to "1"))) }
 class DefaultVideoEncoderFactory(c:EglBase.Context, a:Boolean, b:Boolean)
+open class MediaStreamTrack { enum class MediaType { MEDIA_TYPE_VIDEO, MEDIA_TYPE_AUDIO, MEDIA_TYPE_DATA } }
+class RtpCapabilities(val codecs:List<CodecCapability> = emptyList()) {
+    class CodecCapability(
+        var preferredPayloadType:Int=0,
+        var name:String="",
+        var clockRate:Int?=90_000,
+        var parameters:Map<String,String>?=emptyMap(),
+        var mimeType:String?=null,
+    )
+}
 class PeerConnectionFactory {
     class InitializationOptions { companion object { fun builder(c:android.content.Context)=Builder() }; class Builder { fun setEnableInternalTracer(v:Boolean)=this; fun createInitializationOptions()=InitializationOptions() } }
     class Builder { fun setAudioDeviceModule(v:org.webrtc.audio.JavaAudioDeviceModule)=this; fun setVideoEncoderFactory(v:DefaultVideoEncoderFactory)=this; fun setVideoDecoderFactory(v:DefaultVideoDecoderFactory)=this; fun createPeerConnectionFactory()=PeerConnectionFactory() }
     companion object { fun initialize(v:InitializationOptions)=Unit; fun builder()=Builder() }
+    fun getRtpReceiverCapabilities(type:MediaStreamTrack.MediaType)=RtpCapabilities(listOf(RtpCapabilities.CodecCapability(96,"H265",90_000,mapOf("profile-id" to "1"),"video/H265")))
 }
 KT
 cat > "$BUILD/runtime/WebRtcAudio.kt" <<'KT'

@@ -260,7 +260,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v6.0 HEVC Main SDR8",
+                "独立 Android GFN 客户端 · v6.0.1 HEVC Negotiation Compat",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -605,7 +605,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v6.0 HEVC Main SDR8 继续使用不可变 ResolvedLaunchProfile；H.264 保持 fallback，键盘 packet 语义保持 v5.1.9 soft-freeze。")
+            Text("v6.0.1 在不可变 ResolvedLaunchProfile 上增加 HEVC Main pre-createAnswer codec preference 与完整 Logcat 取证；H.264 保持 fallback。")
         }
 
         if (resumeRecord != null) {
@@ -918,11 +918,16 @@ private fun DiagnosticsScreen(
                     "Offer H264 PT" to streamDiagnostics.offer.h264PayloadTypes.joinToString().ifBlank { "-" },
                     "Offer HEVC PT" to streamDiagnostics.offer.hevcPayloadTypes.joinToString().ifBlank { "-" },
                     "Offer HEVC Main PT" to streamDiagnostics.offer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
-                    "Answer" to streamDiagnostics.answer.answerPresent.asYesNo(),
-                    "Answer codecs" to streamDiagnostics.answer.videoCodecs.joinToString().ifBlank { "-" },
-                    "Answer H264 PT" to streamDiagnostics.answer.h264PayloadTypes.joinToString().ifBlank { "-" },
-                    "Answer HEVC PT" to streamDiagnostics.answer.hevcPayloadTypes.joinToString().ifBlank { "-" },
-                    "Answer HEVC Main PT" to streamDiagnostics.answer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
+                    "Raw Answer" to streamDiagnostics.rawAnswer.answerPresent.asYesNo(),
+                    "Raw Answer codecs" to streamDiagnostics.rawAnswer.videoCodecs.joinToString().ifBlank { "-" },
+                    "Raw Answer H264 PT" to streamDiagnostics.rawAnswer.h264PayloadTypes.joinToString().ifBlank { "-" },
+                    "Raw Answer HEVC PT" to streamDiagnostics.rawAnswer.hevcPayloadTypes.joinToString().ifBlank { "-" },
+                    "Raw Answer HEVC Main PT" to streamDiagnostics.rawAnswer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
+                    "Final Answer" to streamDiagnostics.answer.answerPresent.asYesNo(),
+                    "Final Answer codecs" to streamDiagnostics.answer.videoCodecs.joinToString().ifBlank { "-" },
+                    "Final Answer H264 PT" to streamDiagnostics.answer.h264PayloadTypes.joinToString().ifBlank { "-" },
+                    "Final Answer HEVC PT" to streamDiagnostics.answer.hevcPayloadTypes.joinToString().ifBlank { "-" },
+                    "Final Answer HEVC Main PT" to streamDiagnostics.answer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
                     "ICE ufrag/pwd" to "${streamDiagnostics.answer.iceUfragPresent.asYesNo()}/${streamDiagnostics.answer.icePasswordPresent.asYesNo()}",
                     "DTLS fingerprint" to streamDiagnostics.answer.dtlsFingerprintPresent.asYesNo(),
                 ),
@@ -1022,6 +1027,14 @@ private fun DiagnosticsScreen(
                     "Requested codec" to streamDiagnostics.video.requestedCodec,
                     "Negotiated codec" to (streamDiagnostics.video.negotiatedCodec ?: "-"),
                     "Local decoder codecs" to streamDiagnostics.video.localDecoderCodecs.joinToString().ifBlank { "-" },
+                    "Local receiver codecs" to streamDiagnostics.video.localReceiverCodecs.joinToString().ifBlank { "-" },
+                    "Pre-answer preference" to when {
+                        streamDiagnostics.video.preAnswerCodecPreferenceApplied -> "APPLIED"
+                        streamDiagnostics.video.preAnswerCodecPreferenceAttempted -> "ATTEMPTED / NOT APPLIED"
+                        else -> "NOT REQUIRED / NOT ATTEMPTED"
+                    },
+                    "Preference error" to (streamDiagnostics.video.preAnswerCodecPreferenceError ?: "-"),
+                    "Logcat tag" to "GfnHevcCompat",
                     "Codec fallback" to streamDiagnostics.video.codecFallbackUsed.asYesNo(),
                     "Fallback reason" to (streamDiagnostics.video.codecFallbackReason ?: "-"),
                     "Color" to "SDR8（Main10/HDR 未启用）",
@@ -1037,7 +1050,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "后续能力（v6.0 未启用）",
+                "后续能力（v6.0.1 未启用）",
                 listOf(
                     "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
                     "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
@@ -1300,7 +1313,7 @@ private fun SettingsScreen(
                     Text("v5.2.1：同 Session RESUME/Claim → 新 Signaling / PeerConnection / DataChannel")
                     Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
                     Text("v5.4 Audio：2ch Stereo；6ch multiopus 模式真机可正常播放；离散 Native 5.1 仍未验证。")
-                    Text("v6.0 HEVC Main SDR8：已实现；仍未开放 Main10 / HDR / 120 FPS。")
+                    Text("v6.0.1 HEVC Main negotiation compatibility：pre-answer preference + Logcat evidence；仍未开放 Main10 / HDR / 120 FPS。")
                 }
             }
         }

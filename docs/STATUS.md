@@ -1,4 +1,4 @@
-# 当前状态 · v6.0 HEVC Main / SDR8
+# 当前状态 · v6.0.1 HEVC Main Negotiation Compatibility
 
 ## 真机已确认
 
@@ -87,6 +87,21 @@ CloudMatch 6ch request
 discrete 5.1 channel separation
 native 6-channel Android playout
 ```
+
+
+## v6.0 真机裁决 / v6.0.1 当前目标
+
+真机已经确认：
+
+```text
+Requested codec = Hevc
+Local decoder codecs includes H265
+Negotiated codec = H264
+Codec fallback = YES
+Reason = libwebrtc createAnswer 未接受 HEVC Main；同 Session 回退 H264
+```
+
+因此 H264 fallback PASS，但 HEVC Main negotiated/decoded/rendered 尚未 PASS。v6.0.1 第一优先级是 `receiver capability + raw createAnswer + pre-createAnswer setCodecPreferences`；Main10/HDR 继续禁止进入。统一 Logcat tag：`GfnHevcCompat`。
 
 ## v6.0 HEVC Main / SDR8
 

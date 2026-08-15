@@ -117,10 +117,35 @@ import dev.gfn.stream.InputDiagnostics
 import java.nio.ByteBuffer
 import org.webrtc.DataChannel
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpCapabilities
+
+data class GfnVideoCodecCapabilitySnapshot(
+    val source: String,
+    val index: Int,
+    val preferredPayloadType: Int? = null,
+    val name: String,
+    val mimeType: String? = null,
+    val clockRate: Int? = null,
+    val parameters: Map<String, String> = emptyMap(),
+) {
+    val normalizedName: String get() = if (name.equals("HEVC", ignoreCase = true)) "H265" else name.uppercase()
+}
 
 object GfnWebRtcRuntime {
     fun factory(context: Context): PeerConnectionFactory = PeerConnectionFactory()
     fun decoderCodecNames(context: Context): Set<String> = setOf("H264", "H265")
+    fun decoderCodecCapabilities(context: Context): List<GfnVideoCodecCapabilitySnapshot> = listOf(
+        GfnVideoCodecCapabilitySnapshot("DefaultVideoDecoderFactory", 0, name = "H264"),
+        GfnVideoCodecCapabilitySnapshot("DefaultVideoDecoderFactory", 1, name = "H265", parameters = mapOf("profile-id" to "1")),
+    )
+    fun receiverCodecCapabilities(context: Context): List<GfnVideoCodecCapabilitySnapshot> = listOf(
+        GfnVideoCodecCapabilitySnapshot("PeerConnectionFactory.receiver", 0, 96, "H265", "video/H265", 90_000, mapOf("profile-id" to "1")),
+        GfnVideoCodecCapabilitySnapshot("PeerConnectionFactory.receiver", 1, 97, "H264", "video/H264", 90_000),
+    )
+    fun liveVideoReceiverCodecCapabilities(context: Context): List<RtpCapabilities.CodecCapability> = listOf(
+        RtpCapabilities.CodecCapability(96, "H265", mapOf("profile-id" to "1"), "video/H265"),
+        RtpCapabilities.CodecCapability(97, "H264", emptyMap(), "video/H264"),
+    )
 }
 data class GfnAudioRouteSnapshot(val likelyMaxChannels: Int? = 2, val summary: String = "stub")
 object GfnAndroidAudioRouteProbe { fun detect(context: Context): GfnAudioRouteSnapshot = GfnAudioRouteSnapshot() }
@@ -243,7 +268,27 @@ open class RtpReceiver {
     fun SetObserver(observer: Observer) = Unit
     fun track(): MediaStreamTrack? = null
 }
-class RtpTransceiver { val receiver: RtpReceiver = RtpReceiver() }
+class RtcException(message: String) : RuntimeException(message)
+class RtcError(private val value: RtcException? = null) {
+    val isError: Boolean get() = value != null
+    val isSuccess: Boolean get() = value == null
+    fun error(): RtcException? = value
+}
+class RtpCapabilities(val codecs: List<CodecCapability> = emptyList()) {
+    class CodecCapability(
+        var preferredPayloadType: Int = 0,
+        var name: String = "",
+        var parameters: Map<String, String>? = emptyMap(),
+        var mimeType: String? = null,
+        var clockRate: Int? = 90_000,
+    )
+}
+class RtpTransceiver {
+    val receiver: RtpReceiver = RtpReceiver()
+    val mediaType: MediaStreamTrack.MediaType = MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO
+    val mid: String? = "video"
+    fun setCodecPreferences(codecs: List<RtpCapabilities.CodecCapability>): RtcError = RtcError()
+}
 
 open class PeerConnection {
     enum class SdpSemantics { UNIFIED_PLAN }
@@ -280,6 +325,7 @@ open class PeerConnection {
         fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>)
         fun onTrack(transceiver: RtpTransceiver)
     }
+    val transceivers: List<RtpTransceiver> = listOf(RtpTransceiver())
     fun createDataChannel(label: String, init: DataChannel.Init): DataChannel? = DataChannel()
     fun setRemoteDescription(observer: SdpObserver, description: SessionDescription) = observer.onSetSuccess()
     fun createAnswer(observer: SdpObserver, constraints: MediaConstraints) = Unit
@@ -304,9 +350,11 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$ROOT/stream-signaling/src/main/kotlin/dev/gfn/signaling/GfnSignalingProtocol.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnGamepadInputController.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoCodecNegotiationPolicy.kt" \
+  "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevcNegotiationCompat.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt" \
   -d "$BUILD/check.jar" > "$BUILD/compile.log" 2>&1
 
 test -s "$BUILD/check.jar"
 echo 'V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS'
 echo 'V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS'
+echo 'V601_WEBRTC_ENGINE_HEVC_COMPAT_API_SHAPED_COMPILE=PASS'

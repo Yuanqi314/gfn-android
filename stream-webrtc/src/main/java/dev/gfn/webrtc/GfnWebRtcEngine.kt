@@ -38,7 +38,7 @@ import org.webrtc.SessionDescription
 import org.json.JSONObject
 import org.webrtc.VideoTrack
 
-/** v6.0: Claimed Session -> GFN WSS -> SDP -> ICE -> H.264/HEVC Main SDR8 + audio -> SurfaceViewRenderer。 */
+/** v6.0.1: HEVC Main pre-answer preference + full negotiation evidence; Main10/HDR remain disabled. */
 class GfnWebRtcEngine(
     context: Context,
     private val listener: Listener,
@@ -53,6 +53,14 @@ class GfnWebRtcEngine(
     private val appContext: Context = context.applicationContext
     private val factory: PeerConnectionFactory = GfnWebRtcRuntime.factory(appContext)
     private val localDecoderCodecs: Set<String> = GfnWebRtcRuntime.decoderCodecNames(appContext)
+    private val localDecoderCapabilities: List<GfnVideoCodecCapabilitySnapshot> =
+        GfnWebRtcRuntime.decoderCodecCapabilities(appContext)
+    private val localReceiverCapabilities: List<GfnVideoCodecCapabilitySnapshot> =
+        GfnWebRtcRuntime.receiverCodecCapabilities(appContext)
+    private val localReceiverCodecNames: List<String> = localReceiverCapabilities
+        .map { it.normalizedName }
+        .distinct()
+        .sorted()
     private val lock = Any()
     private val generation = AtomicLong(0)
 
@@ -107,6 +115,12 @@ class GfnWebRtcEngine(
                 return
             }
         val currentGeneration = generation.incrementAndGet()
+        GfnHevcCompatLog.sessionStart(
+            generation = currentGeneration,
+            requestedCodec = config.codec,
+            decoderCapabilities = localDecoderCapabilities,
+            receiverCapabilities = localReceiverCapabilities,
+        )
         val audioRoute = GfnAndroidAudioRouteProbe.detect(appContext)
         synchronized(lock) {
             this.session = session
@@ -151,6 +165,7 @@ class GfnWebRtcEngine(
                 video = VideoDiagnostics(
                     requestedCodec = config.codec.name,
                     localDecoderCodecs = localDecoderCodecs.sorted(),
+                    localReceiverCodecs = localReceiverCodecNames,
                     decoderPath = decoderPathFor(config.codec),
                 ),
             )
@@ -350,6 +365,7 @@ class GfnWebRtcEngine(
         if (generation.get() != eventGeneration) return
         val currentSession = synchronized(lock) { session } ?: return
         val offerSummary = GfnSdpTools.summarize(offerSdp, isOffer = true)
+        GfnHevcCompatLog.sdp(eventGeneration, "OFFER", offerSdp)
         val requestedAudioName = if (config.audioChannels >= 6) "multiopus" else "opus"
         val requestedOfferAudio = GfnSdpTools.firstAudioCodec(offerSdp, requestedAudioName)
         val multiopusOffer = GfnSdpTools.firstAudioCodec(offerSdp, "multiopus")
@@ -402,6 +418,7 @@ class GfnWebRtcEngine(
                     if (generation.get() != eventGeneration) return@setObserver
                     synchronized(lock) { remoteDescriptionReady = true }
                     flushRemoteIce()
+                    applyPreAnswerVideoCodecPreference(pc, eventGeneration)
                     createAnswer(pc, fixedOffer, eventGeneration)
                 },
                 onFailure = { fail("setRemoteDescription 失败：$it") },
@@ -788,16 +805,157 @@ class GfnWebRtcEngine(
             return null
         }
         videoCodecFallbackReason = decision.fallbackReason
+        GfnHevcCompatLog.decision(
+            generation = generation.get(),
+            stage = "OFFER",
+            requested = config.codec,
+            effective = decision.codec,
+            fallbackReason = decision.fallbackReason,
+        )
         updateVideo {
             it.copy(
                 negotiatedCodec = decision.codec.name,
                 localDecoderCodecs = localDecoderCodecs.sorted(),
+                localReceiverCodecs = localReceiverCodecNames,
                 codecFallbackUsed = decision.fallbackReason != null,
                 codecFallbackReason = decision.fallbackReason,
                 decoderPath = decoderPathFor(decision.codec),
             )
         }
         return decision.codec
+    }
+
+    /**
+     * v6.0.1 single-variable compatibility experiment. This runs only after the remote Offer has
+     * been applied (so Unified Plan has materialized the receive transceivers) and strictly before
+     * createAnswer(). Failure is diagnostic-only: the existing raw-answer/H.264 fallback path must
+     * remain available instead of turning a preference API error into a session failure.
+     */
+    private fun applyPreAnswerVideoCodecPreference(pc: PeerConnection, eventGeneration: Long) {
+        if (generation.get() != eventGeneration) return
+        val selected = synchronized(lock) { effectiveVideoCodec }
+        if (selected != VideoCodecPreference.Hevc) {
+            GfnHevcCompatLog.preferenceApply(
+                generation = eventGeneration,
+                attempted = false,
+                applied = false,
+                transceiverMid = null,
+                reason = "effectiveCodec=${selected.name}; HEVC preference not required",
+            )
+            updateVideo {
+                it.copy(
+                    preAnswerCodecPreferenceAttempted = false,
+                    preAnswerCodecPreferenceApplied = false,
+                    preAnswerCodecPreferenceError = null,
+                )
+            }
+            return
+        }
+
+        val liveCapabilities = runCatching {
+            GfnWebRtcRuntime.liveVideoReceiverCodecCapabilities(appContext)
+        }.getOrElse { error ->
+            val reason = "receiver capability query failed: ${error.message ?: error.javaClass.simpleName}"
+            GfnHevcCompatLog.preferenceApply(
+                generation = eventGeneration,
+                attempted = true,
+                applied = false,
+                transceiverMid = null,
+                reason = reason,
+            )
+            updateVideo {
+                it.copy(
+                    preAnswerCodecPreferenceAttempted = true,
+                    preAnswerCodecPreferenceApplied = false,
+                    preAnswerCodecPreferenceError = reason,
+                )
+            }
+            return
+        }
+        val plan = GfnHevcCodecPreferencePlanner.build(liveCapabilities)
+        GfnHevcCompatLog.preferencePlan(eventGeneration, plan)
+        if (!plan.hasHevcCandidate || plan.orderedCapabilities.isEmpty()) {
+            val reason = "receiver capability list has no H265 Main/generic candidate"
+            GfnHevcCompatLog.preferenceApply(
+                generation = eventGeneration,
+                attempted = true,
+                applied = false,
+                transceiverMid = null,
+                reason = reason,
+            )
+            updateVideo {
+                it.copy(
+                    preAnswerCodecPreferenceAttempted = true,
+                    preAnswerCodecPreferenceApplied = false,
+                    preAnswerCodecPreferenceError = reason,
+                )
+            }
+            return
+        }
+
+        val transceiver = runCatching {
+            pc.transceivers.firstOrNull { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO }
+        }.getOrElse { error ->
+            val reason = "video transceiver query failed: ${error.message ?: error.javaClass.simpleName}"
+            GfnHevcCompatLog.preferenceApply(
+                generation = eventGeneration,
+                attempted = true,
+                applied = false,
+                transceiverMid = null,
+                reason = reason,
+            )
+            updateVideo {
+                it.copy(
+                    preAnswerCodecPreferenceAttempted = true,
+                    preAnswerCodecPreferenceApplied = false,
+                    preAnswerCodecPreferenceError = reason,
+                )
+            }
+            return
+        }
+        if (transceiver == null) {
+            val reason = "no video transceiver after setRemoteDescription"
+            GfnHevcCompatLog.preferenceApply(
+                generation = eventGeneration,
+                attempted = true,
+                applied = false,
+                transceiverMid = null,
+                reason = reason,
+            )
+            updateVideo {
+                it.copy(
+                    preAnswerCodecPreferenceAttempted = true,
+                    preAnswerCodecPreferenceApplied = false,
+                    preAnswerCodecPreferenceError = reason,
+                )
+            }
+            return
+        }
+
+        val result = runCatching { transceiver.setCodecPreferences(plan.orderedCapabilities) }
+        val failure = result.exceptionOrNull()
+        val rtcError = result.getOrNull()
+        val errorText = when {
+            failure != null -> failure.message ?: failure.javaClass.simpleName
+            rtcError == null -> "setCodecPreferences returned null"
+            rtcError.isError -> rtcError.error()?.message ?: "setCodecPreferences rejected the list"
+            else -> null
+        }
+        val applied = errorText == null
+        GfnHevcCompatLog.preferenceApply(
+            generation = eventGeneration,
+            attempted = true,
+            applied = applied,
+            transceiverMid = runCatching { transceiver.mid }.getOrNull(),
+            reason = errorText ?: "H265 Main/generic -> H264 -> auxiliary",
+        )
+        updateVideo {
+            it.copy(
+                preAnswerCodecPreferenceAttempted = true,
+                preAnswerCodecPreferenceApplied = applied,
+                preAnswerCodecPreferenceError = errorText,
+            )
+        }
     }
 
     private fun selectVideoCodecInAnswer(rawAnswer: String): String? {
@@ -824,10 +982,18 @@ class GfnWebRtcEngine(
         }
         if (decision.codec != selected) synchronized(lock) { effectiveVideoCodec = decision.codec }
         if (decision.fallbackReason != null) videoCodecFallbackReason = decision.fallbackReason
+        GfnHevcCompatLog.decision(
+            generation = generation.get(),
+            stage = "RAW_ANSWER",
+            requested = config.codec,
+            effective = decision.codec,
+            fallbackReason = videoCodecFallbackReason,
+        )
         updateVideo {
             it.copy(
                 negotiatedCodec = decision.codec.name,
                 localDecoderCodecs = localDecoderCodecs.sorted(),
+                localReceiverCodecs = localReceiverCodecNames,
                 codecFallbackUsed = videoCodecFallbackReason != null,
                 codecFallbackReason = videoCodecFallbackReason,
                 decoderPath = decoderPathFor(decision.codec),
@@ -841,7 +1007,24 @@ class GfnWebRtcEngine(
             object : SdpObserver {
                 override fun onCreateSuccess(description: SessionDescription) {
                     if (generation.get() != eventGeneration) return
-                    val videoAnswer = selectVideoCodecInAnswer(description.description) ?: return
+                    val rawAnswer = description.description
+                    GfnHevcCompatLog.sdp(eventGeneration, "RAW_ANSWER", rawAnswer)
+                    val rawAnswerSummary = GfnSdpTools.summarize(rawAnswer, isOffer = false)
+                    updateDiagnostics {
+                        it.copy(
+                            rawAnswer = SdpDiagnostics(
+                                answerPresent = true,
+                                videoCodecs = rawAnswerSummary.videoCodecs,
+                                h264PayloadTypes = rawAnswerSummary.h264PayloadTypes,
+                                hevcPayloadTypes = rawAnswerSummary.hevcPayloadTypes,
+                                hevcMainPayloadTypes = rawAnswerSummary.hevcMainPayloadTypes,
+                                iceUfragPresent = rawAnswerSummary.iceUfragPresent,
+                                icePasswordPresent = rawAnswerSummary.icePasswordPresent,
+                                dtlsFingerprintPresent = rawAnswerSummary.dtlsFingerprintPresent,
+                            ),
+                        )
+                    }
+                    val videoAnswer = selectVideoCodecInAnswer(rawAnswer) ?: return
                     val audioMunge = GfnSdpTools.mungeAudioAnswer(
                         answer = videoAnswer,
                         offer = offerSdp,
@@ -867,6 +1050,7 @@ class GfnWebRtcEngine(
                         config.maxBitrateKbps,
                         audioKbps = audioKbps,
                     )
+                    GfnHevcCompatLog.sdp(eventGeneration, "FINAL_ANSWER", bounded)
                     val answerSummary = GfnSdpTools.summarize(bounded, isOffer = false)
                     val answerAudio = GfnSdpTools.firstAudioCodec(
                         bounded,
@@ -893,10 +1077,18 @@ class GfnWebRtcEngine(
                         fail("生成的 Answer 未保留 ${finalCodec.name} 可用 payload；停止连接。")
                         return
                     }
+                    GfnHevcCompatLog.decision(
+                        generation = eventGeneration,
+                        stage = "FINAL_ANSWER",
+                        requested = config.codec,
+                        effective = finalCodec,
+                        fallbackReason = videoCodecFallbackReason,
+                    )
                     updateVideo { current ->
                         current.copy(
                             negotiatedCodec = finalCodec.name,
                             localDecoderCodecs = localDecoderCodecs.sorted(),
+                            localReceiverCodecs = localReceiverCodecNames,
                             codecFallbackUsed = videoCodecFallbackReason != null,
                             codecFallbackReason = videoCodecFallbackReason,
                             decoderPath = decoderPathFor(finalCodec),
@@ -1030,7 +1222,15 @@ class GfnWebRtcEngine(
         receiver.SetObserver(object : RtpReceiver.Observer {
             override fun onFirstPacketReceived(mediaType: MediaStreamTrack.MediaType) {
                 when (mediaType) {
-                    MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO -> updateVideo { it.copy(firstRtpPacketReceived = true) }
+                    MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO -> {
+                        val effective = synchronized(lock) { effectiveVideoCodec }
+                        GfnHevcCompatLog.milestone(
+                            generation = generation.get(),
+                            stage = "FIRST_VIDEO_RTP",
+                            effective = effective,
+                        )
+                        updateVideo { it.copy(firstRtpPacketReceived = true) }
+                    }
                     MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO -> updateAudio { it.copy(firstRtpPacketReceived = true) }
                     else -> Unit
                 }
@@ -1061,6 +1261,13 @@ class GfnWebRtcEngine(
     }
 
     private fun onFirstFrameRendered() {
+        val effective = synchronized(lock) { effectiveVideoCodec }
+        GfnHevcCompatLog.milestone(
+            generation = generation.get(),
+            stage = "FIRST_FRAME",
+            effective = effective,
+            detail = decoderPathFor(effective),
+        )
         updateVideo { it.copy(firstFrameRendered = true) }
         setState(StreamState.FirstFrame)
     }

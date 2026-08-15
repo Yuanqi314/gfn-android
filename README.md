@@ -1,8 +1,46 @@
-# GFN Android Lab · v6.0 HEVC Main / SDR8
+# GFN Android Lab · v6.0.1 HEVC Main Negotiation Compatibility
 
-这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已经确认 H.264/1080p60、键鼠、Session keyboard layout、stream settings、same-session reconnect 主链以及 experimental 6ch 音频播放可工作。v6.0 在此稳定基线上只新增 **HEVC Main (`profile-id=1`) + SDR8**，H.264 继续作为同 Session fallback；Main10/HDR/AV1 不混入本轮。
+这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已经确认 H.264/1080p60、键鼠、Session keyboard layout、stream settings、same-session reconnect 主链以及 experimental 6ch 音频播放可工作。v6.0 真机已证明 HEVC 请求会走到 Answer 阶段，但 raw negotiation 最终回退 H.264。v6.0.1 在同一 SDR8 边界上只新增 **pre-createAnswer H265 Main codec preference + 完整 Logcat 证据链**；Main10/HDR/AV1 继续冻结。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
+
+## v6.0.1 本轮新增
+
+```text
+GFN Offer H265 fmtp / RTX
++ DefaultVideoDecoderFactory params
++ PeerConnectionFactory receiver capabilities
+        ↓ Logcat: GfnHevcCompat
+setRemoteDescription
+        ↓
+RtpTransceiver.setCodecPreferences(
+  H265 Main -> generic H265 -> H264 -> auxiliary
+)
+        ↓
+createAnswer
+        ↓
+RAW_ANSWER evidence
+        ↓
+FINAL_ANSWER + existing H264 fallback
+```
+
+本版不做 `tier-flag`/`level-id` rewrite；只有本轮真机证据明确指向某个 fmtp 字段后，才允许下一次单字段实验。
+
+Logcat：
+
+```text
+adb logcat -v time GfnHevcCompat:I '*:S'
+```
+
+验证入口：
+
+```text
+./verify-hevc-compat.sh
+./verify-hevc.sh
+./verify-reconnect-engine.sh
+```
+
+详细见 `docs/V6_0_1_HEVC_NEGOTIATION_COMPAT.md`、`docs/V6_0_1_REFERENCE_ADOPTION.md`、`docs/V6_0_1_TEST_GUIDE.md`。
 
 ## v6.0 本轮新增
 

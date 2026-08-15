@@ -165,7 +165,7 @@ object GfnStreamSettingsResolver {
         ) {
             throw StreamProfileResolutionException(
                 "账号 entitlement 未包含 ${resolution.width}x${resolution.height}@$fps；" +
-                    "v6.0 当前 Android WebRTC 引擎只开放 1080p60 SDR8。",
+                    "v6.0.1 当前 Android WebRTC 引擎只开放 1080p60 SDR8。",
             )
         }
 
@@ -208,7 +208,7 @@ object GfnStreamSettingsResolver {
                     capabilities.frameRates.any { fps -> it.fps >= fps }
             }
         } ?: throw StreamProfileResolutionException(
-            "账号 entitlement 与 v6.0 当前引擎能力没有交集；当前仅开放 1920x1080@60。",
+            "账号 entitlement 与 v6.0.1 当前引擎能力没有交集；当前仅开放 1920x1080@60。",
         )
     }
 

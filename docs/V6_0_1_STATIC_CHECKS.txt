@@ -1,0 +1,18 @@
+v6.0.1 HEVC Main Negotiation Compatibility — actual checks
+
+V601_PREANSWER_CALL_ORDER=PASS
+V601_HEVC_COMPAT_STATIC_GUARDS=PASS
+V601_HEVC_SDP_DETAIL_FIXTURE=PASS
+V601_HEVC_PREFERENCE_PLANNER=PASS
+V601_LOGCAT_PHASE_FIXTURE=PASS
+V601_WEBRTC_ENGINE_HEVC_COMPAT_API_SHAPED_COMPILE=PASS
+V600_HEVC_VERIFY=PASS
+V601_FROZEN_PRODUCTION_PATHS_BYTE_IDENTICAL=PASS
+V601_VERIFY_SHELL_SYNTAX=PASS
+
+Guarded boundaries:
+- Main10/HDR/AV1 are outside this version.
+- No tier-flag rewrite is present in production v6.0.1.
+- No level-id rewrite is present in production v6.0.1.
+- Remote Offer PT is never compared numerically with local receiver preferredPayloadType to classify codec compatibility.
+- Full SDP, ICE password and auth tokens are not emitted by GfnHevcCompat logs.

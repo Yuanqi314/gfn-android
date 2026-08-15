@@ -231,3 +231,20 @@ First frame          = true
 ```
 
 If video renders while `Negotiated codec=H264` or `Codec fallback=true`, that is a successful fallback test, not a successful HEVC test.
+
+
+---
+
+## HEVC — v6.0.1 negotiation compatibility
+
+| Layer | CloudNow witness | OpenNOW witness | gfn-android v6.0.1 |
+|---|---|---|---|
+| H265 Main / Main10 separation | Yes | Yes | Main only, SDR8 |
+| Full receiver capability evidence | decoder/factory aware | receiver capability aware | `PeerConnectionFactory.getRtpReceiverCapabilities(VIDEO)` Logcat |
+| Pre-createAnswer preference | platform negotiation path | explicit pre-answer hook + codec preferences | `RtpTransceiver.setCodecPreferences` |
+| Raw createAnswer evidence | SDP munging tests | explicit raw/final negotiation flow | `RAW_ANSWER(_CODEC)` Logcat + diagnostics |
+| H264 fallback | Yes | Yes | retained |
+| tier/level rewrite | exists | exists | **not adopted yet** |
+| Main10/HDR | exists separately | exists separately | **not enabled** |
+
+The v6.0 true-device result selected HEVC but negotiated H264. v6.0.1 therefore targets the earlier PeerConnection negotiation layer before changing any H265 fmtp field.
