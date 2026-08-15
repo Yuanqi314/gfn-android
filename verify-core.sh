@@ -116,10 +116,10 @@ CLOUDMATCH_LAYOUT_QUERIES=$(grep -Fc 'keyboardLayout=${enc(request.keyboardLayou
 echo 'V520_STREAM_SETTINGS_SNAPSHOT_GUARDS=PASS'
 ./verify-stream-settings.sh
 
-# v6.0 HEVC Main / SDR8 regression plus v6.0.3 tier A/B Answer-lineage continuation.
-./verify-hevc.sh
-./verify-hevc-compat.sh
-./verify-hevc-answer-lineage.sh
+# v6.0.4 HEVC Main / SDR8 production capability regression.
+sh ./verify-hevc.sh
+sh ./verify-hevc-production.sh
+sh ./verify-hevc-answer-lineage.sh
 
 # v5.4 audio: native stereo output plus explicit experimental multiopus/downmix probe.
 ./verify-audio.sh

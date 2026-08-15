@@ -1,131 +1,53 @@
-# Current v6.0.3 HEVC diagnostic result
+# Current v6.0.4 HEVC Main production candidate
 
-True-device `43.log` proves the v6.0.2 tier-only A/B succeeded at the libwebrtc codec intersection: after `tier-flag=1 -> 0`, RAW_ANSWER contains H265 PT 103. The remaining H264 result came from the app's old explicit-profile Answer policy because libwebrtc emitted H265 with `level-id=93` but omitted `profile-id` and `tier-flag`.
+## 已确认的真机基线
 
-v6.0.3 keeps the diagnostic tier rewrite and adds session-local Offer/Answer HEVC Main lineage. It does not accept arbitrary generic H265 and does not enable Main10/HDR. The next true-device target is HEVC final Answer, HEVC RTP, `video/hevc` decoder creation, and first frame.
-
-# 当前状态 · v6.0.2 HEVC Main Tier-Flag A/B
-
-## 真机已确认
+v6.0.3 `44.log` 已完成实验路径的 negotiated + decoded + rendered 闭环：
 
 ```text
-Auth / restart restore                         ✅
-Membership / Library / Catalog                 ✅
-Search / Game Detail                           ✅
-CloudMatch Create / Provision                  ✅
-Claim / RESUME                                 ✅
-GFN WebSocket / SDP / ICE                      ✅
-H.264 RTP / Decode / Surface                   ✅
-Audio playback                                 ✅
-Wheel direction                                ✅
-Fullscreen landscape / aspect fit              ✅
-control_channel Session End                    ✅
-Keyboard / Mouse stable baseline               ✅
-Cyberpunk 2077 keyboardLayout=en-US fix        ✅
-CS2 keyboard regression                        ✅
-Stream settings snapshot                       ✅
-1920x1080@60 H.264 / 2ch / 100 Mbps            ✅ 当前环境
-experimental 6ch mode audio playback           ✅ 当前环境
-same-session reconnect keeps Session ID        ✅
+effective=Hevc
+→ c2.qti.hevc.decoder
+→ FIRST_FRAME effective=Hevc
+→ sustained ~60fps decode/render
 ```
 
-`6ch mode audio playback ✅` 只表示开启 6ch 后串流音频可正常播放；**没有做离散 5.1 声道素材验证，因此不能标记为 native/discrete 5.1 verified。**
+因此 HEVC Main / SDR8 的设备媒体路径已经证明可运行，但 v6.0.3 仍依赖 `tier-flag=1 -> 0` diagnostic Offer rewrite，不能作为 production 方案。
 
-## v5.2.1 Reconnect 已知缺陷
-
-真机已确认：断网后 recovery 保持同一个 Session ID。
-
-仍保留独立 backlog：
+## v6.0.4 当前实现
 
 ```text
-第一次 reconnect → 可能持续黑屏
-再次断开 / reconnect → 可恢复画面
+GFN original Main / High-Tier Offer
+→ no H265 fmtp rewrite
+→ MediaCodec profileLevels probe
+→ explicit normalized profile/tier/level
+→ exact decoder-component binding
+→ explicit WebRTC H265 Main/High advertisement
+→ profile+tier+tx-mode+level+stream safety intersection
+→ createAnswer
+→ HEVC or same-session H264 fallback
 ```
 
-用户已决定暂不处理；v6.0 不修改该视频 reconnect 生命周期。
+生产安全门要求真实硬件 decoder 同时满足 HEVC Main、High Tier、Level >= 5.1、请求的 size/rate 以及 bitrate range。不能因为 v6.0.3 实验解码成功就无条件宣告 High Tier。
 
-## Keyboard soft-freeze
+Main10/HDR 继续冻结；`EglRenderer: Dropping frame - No surface` 继续作为独立 Surface/EGL lifecycle backlog。
 
-生产语义继续保持：
+## v6.0.4 真机下一验收点
+
+新 Session 首先检查：
 
 ```text
-Windows VK
-+ Windows Set-1 scan
-+ tracked modifiers
-+ ordered input_channel_v1
+HEVC_PRODUCTION_ADVERTISEMENT enabled=true
+LOCAL_RECEIVER H265 profile-id=1;tier-flag=1
+OFFER_HEVC_COMPATIBLE compatible=true streamSafe=true
+RAW_ANSWER HEVC != empty
+FINAL_ANSWER HEVC != empty
+DECISION effective=Hevc fallback=false
+HEVC hardware decoder
+FIRST_FRAME effective=Hevc
+~60fps stable
 ```
 
-Cyberpunk 2077 已验证修复是新 Session `keyboardLayout=en-US`。v6.0 不修改 keyboard packet semantics。
-
-## v5.3 Gamepad
-
-```text
-IMPLEMENTED                          ✅
-OFFLINE PACKET / CONTROLLER FIXTURE  ✅
-TRUE-DEVICE                          SKIPPED（当前没有可用手柄）
-```
-
-这不是失败结论。
-
-## v5.4 Audio
-
-### 2ch
-
-```text
-Opus stereo=1
-+ JavaAudioDeviceModule.setUseStereoOutput(true)
-```
-
-### 6ch
-
-```text
-CloudMatch 6ch request
-→ GFN multiopus/48000/6
-→ Answer repair when required
-→ current Android ADM configured 2ch
-```
-
-真机结果：**开启 6ch 后音频播放正常。**
-
-尚未验证：
-
-```text
-discrete 5.1 channel separation
-native 6-channel Android playout
-```
-
-
-## v6.0.1 真机裁决 / v6.0.2 当前目标
-
-真机已经确认：
-
-```text
-Requested codec = Hevc
-ResolvedLaunchProfile = Hevc
-GFN Offer H265 Main = profile-id=1;tier-flag=1;level-id=153
-Local receiver H265 = generic params={}
-setCodecPreferences = applied=true
-RAW_ANSWER HEVC = empty
-Negotiated codec = H264
-Codec fallback = YES
-Reason = libwebrtc createAnswer 未接受 HEVC Main；同 Session 回退 H264
-Actual decoder = H264
-```
-
-因此 H264 fallback PASS，但 HEVC Main negotiated/decoded/rendered 尚未 PASS。v6.0.2 只做首个 video m-line 的 H265 Main `tier-flag=1→0` 单字段 A/B，并且 rewrite 位于 `setRemoteDescription()` 之前。第一验收点是 RAW_ANSWER 是否出现 H265 Main，不是“有没有画面”。
-
-本版仍禁止同时修改：
-
-```text
-level-id
-profile-id
-Main10/HDR/AV1
-H264 fallback
-decoder factory
-CloudMatch / NVST
-```
-
-统一 Logcat tag：`GfnHevcCompat`。实验成功后，rewrite 必须在 production 方案中移除，后续改为 Android `MediaCodecInfo.CodecProfileLevel` 真能力探测 + 准确 capability advertisement。
+如果 production probe 没有证实本机 High Tier >= 5.1，则 H264 fallback 是预期安全行为，不再使用 Tier0 rewrite 绕过。
 
 ## v6.0 HEVC Main / SDR8
 

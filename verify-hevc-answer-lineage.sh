@@ -34,7 +34,7 @@ select_end=engine.index('\n    private fun createAnswer(', select_start)
 select_body=engine[select_start:select_end]
 assert 'preferredHevcProfileId = 1' not in select_body, 'generic libwebrtc Answer would still be rejected by explicit fmtp-only filtering'
 assert 'hevcMainMatchedPayloadTypes.isNotEmpty()' in select_body
-print('V603_HEVC_LINEAGE_SOURCE_GUARD=PASS')
+print('V604_HEVC_LINEAGE_SOURCE_GUARD=PASS')
 PY
 
 cat > "$BUILD/Probe.kt" <<'KT'
@@ -50,7 +50,7 @@ fun main() {
         a=rtpmap:108 rtx/90000
         a=fmtp:108 apt=107;rtx-time=125
         a=rtpmap:103 H265/90000
-        a=fmtp:103 level-id=153;profile-id=1;tier-flag=0
+        a=fmtp:103 level-id=153;profile-id=1;tier-flag=1
         a=rtpmap:104 rtx/90000
         a=fmtp:104 apt=103;rtx-time=125
         a=rtpmap:101 H264/90000
@@ -112,7 +112,7 @@ fun main() {
         .replace("a=fmtp:104 apt=103;rtx-time=125", "a=fmtp:118 apt=117;rtx-time=125")
     check(GfnSdpTools.matchingAnswerHevcMainPayloadTypes(offer, unrelatedPtAnswer).isEmpty())
 
-    println("V603_HEVC_ANSWER_LINEAGE_FIXTURE=PASS")
+    println("V604_HEVC_ANSWER_LINEAGE_FIXTURE=PASS")
     println("MATCHED=$matched")
 }
 KT
@@ -122,4 +122,4 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$SIGNALING" "$BUILD/Probe.kt" -include-runtime -d "$BUILD/probe.jar"
 java -jar "$BUILD/probe.jar"
 
-echo 'V603_HEVC_ANSWER_LINEAGE_VERIFY=PASS'
+echo 'V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS'

@@ -8,40 +8,35 @@ internal data class GfnVideoCodecDecision(
 )
 
 /**
- * Pure v6.0 codec policy. It only selects H.264 or HEVC Main (profile-id=1) for SDR8.
- * CloudMatch/session creation is deliberately outside this object; the decision is made from
- * the frozen requested codec, local decoder capability, and the actual SDP intersection.
+ * v6.0 production codec policy. HEVC is selected only when the original GFN Offer has a candidate
+ * that passed the real Android decoder capability matcher. H.264 remains the same-session fallback.
  */
 internal object GfnVideoCodecNegotiationPolicy {
     fun selectForOffer(
         requested: VideoCodecPreference,
-        localDecoderCodecs: Set<String>,
         h264Available: Boolean,
-        hevcMainAvailable: Boolean,
+        hevcCompatibleAvailable: Boolean,
+        hevcIncompatibilityReason: String? = null,
     ): Result<GfnVideoCodecDecision> = when (requested) {
         VideoCodecPreference.H264 -> {
             if (h264Available) Result.success(GfnVideoCodecDecision(VideoCodecPreference.H264))
             else Result.failure(IllegalStateException("GFN Offer 未包含 H.264 payload type。"))
         }
-        VideoCodecPreference.Hevc -> {
-            val localHevc = localDecoderCodecs.any { normalizeCodecName(it) == "H265" }
-            when {
-                localHevc && hevcMainAvailable ->
-                    Result.success(GfnVideoCodecDecision(VideoCodecPreference.Hevc))
-                h264Available -> Result.success(
-                    GfnVideoCodecDecision(
-                        VideoCodecPreference.H264,
-                        if (!localHevc) {
-                            "本机 DefaultVideoDecoderFactory 未声明 H265 decoder；同 Session 回退 H264。"
-                        } else {
-                            "GFN Offer 未包含显式 HEVC Main(profile-id=1)；同 Session 回退 H264。"
-                        },
-                    ),
-                )
-                else -> Result.failure(
-                    IllegalStateException("请求 HEVC Main，但本机/Offer 没有可用 HEVC Main，且 Offer 也没有 H.264 fallback。"),
-                )
-            }
+        VideoCodecPreference.Hevc -> when {
+            hevcCompatibleAvailable -> Result.success(GfnVideoCodecDecision(VideoCodecPreference.Hevc))
+            h264Available -> Result.success(
+                GfnVideoCodecDecision(
+                    VideoCodecPreference.H264,
+                    "GFN 原始 HEVC Main/High Offer 与本机 production capability 不兼容：" +
+                        (hevcIncompatibilityReason ?: "unknown reason") + "；同 Session 回退 H264。",
+                ),
+            )
+            else -> Result.failure(
+                IllegalStateException(
+                    "请求 HEVC Main，但 GFN 原始 Offer 与本机 production capability 无兼容交集，" +
+                        "且 Offer 也没有 H.264 fallback：${hevcIncompatibilityReason ?: "unknown reason"}",
+                ),
+            )
         }
         VideoCodecPreference.Av1 ->
             Result.failure(IllegalStateException("v6.0 仅开放 H.264 / HEVC Main SDR8；requested=Av1。"))
@@ -61,17 +56,12 @@ internal object GfnVideoCodecNegotiationPolicy {
             h264Available -> Result.success(
                 GfnVideoCodecDecision(
                     VideoCodecPreference.H264,
-                    "libwebrtc createAnswer 未接受 HEVC Main；同 Session 回退 H264。",
+                    "libwebrtc createAnswer 未接受与原始 Offer 绑定的 HEVC Main；同 Session 回退 H264。",
                 ),
             )
             else -> Result.failure(IllegalStateException("libwebrtc Answer 同时缺少 HEVC Main 与 H.264 fallback。"))
         }
         VideoCodecPreference.Av1 ->
             Result.failure(IllegalStateException("v6.0 Answer policy 不接受 AV1。"))
-    }
-
-    private fun normalizeCodecName(value: String): String = when (value.trim().uppercase()) {
-        "HEVC" -> "H265"
-        else -> value.trim().uppercase()
     }
 }

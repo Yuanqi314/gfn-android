@@ -33,8 +33,8 @@ grep -Fq 'const val KEY_VIDEO_CODEC = "videoCodec"' "$STORE" || {
 grep -Fq '.putString(KEY_VIDEO_CODEC, normalized.videoCodec.name)' "$STORE" || {
   echo 'ERROR: codec preference is not saved' >&2; exit 1;
 }
-grep -Fq 'videoDecoderFactory.supportedCodecs' "$RUNTIME" || {
-  echo 'ERROR: local libwebrtc decoder capabilities are not inspected' >&2; exit 1;
+grep -Fq 'GfnHevcAwareVideoDecoderFactory(eglContext())' "$RUNTIME" || {
+  echo 'ERROR: production HEVC-aware decoder factory is not installed' >&2; exit 1;
 }
 grep -Fq 'GfnVideoCodecNegotiationPolicy.selectForOffer' "$ENGINE" || {
   echo 'ERROR: Offer codec policy is not wired' >&2; exit 1;
@@ -73,11 +73,11 @@ fun main() {
         a=rtpmap:97 rtx/90000
         a=fmtp:97 apt=96
         a=rtpmap:98 H265/90000
-        a=fmtp:98 profile-id=1;tier-flag=0;level-id=120
+        a=fmtp:98 profile-id=1;tier-flag=1;level-id=153
         a=rtpmap:99 rtx/90000
         a=fmtp:99 apt=98
         a=rtpmap:100 H265/90000
-        a=fmtp:100 profile-id=2;tier-flag=0;level-id=120
+        a=fmtp:100 profile-id=2;tier-flag=1;level-id=153
         a=rtpmap:101 rtx/90000
         a=fmtp:101 apt=100
         a=rtpmap:116 red/90000
@@ -111,7 +111,7 @@ fun main() {
     check(h264s.hevcPayloadTypes.isEmpty())
     check(h264.contains("m=video 9 UDP/TLS/RTP/SAVPF 96 97 116 117")) { h264 }
 
-    val missingMain = mixed.replace("profile-id=1;tier-flag=0;level-id=120", "profile-id=2;tier-flag=0;level-id=120")
+    val missingMain = mixed.replace("profile-id=1;tier-flag=1;level-id=153", "profile-id=2;tier-flag=1;level-id=153")
     val unchanged = GfnSdpTools.preferVideoCodecInAnswer(missingMain, "H265", preferredHevcProfileId = 1)
     check(unchanged == missingMain) // No Main fabrication.
 
@@ -178,40 +178,40 @@ private class FakeContext(private val prefs: MemoryPrefs) : Context() {
 fun main() {
     val hevc = GfnVideoCodecNegotiationPolicy.selectForOffer(
         requested = VideoCodecPreference.Hevc,
-        localDecoderCodecs = setOf("H264", "H265"),
         h264Available = true,
-        hevcMainAvailable = true,
+        hevcCompatibleAvailable = true,
+        hevcIncompatibilityReason = null,
     ).getOrThrow()
     check(hevc.codec == VideoCodecPreference.Hevc && hevc.fallbackReason == null)
-    check(GfnVideoCodecNegotiationPolicy.selectForOffer(
-        VideoCodecPreference.Hevc, setOf("H264", "HEVC"), true, true,
-    ).getOrThrow().codec == VideoCodecPreference.Hevc)
 
-    val noLocal = GfnVideoCodecNegotiationPolicy.selectForOffer(
-        VideoCodecPreference.Hevc, setOf("H264"), true, true,
+    val incompatible = GfnVideoCodecNegotiationPolicy.selectForOffer(
+        requested = VideoCodecPreference.Hevc,
+        h264Available = true,
+        hevcCompatibleAvailable = false,
+        hevcIncompatibilityReason = "decoder maxLevel=4.1 < remote 5.1",
     ).getOrThrow()
-    check(noLocal.codec == VideoCodecPreference.H264)
-    check(noLocal.fallbackReason?.contains("未声明 H265") == true)
-
-    val noMain = GfnVideoCodecNegotiationPolicy.selectForOffer(
-        VideoCodecPreference.Hevc, setOf("H264", "HEVC"), true, false,
-    ).getOrThrow()
-    check(noMain.codec == VideoCodecPreference.H264)
-    check(noMain.fallbackReason?.contains("profile-id=1") == true)
+    check(incompatible.codec == VideoCodecPreference.H264)
+    check(incompatible.fallbackReason?.contains("production capability") == true)
 
     check(GfnVideoCodecNegotiationPolicy.selectForOffer(
-        VideoCodecPreference.Hevc, setOf("H265"), false, false,
+        requested = VideoCodecPreference.Hevc,
+        h264Available = false,
+        hevcCompatibleAvailable = false,
+        hevcIncompatibilityReason = "no bound decoder",
     ).isFailure)
+
     val answerFallback = GfnVideoCodecNegotiationPolicy.selectAfterAnswer(
         VideoCodecPreference.Hevc, h264Available = true, hevcMainAvailable = false,
     ).getOrThrow()
     check(answerFallback.codec == VideoCodecPreference.H264)
     check(answerFallback.fallbackReason?.contains("createAnswer") == true)
     check(GfnVideoCodecNegotiationPolicy.selectForOffer(
-        VideoCodecPreference.Av1, setOf("AV1", "H264"), true, true,
+        requested = VideoCodecPreference.Av1,
+        h264Available = true,
+        hevcCompatibleAvailable = true,
     ).isFailure)
     println("V600_HEVC_POLICY_FIXTURE=PASS")
-    println("HEVC=${hevc.codec} NO_LOCAL=${noLocal.codec} NO_OFFER_MAIN=${noMain.codec} ANSWER_FALLBACK=${answerFallback.codec}")
+    println("HEVC=${hevc.codec} INCOMPATIBLE=${incompatible.codec} ANSWER_FALLBACK=${answerFallback.codec}")
 
     check(GfnStreamSettingsCatalog.codecChoices.map { it.codec } == listOf(
         VideoCodecPreference.H264, VideoCodecPreference.Hevc,

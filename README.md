@@ -1,48 +1,49 @@
-# GFN Android Lab · v6.0.1 HEVC Main Negotiation Compatibility
+# GFN Android Lab · v6.0.4 HEVC Main Production Capability
 
-这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已经确认 H.264/1080p60、键鼠、Session keyboard layout、stream settings、same-session reconnect 主链以及 experimental 6ch 音频播放可工作。v6.0 真机已证明 HEVC 请求会走到 Answer 阶段，但 raw negotiation 最终回退 H.264。v6.0.1 在同一 SDR8 边界上只新增 **pre-createAnswer H265 Main codec preference + 完整 Logcat 证据链**；Main10/HDR/AV1 继续冻结。
+这是一个独立 Android GeForce NOW 客户端实验工程。v6.0.3 真机已经完成 HEVC Main / SDR8 的 negotiated + decoded + rendered 实验闭环；v6.0.4 的目标是删除 `tier-flag=1 -> 0` 实验 rewrite，依赖 Android 真实 HEVC High-Tier capability 与原始 GFN Tier1 Offer 自然协商。Main10/HDR/AV1 继续冻结。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.0.1 本轮新增
+## v6.0.4 本轮新增
 
 ```text
-GFN Offer H265 fmtp / RTX
-+ DefaultVideoDecoderFactory params
-+ PeerConnectionFactory receiver capabilities
-        ↓ Logcat: GfnHevcCompat
-setRemoteDescription
+MediaCodecList / MediaCodecInfo.profileLevels
         ↓
-RtpTransceiver.setCodecPreferences(
-  H265 Main -> generic H265 -> H264 -> auxiliary
-)
+explicit Main / High / normalized maxLevel
+        ↓
+size-rate / bitrate safety gate
+        ↓
+GfnHevcAwareVideoDecoderFactory
+        ↓
+explicit H265 profile-id=1;tier-flag=1;level-id=<real max>
+        ↓
+exact MediaCodec component binding
+        ↓
+original GFN Main / High-Tier Offer
+        ↓
+profile + tier + tx-mode + level intersection
         ↓
 createAnswer
         ↓
-RAW_ANSWER evidence
-        ↓
-FINAL_ANSWER + existing H264 fallback
+HEVC or same-session H264 fallback
 ```
 
-本版不做 `tier-flag`/`level-id` rewrite；只有本轮真机证据明确指向某个 fmtp 字段后，才允许下一次单字段实验。
-
-Logcat：
-
-```text
-adb logcat -v time GfnHevcCompat:I '*:S'
-```
+生产路径不再修改 GFN 的 H265 `profile-id/tier-flag/level-id`。Android HEVC Main/High Tier level 常量通过显式映射转换成项目内部顺序模型，禁止直接用常量整数大小推导 level。
 
 验证入口：
 
 ```text
-./verify-hevc-compat.sh
-./verify-hevc.sh
-./verify-reconnect-engine.sh
+sh ./verify-hevc-production.sh
+sh ./verify-hevc.sh
+sh ./verify-hevc-answer-lineage.sh
+sh ./verify-reconnect-engine.sh
+sh ./verify-audio.sh
+sh ./verify-stream-settings.sh
 ```
 
-详细见 `docs/V6_0_1_HEVC_NEGOTIATION_COMPAT.md`、`docs/V6_0_1_REFERENCE_ADOPTION.md`、`docs/V6_0_1_TEST_GUIDE.md`。
+详细见 `docs/V6_0_4_HEVC_MAIN_PRODUCTION_CAPABILITY.md`、`docs/STATUS.md`、`docs/REFERENCE_MATRIX.md`。完整 Gradle/APK build 仍受本地 Gradle 9.5.0 是否可用影响；离线验证不能替代下一次真机 production PASS。
 
-## v6.0 本轮新增
+## v6.0 历史基线
 
 v6.0 按 CloudNow + OpenNOW 双参考仓库交叉取证，只吸收两边共同支持且适合当前 Android 架构的最小 HEVC 语义：
 
@@ -92,7 +93,7 @@ docs/V6_0_TEST_GUIDE.md
 docs/REFERENCE_MATRIX.md
 ```
 
-当前 HEVC 尚待真机裁决；有画面并不自动等于 HEVC 成功，必须同时确认 `Negotiated codec=Hevc`、Offer/Answer HEVC Main PT 非空且 `Codec fallback=false`。
+v6.0 当时尚待真机裁决；该阶段的判据要求同时确认 `Negotiated codec=Hevc`、Offer/Answer HEVC Main PT 非空且 `Codec fallback=false`。
 
 ## v5.4 本轮新增
 

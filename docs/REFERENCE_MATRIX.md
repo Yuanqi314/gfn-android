@@ -272,3 +272,38 @@ The v6.0.2 verdict is intentionally deferred to true-device RAW_ANSWER evidence.
 | Dynamic PT | PT values are session-local | no hard-coded 103/107 in production logic |
 | Final validation | final Answer must retain a matched Main-lineage H265 PT | keep HEVC only when lineage remains non-empty |
 | Production | remote tier rewrite is still diagnostic-only | capability factory remains deferred until decode/render evidence |
+
+---
+
+## HEVC — v6.0.4 production capability
+
+| Layer | Evidence / rule | gfn-android v6.0.4 decision |
+|---|---|---|
+| Experimental true-device baseline | `44.log`: HEVC decoder + FIRST_FRAME + ~60fps after diagnostic path | media path is known-good, but not sufficient to advertise High Tier |
+| Server SDP | GFN Main candidate is `profile-id=1;tier-flag=1;level-id=153` | preserve original codec SDP; no tier rewrite |
+| Android capability | `MediaCodecInfo.CodecCapabilities.profileLevels` + video capabilities | normalize explicit profile/tier/level; require hardware Main/High >= 5.1 and 1080p60 |
+| Android level comparison | HEVC Main-tier and High-tier constants occupy distinct Android constants | explicit constant→normalized model mapping; never raw integer ordering |
+| WebRTC capability | upstream decoder factory otherwise exports generic H265 | replace generic H265 advertisement with explicit Main/High/level only after real probe |
+| Decoder component | capability can only be trusted if actual decoder is the same component | H265 creation is restricted by exact `MediaCodecInfo.name`; component name is discovered, not hardcoded |
+| Safety gate | codec identity alone does not prove requested workload | require remote level <= local max plus size/rate/bitrate support |
+| Preference planner | generic H265 previously caused ambiguous matching | only compatible explicit local Main/High capabilities precede H264 |
+| Answer fmtp normalization | libwebrtc can omit profile/tier in Answer | retain dynamic Offer/Answer Main PT lineage, anchored to original Tier1 Offer |
+| Fallback | unsupported production capability must not be faked | keep same-session H264 fallback |
+| Main10/HDR | not part of v6.0.4 | frozen |
+| Surface/EGL | `No surface` is independent of codec decode | separate backlog |
+
+### v6.0.4 production PASS boundary
+
+```text
+original GFN Tier1 Offer
++ real local Main/High/Level>=5.1 capability
++ exact decoder binding
++ explicit H265 receiver capability
++ compatible Offer intersection
++ RAW/FINAL Answer H265
++ fallback=false
++ hardware HEVC decode
++ FIRST_FRAME Hevc
++ stable ~60fps
+= HEVC Main / SDR8 Production PASS
+```

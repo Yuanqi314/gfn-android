@@ -1,0 +1,82 @@
+GFN Android v6.0.4 HEVC Main Production Capability
+Static / fixture / API-shaped verification record
+Date: 2026-08-15
+
+Scope:
+- HEVC Main/High production capability probe
+- explicit Android HEVC tier/level normalization
+- exact decoder component binding
+- original GFN Tier1 Offer preservation
+- Offer/local compatibility matching
+- Answer Main PT lineage
+- Engine API-shaped compile
+- Stream Settings regression
+- Audio runtime API-shaped compile
+
+Verified PASS:
+V600_HEVC_STATIC_GUARDS=PASS
+V600_HEVC_SDP_FIXTURE=PASS
+OFFER_H264=[96] HEVC=[98, 100] MAIN=[98]
+HEVC_ANSWER=[H265, rtx, red, ulpfec] MAIN=[98]
+H264_ANSWER=[H264, rtx, red, ulpfec]
+V600_HEVC_POLICY_FIXTURE=PASS
+HEVC=Hevc INCOMPATIBLE=H264 ANSWER_FALLBACK=H264
+V600_HEVC_SETTINGS_FIXTURE=PASS
+DEFAULT=1920x1080@60 20Mbps codec=H264 audio=2ch keyboard=en-US language=zh_CN
+HEVC_PROFILE=1920x1080@60 100Mbps codec=Hevc audio=6ch keyboard=en-US language=zh_CN
+V600_HEVC_STORE_FIXTURE=PASS
+CORRUPT_VALUE_FALLBACK=H264
+V600_HEVC_VERIFY=PASS
+V604_HEVC_PRODUCTION_SOURCE_GUARDS=PASS
+V604_HEVC_FACTORY_BINDING_FIXTURE=PASS
+V604_HEVC_COMPATIBILITY_FIXTURE=PASS
+BOUND=bound.hevc ADVERTISED={profile-id=1, tier-flag=1, level-id=156} MATCHED=[103]
+V604_HEVC_PRODUCTION_VERIFY=PASS
+V604_HEVC_LINEAGE_SOURCE_GUARD=PASS
+V604_HEVC_ANSWER_LINEAGE_FIXTURE=PASS
+MATCHED=[103]
+V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
+V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
+V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
+V520_STREAM_SETTINGS_RESOLVER=PASS
+PROFILE=1920x1080@60 35Mbps codec=H264 audio=2ch keyboard=en-US language=zh_CN
+AUTO_KEYBOARD=zh-CN
+ENTITLEMENT_MISMATCH_BLOCKED=true
+V520_STREAM_SETTINGS_STORE=PASS
+MIGRATED_KEYBOARD=en-US
+RELOADED=PersistentStreamSettings(keyboardLayoutSelection=zh-CN, resolutionSelection=1920x1080, fpsSelection=60, maxBitrateKbps=35000, videoCodec=H264, audioChannels=2)
+V520_SESSION_PROFILE_PERSISTENCE=PASS
+PROFILE=1920x1080@60 35Mbps codec=H264 audio=2ch keyboard=en-US language=zh_CN
+LEGACY_PROFILE_NULL=true
+V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
+V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+V540_AUDIO_SNAPSHOT_CHAIN=PASS
+V540_AUDIO_STATIC_GUARDS=PASS
+V540_AUDIO_SDP_FIXTURE=PASS
+STEREO=opus/2 stereo1=true
+SURROUND=multiopus/6 mode=SURROUND_MULTI_OPUS_ADM_2CH_PROBE
+V540_AUDIO_SETTINGS_FIXTURE=PASS
+PROFILE=1920x1080@60 100Mbps codec=H264 audio=6ch keyboard=en-US language=zh_CN
+NATIVE_OUTPUT=[2]
+V540_AUDIO_RUNTIME_API_SHAPED_COMPILE=PASS
+V540_AUDIO_VERIFY=PASS
+V604_FINAL_SOURCE_AUDIT
+-----------------------
+RUNTIME_TIER_REWRITE_REMOVED=PASS
+NO_HARDCODED_HEVC_COMPONENT=PASS
+EXACT_DECODER_COMPONENT_BINDING=PASS
+EXPLICIT_HEVC_TIER_ADVERTISEMENT=PASS
+REMOTE_LEVEL_SAFETY_GATE=PASS
+SIZE_RATE_SAFETY_GATE=PASS
+BITRATE_SAFETY_GATE=PASS
+GIT_DIFF_CHECK=PASS
+TEXT_TRAILING_WHITESPACE=PASS
+GRADLE_FULL_BUILD=BLOCKED: wrapper needs Gradle 9.5.0; container DNS cannot resolve services.gradle.org
+
+Full Android Gradle/APK build:
+BLOCKED BY ENVIRONMENT, NOT CLAIMED PASS.
+The repository wrapper requires Gradle 9.5.0. This container has no cached distribution and DNS cannot resolve services.gradle.org, so the wrapper cannot download it.
+
+True-device v6.0.4 production result:
+NOT YET VERIFIED. A new Session must prove the original Tier1 Offer, explicit local Main/High capability, HEVC RAW/FINAL Answer, bound decoder creation, FIRST_FRAME Hevc, and sustained rendering without the experimental tier rewrite.

@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
-import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.MediaStreamTrack
@@ -36,6 +35,9 @@ internal object GfnWebRtcRuntime {
     private var decoderCodecNames: Set<String> = emptySet()
     private var decoderCodecCapabilities: List<GfnVideoCodecCapabilitySnapshot> = emptyList()
     private var receiverCodecCapabilities: List<GfnVideoCodecCapabilitySnapshot> = emptyList()
+    private var hevcProbeResult: GfnHevcDecoderProbeResult = GfnHevcDecoderProbeResult(emptyList(), null, emptyList())
+    private var hevcProductionCapability: GfnHevcDecoderCapability? = null
+    private var hevcAdvertisementReason: String = "WebRTC runtime not initialized"
 
     fun eglContext(): EglBase.Context = eglBase.eglBaseContext
 
@@ -65,14 +67,17 @@ internal object GfnWebRtcRuntime {
                     .build(),
             )
             .createAudioDeviceModule()
-        val videoDecoderFactory = DefaultVideoDecoderFactory(eglContext())
-        val supportedDecoderCodecs = videoDecoderFactory.supportedCodecs.toList()
+        val videoDecoderFactory = GfnHevcAwareVideoDecoderFactory(eglContext())
+        hevcProbeResult = videoDecoderFactory.probeResult
+        hevcProductionCapability = videoDecoderFactory.productionCapability
+        hevcAdvertisementReason = videoDecoderFactory.advertisementReason
+        val supportedDecoderCodecs = videoDecoderFactory.getSupportedCodecs().toList()
         decoderCodecNames = supportedDecoderCodecs
             .map { it.name.uppercase() }
             .toSortedSet()
         decoderCodecCapabilities = supportedDecoderCodecs.mapIndexed { index, codec ->
             GfnVideoCodecCapabilitySnapshot(
-                source = "DefaultVideoDecoderFactory",
+                source = "GfnHevcAwareVideoDecoderFactory",
                 index = index,
                 name = codec.name,
                 mimeType = "video/${codec.name}",
@@ -120,6 +125,46 @@ internal object GfnWebRtcRuntime {
             .getRtpReceiverCapabilities(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO)
             .codecs
             .toList()
+
+    fun hevcDecoderProbeResult(context: Context): GfnHevcDecoderProbeResult {
+        factory(context)
+        return synchronized(lock) { hevcProbeResult.copy(candidates = hevcProbeResult.candidates.toList(), errors = hevcProbeResult.errors.toList()) }
+    }
+
+    fun hevcProductionCapability(context: Context): GfnHevcDecoderCapability? {
+        factory(context)
+        return synchronized(lock) { hevcProductionCapability }
+    }
+
+    fun hevcAdvertisementReason(context: Context): String {
+        factory(context)
+        return synchronized(lock) { hevcAdvertisementReason }
+    }
+
+    fun hevcStreamSupport(
+        context: Context,
+        width: Int,
+        height: Int,
+        fps: Int,
+        maxBitrateKbps: Int,
+    ): GfnHevcStreamSupport {
+        factory(context)
+        val capability = synchronized(lock) { hevcProductionCapability }
+            ?: return GfnHevcStreamSupport(
+                supported = false,
+                sizeAndRateSupported = false,
+                bitrateSupported = false,
+                bitrateRangeKbps = null,
+                reason = synchronized(lock) { hevcAdvertisementReason },
+            )
+        return GfnHevcDecoderCapabilityProbe.evaluateStream(
+            capability = capability,
+            width = width,
+            height = height,
+            fps = fps,
+            maxBitrateKbps = maxBitrateKbps,
+        )
+    }
 
     private fun RtpCapabilities.CodecCapability.toSnapshot(
         source: String,

@@ -229,7 +229,8 @@ cat > "$BUILD/runtime/WebRtc.kt" <<'KT'
 package org.webrtc
 class EglBase { val eglBaseContext: Context = Context(); class Context; companion object { fun create()=EglBase() } }
 class VideoCodecInfo(val name:String, val params:Map<String,String> = emptyMap())
-class DefaultVideoDecoderFactory(c:EglBase.Context) { val supportedCodecs: Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"), VideoCodecInfo("H265", mapOf("profile-id" to "1"))) }
+interface VideoDecoderFactory { fun getSupportedCodecs(): Array<VideoCodecInfo> }
+class DefaultVideoDecoderFactory(c:EglBase.Context) : VideoDecoderFactory { override fun getSupportedCodecs(): Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"), VideoCodecInfo("H265", mapOf("profile-id" to "1"))) }
 class DefaultVideoEncoderFactory(c:EglBase.Context, a:Boolean, b:Boolean)
 open class MediaStreamTrack { enum class MediaType { MEDIA_TYPE_VIDEO, MEDIA_TYPE_AUDIO, MEDIA_TYPE_DATA } }
 class RtpCapabilities(val codecs:List<CodecCapability> = emptyList()) {
@@ -243,9 +244,31 @@ class RtpCapabilities(val codecs:List<CodecCapability> = emptyList()) {
 }
 class PeerConnectionFactory {
     class InitializationOptions { companion object { fun builder(c:android.content.Context)=Builder() }; class Builder { fun setEnableInternalTracer(v:Boolean)=this; fun createInitializationOptions()=InitializationOptions() } }
-    class Builder { fun setAudioDeviceModule(v:org.webrtc.audio.JavaAudioDeviceModule)=this; fun setVideoEncoderFactory(v:DefaultVideoEncoderFactory)=this; fun setVideoDecoderFactory(v:DefaultVideoDecoderFactory)=this; fun createPeerConnectionFactory()=PeerConnectionFactory() }
+    class Builder { fun setAudioDeviceModule(v:org.webrtc.audio.JavaAudioDeviceModule)=this; fun setVideoEncoderFactory(v:DefaultVideoEncoderFactory)=this; fun setVideoDecoderFactory(v:VideoDecoderFactory)=this; fun createPeerConnectionFactory()=PeerConnectionFactory() }
     companion object { fun initialize(v:InitializationOptions)=Unit; fun builder()=Builder() }
     fun getRtpReceiverCapabilities(type:MediaStreamTrack.MediaType)=RtpCapabilities(listOf(RtpCapabilities.CodecCapability(96,"H265",90_000,mapOf("profile-id" to "1"),"video/H265")))
+}
+KT
+cat > "$BUILD/runtime/HevcStub.kt" <<'KT'
+package dev.gfn.webrtc
+import org.webrtc.EglBase
+import org.webrtc.VideoCodecInfo
+import org.webrtc.VideoDecoderFactory
+data class GfnHevcDecoderCapability(val codecName:String, val profile:GfnHevcProfile=GfnHevcProfile.Main, val tier:GfnHevcTier=GfnHevcTier.High, val maxLevel:GfnHevcLevel=GfnHevcLevel.Level51)
+enum class GfnHevcProfile(val sdpProfileId:String) { Main("1") }
+enum class GfnHevcTier(val sdpTierFlag:String) { High("1") }
+enum class GfnHevcLevel(val sdpLevelId:String) { Level51("153") }
+data class GfnHevcDecoderProbeResult(val candidates:List<GfnHevcDecoderCapability> = emptyList(), val selected:GfnHevcDecoderCapability? = null, val errors:List<String> = emptyList())
+data class GfnHevcStreamSupport(val supported:Boolean, val sizeAndRateSupported:Boolean, val bitrateSupported:Boolean, val bitrateRangeKbps:IntRange?, val reason:String)
+class GfnHevcAwareVideoDecoderFactory(c:EglBase.Context) : VideoDecoderFactory {
+    val probeResult = GfnHevcDecoderProbeResult()
+    val productionCapability: GfnHevcDecoderCapability? = null
+    val advertisementReason = "stub"
+    override fun getSupportedCodecs(): Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"))
+}
+object GfnHevcDecoderCapabilityProbe {
+    fun evaluateStream(capability:GfnHevcDecoderCapability, width:Int, height:Int, fps:Int, maxBitrateKbps:Int) =
+        GfnHevcStreamSupport(false, false, false, null, "stub")
 }
 KT
 cat > "$BUILD/runtime/WebRtcAudio.kt" <<'KT'
@@ -263,7 +286,7 @@ class JavaAudioDeviceModule {
 KT
 kotlinc -J-Dfile.encoding=UTF-8 \
   "$BUILD/runtime/AndroidManifest.kt" "$BUILD/runtime/AndroidContent.kt" "$BUILD/runtime/AndroidPm.kt" \
-  "$BUILD/runtime/AndroidOs.kt" "$BUILD/runtime/AndroidMedia.kt" "$BUILD/runtime/WebRtc.kt" "$BUILD/runtime/WebRtcAudio.kt" \
+  "$BUILD/runtime/AndroidOs.kt" "$BUILD/runtime/AndroidMedia.kt" "$BUILD/runtime/WebRtc.kt" "$BUILD/runtime/WebRtcAudio.kt" "$BUILD/runtime/HevcStub.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnAndroidAudioRouteProbe.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcRuntime.kt" \
   -d "$BUILD/runtime/check.jar" > "$BUILD/runtime/compile.log" 2>&1

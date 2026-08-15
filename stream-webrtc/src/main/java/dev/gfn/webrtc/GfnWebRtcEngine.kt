@@ -38,7 +38,7 @@ import org.webrtc.SessionDescription
 import org.json.JSONObject
 import org.webrtc.VideoTrack
 
-/** v6.0.3: HEVC Main tier-only A/B before setRemoteDescription; Main10/HDR remain disabled. */
+/** v6.0.4: production HEVC Main capability advertisement; Main10/HDR remain disabled. */
 class GfnWebRtcEngine(
     context: Context,
     private val listener: Listener,
@@ -61,6 +61,9 @@ class GfnWebRtcEngine(
         .map { it.normalizedName }
         .distinct()
         .sorted()
+    private val hevcProbeResult: GfnHevcDecoderProbeResult = GfnWebRtcRuntime.hevcDecoderProbeResult(appContext)
+    private val hevcProductionCapability: GfnHevcDecoderCapability? = GfnWebRtcRuntime.hevcProductionCapability(appContext)
+    private val hevcAdvertisementReason: String = GfnWebRtcRuntime.hevcAdvertisementReason(appContext)
     private val lock = Any()
     private val generation = AtomicLong(0)
 
@@ -120,6 +123,9 @@ class GfnWebRtcEngine(
             requestedCodec = config.codec,
             decoderCapabilities = localDecoderCapabilities,
             receiverCapabilities = localReceiverCapabilities,
+            probeResult = hevcProbeResult,
+            productionCapability = hevcProductionCapability,
+            advertisementReason = hevcAdvertisementReason,
         )
         val audioRoute = GfnAndroidAudioRouteProbe.detect(appContext)
         synchronized(lock) {
@@ -166,6 +172,12 @@ class GfnWebRtcEngine(
                     requestedCodec = config.codec.name,
                     localDecoderCodecs = localDecoderCodecs.sorted(),
                     localReceiverCodecs = localReceiverCodecNames,
+                    hevcProductionCapabilityReady = hevcProductionCapability != null,
+                    hevcProductionDecoder = hevcProductionCapability?.codecName,
+                    hevcProductionProfile = hevcProductionCapability?.profile?.sdpProfileId,
+                    hevcProductionTier = hevcProductionCapability?.tier?.sdpTierFlag,
+                    hevcProductionMaxLevel = hevcProductionCapability?.maxLevel?.sdpLevelId,
+                    hevcProductionReason = hevcAdvertisementReason,
                     decoderPath = decoderPathFor(config.codec),
                 ),
             )
@@ -391,7 +403,28 @@ class GfnWebRtcEngine(
                 ),
             )
         }
-        val selectedVideoCodec = selectVideoCodecForOffer(offerSummary) ?: return
+        val offerVideoCodecs = GfnSdpTools.firstVideoCodecDetails(offerSdp)
+        val hevcStreamSupport = GfnWebRtcRuntime.hevcStreamSupport(
+            context = appContext,
+            width = config.width,
+            height = config.height,
+            fps = config.fps,
+            maxBitrateKbps = config.maxBitrateKbps,
+        )
+        val hevcCompatibility = GfnHevcProductionCompatibilityMatcher.evaluate(
+            remoteCodecs = offerVideoCodecs,
+            localCapability = hevcProductionCapability,
+            streamSupport = hevcStreamSupport,
+        )
+        GfnHevcCompatLog.offerCompatibility(eventGeneration, hevcCompatibility)
+        updateVideo { current ->
+            current.copy(
+                hevcProductionStreamSafe = hevcStreamSupport.supported,
+                hevcProductionReason = hevcCompatibility.reason,
+                hevcCompatibleOfferPayloadTypes = hevcCompatibility.compatiblePayloadTypes,
+            )
+        }
+        val selectedVideoCodec = selectVideoCodecForOffer(offerSummary, hevcCompatibility) ?: return
         synchronized(lock) { effectiveVideoCodec = selectedVideoCodec }
         if (config.audioChannels >= 6 && !surroundOfferPresent) {
             fail("已请求 5.1/6ch，但 GFN Offer 未包含 multiopus/6；停止本次实验性 surround 连接。")
@@ -411,22 +444,16 @@ class GfnWebRtcEngine(
         createExpectedDataChannels(pc, partialReliableThresholdMs, eventGeneration)
 
         val mediaIp = resolveMediaIp(currentSession)
-        val addressFixedOffer = mediaIp?.let { GfnSdpTools.rewriteOfferConnectionAddresses(offerSdp, it) } ?: offerSdp
-        val fixedOffer = if (selectedVideoCodec == VideoCodecPreference.Hevc) {
-            val tierAbRewrite = GfnSdpTools.rewriteFirstVideoHevcMainTierFlagForAb(addressFixedOffer)
-            GfnHevcCompatLog.tierFlagAbRewrite(eventGeneration, tierAbRewrite)
-            GfnHevcCompatLog.sdp(eventGeneration, "OFFER_TIER_AB", tierAbRewrite.sdp)
-            tierAbRewrite.sdp
-        } else {
-            addressFixedOffer
-        }
+        // v6.0.4 production path preserves all server codec capability attributes. The existing
+        // connection-address correction is transport-only and does not modify H265 fmtp/profile/tier/level.
+        val fixedOffer = mediaIp?.let { GfnSdpTools.rewriteOfferConnectionAddresses(offerSdp, it) } ?: offerSdp
         pc.setRemoteDescription(
             setObserver(
                 onSuccess = {
                     if (generation.get() != eventGeneration) return@setObserver
                     synchronized(lock) { remoteDescriptionReady = true }
                     flushRemoteIce()
-                    applyPreAnswerVideoCodecPreference(pc, eventGeneration)
+                    applyPreAnswerVideoCodecPreference(pc, fixedOffer, eventGeneration)
                     createAnswer(pc, fixedOffer, eventGeneration)
                 },
                 onFailure = { fail("setRemoteDescription 失败：$it") },
@@ -796,18 +823,22 @@ class GfnWebRtcEngine(
     private fun decoderPathFor(codec: VideoCodecPreference): String = when (codec) {
         VideoCodecPreference.H264 ->
             "libwebrtc DefaultVideoDecoderFactory -> H264（具体硬件/软件 decoder 待真机确认）"
-        VideoCodecPreference.Hevc ->
-            "libwebrtc DefaultVideoDecoderFactory -> H265（实际 decoder 名称及硬件/软件路径待真机确认）"
+        VideoCodecPreference.Hevc -> hevcProductionCapability?.let { capability ->
+            "GfnHevcAwareVideoDecoderFactory -> ${capability.codecName} (bound H265 Main/High level ${capability.maxLevel.label})"
+        } ?: "GfnHevcAwareVideoDecoderFactory -> H265 unavailable"
         VideoCodecPreference.Av1 ->
             "AV1（v6.0 未启用）"
     }
 
-    private fun selectVideoCodecForOffer(offerSummary: dev.gfn.signaling.SdpSummary): VideoCodecPreference? {
+    private fun selectVideoCodecForOffer(
+        offerSummary: dev.gfn.signaling.SdpSummary,
+        hevcCompatibility: GfnHevcOfferCompatibility,
+    ): VideoCodecPreference? {
         val decision = GfnVideoCodecNegotiationPolicy.selectForOffer(
             requested = config.codec,
-            localDecoderCodecs = localDecoderCodecs,
             h264Available = offerSummary.h264PayloadTypes.isNotEmpty(),
-            hevcMainAvailable = offerSummary.hevcMainPayloadTypes.isNotEmpty(),
+            hevcCompatibleAvailable = hevcCompatibility.compatible,
+            hevcIncompatibilityReason = hevcCompatibility.reason,
         ).getOrElse { error ->
             fail(error.message ?: "无法选择视频 codec。")
             return null
@@ -834,12 +865,15 @@ class GfnWebRtcEngine(
     }
 
     /**
-     * v6.0.3 single-variable compatibility experiment. This runs only after the remote Offer has
-     * been applied (so Unified Plan has materialized the receive transceivers) and strictly before
-     * createAnswer(). Failure is diagnostic-only: the existing raw-answer/H.264 fallback path must
-     * remain available instead of turning a preference API error into a session failure.
+     * v6.0.4 production preference ordering. It runs after setRemoteDescription materializes the
+     * Unified Plan receive transceiver and before createAnswer(). Only local H265 capabilities that
+     * match an original remote Main/High/SRST candidate are included ahead of H264.
      */
-    private fun applyPreAnswerVideoCodecPreference(pc: PeerConnection, eventGeneration: Long) {
+    private fun applyPreAnswerVideoCodecPreference(
+        pc: PeerConnection,
+        offerSdp: String,
+        eventGeneration: Long,
+    ) {
         if (generation.get() != eventGeneration) return
         val selected = synchronized(lock) { effectiveVideoCodec }
         if (selected != VideoCodecPreference.Hevc) {
@@ -880,10 +914,13 @@ class GfnWebRtcEngine(
             }
             return
         }
-        val plan = GfnHevcCodecPreferencePlanner.build(liveCapabilities)
+        val plan = GfnHevcCodecPreferencePlanner.build(
+            capabilities = liveCapabilities,
+            remoteCodecs = GfnSdpTools.firstVideoCodecDetails(offerSdp),
+        )
         GfnHevcCompatLog.preferencePlan(eventGeneration, plan)
         if (!plan.hasHevcCandidate || plan.orderedCapabilities.isEmpty()) {
-            val reason = "receiver capability list has no H265 Main/generic candidate"
+            val reason = "receiver capability list has no H265 Main/High candidate compatible with original Offer"
             GfnHevcCompatLog.preferenceApply(
                 generation = eventGeneration,
                 attempted = true,
@@ -955,7 +992,7 @@ class GfnWebRtcEngine(
             attempted = true,
             applied = applied,
             transceiverMid = runCatching { transceiver.mid }.getOrNull(),
-            reason = errorText ?: "H265 Main/generic -> H264 -> auxiliary",
+            reason = errorText ?: "compatible H265 Main/High -> H264 -> auxiliary",
         )
         updateVideo {
             it.copy(

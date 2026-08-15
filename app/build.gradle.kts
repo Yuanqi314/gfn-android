@@ -11,8 +11,8 @@ android {
         applicationId = "dev.gfn.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.6.0.3-dev"
+        versionCode = 22
+        versionName = "0.6.0.4-dev"
     }
 
     buildFeatures {
