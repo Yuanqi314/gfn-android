@@ -31,6 +31,11 @@ data class StreamCodecChoice(
     val label: String,
 )
 
+data class StreamColorChoice(
+    val colorMode: RequestedColorMode,
+    val label: String,
+)
+
 /**
  * Persistent user intent. Values here are never read directly by the live WebRTC engine.
  * A new Session resolves this object exactly once into [ResolvedLaunchProfile].
@@ -41,6 +46,7 @@ data class PersistentStreamSettings(
     val fpsSelection: Int = GfnStreamSettingsCatalog.FPS_AUTO,
     val maxBitrateKbps: Int = GfnStreamSettingsCatalog.DEFAULT_MAX_BITRATE_KBPS,
     val videoCodec: VideoCodecPreference = VideoCodecPreference.H264,
+    val colorMode: RequestedColorMode = RequestedColorMode.CompatibilitySdr,
     val audioChannels: Int = GfnStreamSettingsCatalog.DEFAULT_AUDIO_CHANNELS,
 )
 
@@ -53,7 +59,8 @@ data class ResolvedLaunchProfile(
 ) {
     val summary: String
         get() = "${streamConfig.width}x${streamConfig.height}@${streamConfig.fps} " +
-            "${streamConfig.maxBitrateKbps / 1_000}Mbps codec=${streamConfig.codec} audio=${streamConfig.audioChannels}ch " +
+            "${streamConfig.maxBitrateKbps / 1_000}Mbps codec=${streamConfig.codec} color=${streamConfig.colorMode} " +
+            "audio=${streamConfig.audioChannels}ch " +
             "keyboard=$keyboardLayout language=$gameLanguage"
 }
 
@@ -66,7 +73,7 @@ object GfnStreamSettingsCatalog {
     const val DEFAULT_AUDIO_CHANNELS = 2
     const val BITRATE_STEP_KBPS = 5_000
 
-    private val capabilities = StreamCapabilityProfiles.V60_ANDROID_WEBRTC
+    private val capabilities = StreamCapabilityProfiles.V610_ANDROID_WEBRTC
 
     val resolutionChoices: List<StreamResolutionChoice> = buildList {
         add(StreamResolutionChoice(RESOLUTION_AUTO, "自动（按账号能力）", automatic = true))
@@ -90,9 +97,14 @@ object GfnStreamSettingsCatalog {
     }
 
     val codecChoices: List<StreamCodecChoice> = listOf(
-        StreamCodecChoice(VideoCodecPreference.H264, "H.264 · SDR8（稳定 fallback）"),
-        StreamCodecChoice(VideoCodecPreference.Hevc, "HEVC Main · SDR8"),
+        StreamCodecChoice(VideoCodecPreference.H264, "H.264 · SDR8（稳定）"),
+        StreamCodecChoice(VideoCodecPreference.Hevc, "HEVC（Main / Main10 由色彩模式选择）"),
     ).filter { it.codec in capabilities.codecs }
+
+    val colorChoices: List<StreamColorChoice> = listOf(
+        StreamColorChoice(RequestedColorMode.CompatibilitySdr, "SDR8 · HEVC Main / H.264"),
+        StreamColorChoice(RequestedColorMode.PreferSdr10, "SDR10 · HEVC Main10（v6.1.0 协商实验）"),
+    ).filter { it.colorMode in capabilities.colorModes }
 
     val audioChoices: List<StreamAudioChoice> =
         capabilities.audioChannels.sorted().map { channels ->
@@ -117,6 +129,7 @@ object GfnStreamSettingsCatalog {
             fpsSelection = normalizeFps(settings.fpsSelection),
             maxBitrateKbps = normalizeBitrate(settings.maxBitrateKbps),
             videoCodec = normalizeVideoCodec(settings.videoCodec),
+            colorMode = normalizeColorMode(normalizeVideoCodec(settings.videoCodec), settings.colorMode),
             audioChannels = normalizeAudio(settings.audioChannels),
         )
 
@@ -129,6 +142,12 @@ object GfnStreamSettingsCatalog {
     fun normalizeVideoCodec(value: VideoCodecPreference): VideoCodecPreference =
         value.takeIf { candidate -> codecChoices.any { it.codec == candidate } } ?: VideoCodecPreference.H264
 
+    fun normalizeColorMode(codec: VideoCodecPreference, value: RequestedColorMode): RequestedColorMode {
+        if (codec != VideoCodecPreference.Hevc) return RequestedColorMode.CompatibilitySdr
+        return value.takeIf { candidate -> colorChoices.any { it.colorMode == candidate } }
+            ?: RequestedColorMode.CompatibilitySdr
+    }
+
     fun normalizeAudio(value: Int): Int =
         value.takeIf { candidate -> audioChoices.any { it.channels == candidate } } ?: DEFAULT_AUDIO_CHANNELS
 
@@ -140,7 +159,7 @@ object GfnStreamSettingsCatalog {
 }
 
 object GfnStreamSettingsResolver {
-    private val capabilities = StreamCapabilityProfiles.V60_ANDROID_WEBRTC
+    private val capabilities = StreamCapabilityProfiles.V610_ANDROID_WEBRTC
 
     fun resolve(
         persistent: PersistentStreamSettings,
@@ -165,7 +184,7 @@ object GfnStreamSettingsResolver {
         ) {
             throw StreamProfileResolutionException(
                 "账号 entitlement 未包含 ${resolution.width}x${resolution.height}@$fps；" +
-                    "v6.0.4 当前 Android WebRTC 引擎只开放 1080p60 SDR8。",
+                    "v6.1.0 当前 Android WebRTC 引擎只开放 1080p60 SDR8/SDR10；HDR 仍关闭。",
             )
         }
 
@@ -175,7 +194,7 @@ object GfnStreamSettingsResolver {
             fps = fps,
             maxBitrateKbps = settings.maxBitrateKbps,
             codec = settings.videoCodec,
-            colorMode = RequestedColorMode.CompatibilitySdr,
+            colorMode = settings.colorMode,
             audioChannels = settings.audioChannels,
         )
         capabilities.rejectionReason(streamConfig)?.let { reason ->
@@ -208,7 +227,7 @@ object GfnStreamSettingsResolver {
                     capabilities.frameRates.any { fps -> it.fps >= fps }
             }
         } ?: throw StreamProfileResolutionException(
-            "账号 entitlement 与 v6.0.4 当前引擎能力没有交集；当前仅开放 1920x1080@60。",
+            "账号 entitlement 与 v6.1.0 当前引擎能力没有交集；当前仅开放 1920x1080@60。",
         )
     }
 

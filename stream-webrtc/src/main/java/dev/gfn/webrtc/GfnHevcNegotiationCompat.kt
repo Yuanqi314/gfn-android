@@ -1,23 +1,28 @@
 package dev.gfn.webrtc
 
 import android.util.Log
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.signaling.GfnSdpTools
 import dev.gfn.signaling.VideoCodecDescription
 import dev.gfn.stream.VideoCodecPreference
 import org.webrtc.RtpCapabilities
 
-/** v6.0.4 production HEVC Main capability matching and pre-createAnswer preference planning. */
+/** v6.1.0 production HEVC Main/Main10 capability matching and pre-createAnswer planning. */
 internal data class GfnVideoCodecPreferencePlan(
+    val targetProfile: GfnHevcProfile,
     val orderedCapabilities: List<RtpCapabilities.CodecCapability>,
     val orderedLabels: List<String>,
-    val compatibleHevcMainCount: Int,
+    val compatibleHevcCount: Int,
     val h264Count: Int,
     val auxiliaryCount: Int,
 ) {
-    val hasHevcCandidate: Boolean get() = compatibleHevcMainCount > 0
+    val hasHevcCandidate: Boolean get() = compatibleHevcCount > 0
+    val compatibleHevcMainCount: Int get() = if (targetProfile == GfnHevcProfile.Main) compatibleHevcCount else 0
+    val compatibleHevcMain10Count: Int get() = if (targetProfile == GfnHevcProfile.Main10) compatibleHevcCount else 0
 }
 
 internal data class GfnHevcOfferCompatibility(
+    val targetProfile: GfnHevcProfile,
     val compatiblePayloadTypes: List<Int>,
     val rejectedCandidates: List<String>,
     val localCapability: GfnHevcDecoderCapability?,
@@ -29,15 +34,16 @@ internal data class GfnHevcOfferCompatibility(
         get() = when {
             localCapability == null -> streamSupport.reason
             !streamSupport.supported -> streamSupport.reason
-            compatible -> "compatible H265 Main/High payloads=$compatiblePayloadTypes"
+            compatible -> "compatible H265 ${targetProfile.label}/High payloads=$compatiblePayloadTypes"
             rejectedCandidates.isNotEmpty() -> rejectedCandidates.joinToString(" | ")
-            else -> "GFN Offer has no compatible H265 Main/High candidate"
+            else -> "GFN Offer has no compatible H265 ${targetProfile.label}/High candidate"
         }
 }
 
 internal object GfnHevcProductionCompatibilityMatcher {
     fun evaluate(
         remoteCodecs: List<VideoCodecDescription>,
+        targetProfile: GfnHevcProfile,
         localCapability: GfnHevcDecoderCapability?,
         streamSupport: GfnHevcStreamSupport,
     ): GfnHevcOfferCompatibility {
@@ -47,8 +53,8 @@ internal object GfnHevcProductionCompatibilityMatcher {
 
         remoteH265.forEach { remote ->
             val prefix = "pt=${remote.payloadType}"
-            if (remote.profileId != GfnHevcProfile.Main.sdpProfileId) {
-                rejected += "$prefix profile=${remote.profileId ?: "default"} is not HEVC Main"
+            if (remote.profileId != targetProfile.sdpProfileId) {
+                rejected += "$prefix profile=${remote.profileId ?: "default"} is not HEVC ${targetProfile.label}"
                 return@forEach
             }
             if (remote.tierFlag != GfnHevcTier.High.sdpTierFlag) {
@@ -62,15 +68,15 @@ internal object GfnHevcProductionCompatibilityMatcher {
             }
             val txMode = remote.txMode?.trim()?.uppercase() ?: "SRST"
             if (txMode != "SRST") {
-                rejected += "$prefix tx-mode=$txMode is not supported by v6.0.4"
+                rejected += "$prefix tx-mode=$txMode is not supported by v6.1.0"
                 return@forEach
             }
             if (localCapability == null) {
-                rejected += "$prefix has no bound local production HEVC decoder"
+                rejected += "$prefix has no bound local production HEVC ${targetProfile.label} decoder"
                 return@forEach
             }
-            if (localCapability.profile != GfnHevcProfile.Main || localCapability.tier != GfnHevcTier.High) {
-                rejected += "$prefix local decoder is not Main/High"
+            if (localCapability.profile != targetProfile || localCapability.tier != GfnHevcTier.High) {
+                rejected += "$prefix local decoder is not ${targetProfile.label}/High"
                 return@forEach
             }
             if (remoteLevel.rank > localCapability.maxLevel.rank) {
@@ -85,6 +91,7 @@ internal object GfnHevcProductionCompatibilityMatcher {
         }
 
         return GfnHevcOfferCompatibility(
+            targetProfile = targetProfile,
             compatiblePayloadTypes = compatible.distinct(),
             rejectedCandidates = rejected,
             localCapability = localCapability,
@@ -95,16 +102,17 @@ internal object GfnHevcProductionCompatibilityMatcher {
 
 internal object GfnHevcCodecPreferencePlanner {
     /**
-     * Production ordering is restricted to local H265 capabilities that are compatible with an
-     * actual remote H265 Main/High/SRST candidate. Generic H265 is intentionally excluded.
+     * Only explicit local H265 capabilities matching the requested profile and an actual remote
+     * High-Tier/SRST candidate are placed ahead of H264. Generic H265 is intentionally excluded.
      */
     fun build(
         capabilities: List<RtpCapabilities.CodecCapability>,
         remoteCodecs: List<VideoCodecDescription>,
+        targetProfile: GfnHevcProfile,
     ): GfnVideoCodecPreferencePlan {
         val compatibleHevc = capabilities.filter { local ->
             normalize(local.name) == "H265" && remoteCodecs.any { remote ->
-                isCompatibleHevcMain(local, remote)
+                isCompatibleHevcProfile(local, remote, targetProfile)
             }
         }
         val h264 = capabilities.filter { normalize(it.name) == "H264" }
@@ -122,17 +130,19 @@ internal object GfnHevcCodecPreferencePlanner {
         }
         val ordered = (primary + auxiliary).distinctBy(::capabilityIdentity)
         return GfnVideoCodecPreferencePlan(
+            targetProfile = targetProfile,
             orderedCapabilities = ordered,
             orderedLabels = ordered.map(::capabilityLabel),
-            compatibleHevcMainCount = compatibleHevc.size,
+            compatibleHevcCount = compatibleHevc.size,
             h264Count = h264.size,
             auxiliaryCount = auxiliary.size,
         )
     }
 
-    internal fun isCompatibleHevcMain(
+    internal fun isCompatibleHevcProfile(
         local: RtpCapabilities.CodecCapability,
         remote: VideoCodecDescription,
+        targetProfile: GfnHevcProfile,
     ): Boolean {
         if (normalize(local.name) != "H265" || remote.normalizedName != "H265") return false
         val localParameters = local.parameters.orEmpty()
@@ -140,15 +150,20 @@ internal object GfnHevcCodecPreferencePlanner {
         val localTier = localParameters.parameter("tier-flag")
         val localLevel = GfnHevcLevel.fromSdpLevelId(localParameters.parameter("level-id"))
         val remoteLevel = GfnHevcLevel.fromSdpLevelId(remote.levelId)
-        if (localProfile != GfnHevcProfile.Main.sdpProfileId) return false
+        if (localProfile != targetProfile.sdpProfileId) return false
         if (localTier != GfnHevcTier.High.sdpTierFlag) return false
-        if (remote.profileId != GfnHevcProfile.Main.sdpProfileId) return false
+        if (remote.profileId != targetProfile.sdpProfileId) return false
         if (remote.tierFlag != GfnHevcTier.High.sdpTierFlag) return false
         if (localLevel == null || remoteLevel == null || remoteLevel.rank > localLevel.rank) return false
         val localTxMode = localParameters.parameter("tx-mode")?.trim()?.uppercase() ?: "SRST"
         val remoteTxMode = remote.txMode?.trim()?.uppercase() ?: "SRST"
         return localTxMode == remoteTxMode
     }
+
+    internal fun isCompatibleHevcMain(
+        local: RtpCapabilities.CodecCapability,
+        remote: VideoCodecDescription,
+    ): Boolean = isCompatibleHevcProfile(local, remote, GfnHevcProfile.Main)
 
     private fun Map<String, String>.parameter(name: String): String? =
         entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
@@ -188,16 +203,21 @@ internal object GfnHevcCompatLog {
     fun sessionStart(
         generation: Long,
         requestedCodec: VideoCodecPreference,
+        requestedColorMode: RequestedColorMode,
+        targetProfile: GfnHevcProfile,
         decoderCapabilities: List<GfnVideoCodecCapabilitySnapshot>,
         receiverCapabilities: List<GfnVideoCodecCapabilitySnapshot>,
         probeResult: GfnHevcDecoderProbeResult,
-        productionCapability: GfnHevcDecoderCapability?,
-        advertisementReason: String,
+        mainCapability: GfnHevcDecoderCapability?,
+        mainAdvertisementReason: String,
+        main10Capability: GfnHevcDecoderCapability?,
+        main10AdvertisementReason: String,
     ) {
         Log.i(
             TAG,
-            "gen=$generation phase=SESSION requested=${requestedCodec.name} color=SDR8 " +
-                "main10=false hdr=false decoderCaps=${decoderCapabilities.size} receiverCaps=${receiverCapabilities.size}",
+            "gen=$generation phase=SESSION requested=${requestedCodec.name} color=${requestedColorMode.name} " +
+                "targetProfile=${targetProfile.sdpProfileId} main10=${targetProfile == GfnHevcProfile.Main10} " +
+                "hdr=false decoderCaps=${decoderCapabilities.size} receiverCaps=${receiverCapabilities.size}",
         )
         probeResult.candidates.forEachIndexed { index, capability ->
             Log.i(TAG, hevcDecoderCapabilityLogLine(generation, "HEVC_DECODER_CANDIDATE", index, capability))
@@ -205,14 +225,17 @@ internal object GfnHevcCompatLog {
         probeResult.errors.forEachIndexed { index, error ->
             Log.i(TAG, "gen=$generation phase=HEVC_DECODER_PROBE_ERROR index=$index error=${quote(error)}")
         }
-        Log.i(
-            TAG,
-            "gen=$generation phase=HEVC_PRODUCTION_ADVERTISEMENT enabled=${productionCapability != null} " +
-                "decoder=${productionCapability?.codecName ?: "-"} " +
-                "profile=${productionCapability?.profile?.sdpProfileId ?: "-"} " +
-                "tier=${productionCapability?.tier?.sdpTierFlag ?: "-"} " +
-                "level=${productionCapability?.maxLevel?.sdpLevelId ?: "-"} " +
-                "reason=${quote(advertisementReason)}",
+        advertisement(
+            generation = generation,
+            phase = "HEVC_PRODUCTION_ADVERTISEMENT",
+            capability = mainCapability,
+            reason = mainAdvertisementReason,
+        )
+        advertisement(
+            generation = generation,
+            phase = "HEVC_MAIN10_ADVERTISEMENT",
+            capability = main10Capability,
+            reason = main10AdvertisementReason,
         )
         decoderCapabilities.forEach { capability ->
             Log.i(TAG, capabilityLogLine(generation, "LOCAL_DECODER", capability))
@@ -222,18 +245,39 @@ internal object GfnHevcCompatLog {
         }
     }
 
+    private fun advertisement(
+        generation: Long,
+        phase: String,
+        capability: GfnHevcDecoderCapability?,
+        reason: String,
+    ) {
+        Log.i(
+            TAG,
+            "gen=$generation phase=$phase enabled=${capability != null} " +
+                "decoder=${capability?.codecName ?: "-"} " +
+                "profile=${capability?.profile?.sdpProfileId ?: "-"} " +
+                "tier=${capability?.tier?.sdpTierFlag ?: "-"} " +
+                "level=${capability?.maxLevel?.sdpLevelId ?: "-"} " +
+                "reason=${quote(reason)}",
+        )
+    }
+
     fun offerCompatibility(generation: Long, result: GfnHevcOfferCompatibility) {
         val local = result.localCapability
         Log.i(
             TAG,
-            "gen=$generation phase=OFFER_HEVC_COMPATIBLE compatible=${result.compatible} " +
-                "matched=${result.compatiblePayloadTypes} decoder=${local?.codecName ?: "-"} " +
-                "profile=${local?.profile?.sdpProfileId ?: "-"} tier=${local?.tier?.sdpTierFlag ?: "-"} " +
-                "maxLevel=${local?.maxLevel?.sdpLevelId ?: "-"} streamSafe=${result.streamSupport.supported} " +
-                "reason=${quote(result.reason)}",
+            "gen=$generation phase=OFFER_HEVC_COMPATIBLE targetProfile=${result.targetProfile.sdpProfileId} " +
+                "compatible=${result.compatible} matched=${result.compatiblePayloadTypes} " +
+                "decoder=${local?.codecName ?: "-"} profile=${local?.profile?.sdpProfileId ?: "-"} " +
+                "tier=${local?.tier?.sdpTierFlag ?: "-"} maxLevel=${local?.maxLevel?.sdpLevelId ?: "-"} " +
+                "streamSafe=${result.streamSupport.supported} reason=${quote(result.reason)}",
         )
         result.rejectedCandidates.forEachIndexed { index, reason ->
-            Log.i(TAG, "gen=$generation phase=OFFER_HEVC_REJECT index=$index reason=${quote(reason)}")
+            Log.i(
+                TAG,
+                "gen=$generation phase=OFFER_HEVC_REJECT targetProfile=${result.targetProfile.sdpProfileId} " +
+                    "index=$index reason=${quote(reason)}",
+            )
         }
     }
 
@@ -243,33 +287,38 @@ internal object GfnHevcCompatLog {
             TAG,
             "gen=$generation phase=$phase mlinePts=${GfnSdpTools.firstVideoPayloadOrder(sdp)} " +
                 "h264=${summary.h264PayloadTypes} hevc=${summary.hevcPayloadTypes} " +
-                "hevcMain=${summary.hevcMainPayloadTypes}",
+                "hevcMain=${summary.hevcMainPayloadTypes} hevcMain10=${summary.hevcMain10PayloadTypes}",
         )
         GfnSdpTools.firstVideoCodecDetails(sdp).forEach { codec ->
             Log.i(TAG, codecLogLine(generation, phase, codec))
         }
     }
 
-    fun answerHevcMainLineage(
+    fun answerHevcProfileLineage(
         generation: Long,
         stage: String,
-        offerMainPayloadTypes: List<Int>,
+        targetProfile: GfnHevcProfile,
+        offerProfilePayloadTypes: List<Int>,
         answerHevcPayloadTypes: List<Int>,
         matchedPayloadTypes: List<Int>,
     ) {
+        val phase = when (targetProfile) {
+            GfnHevcProfile.Main -> "ANSWER_HEVC_MAIN_LINEAGE"
+            GfnHevcProfile.Main10 -> "ANSWER_HEVC_MAIN10_LINEAGE"
+        }
         Log.i(
             TAG,
-            "gen=$generation phase=ANSWER_HEVC_MAIN_LINEAGE stage=$stage " +
-                "offerMain=$offerMainPayloadTypes answerHevc=$answerHevcPayloadTypes " +
-                "matched=$matchedPayloadTypes",
+            "gen=$generation phase=$phase stage=$stage targetProfile=${targetProfile.sdpProfileId} " +
+                "offerProfile=$offerProfilePayloadTypes answerHevc=$answerHevcPayloadTypes matched=$matchedPayloadTypes",
         )
     }
 
     fun preferencePlan(generation: Long, plan: GfnVideoCodecPreferencePlan) {
         Log.i(
             TAG,
-            "gen=$generation phase=PREFERENCE_PLAN compatibleHevcMain=${plan.compatibleHevcMainCount} " +
-                "h264=${plan.h264Count} aux=${plan.auxiliaryCount} count=${plan.orderedLabels.size}",
+            "gen=$generation phase=PREFERENCE_PLAN targetProfile=${plan.targetProfile.sdpProfileId} " +
+                "compatibleHevc=${plan.compatibleHevcCount} h264=${plan.h264Count} " +
+                "aux=${plan.auxiliaryCount} count=${plan.orderedLabels.size}",
         )
         plan.orderedLabels.forEachIndexed { index, label ->
             Log.i(TAG, "gen=$generation phase=PREFERENCE_ITEM order=$index capability=${quote(label)}")
@@ -296,12 +345,24 @@ internal object GfnHevcCompatLog {
         requested: VideoCodecPreference,
         effective: VideoCodecPreference,
         fallbackReason: String?,
+        targetProfile: GfnHevcProfile? = null,
     ) {
         Log.i(
             TAG,
             "gen=$generation phase=DECISION stage=$stage requested=${requested.name} " +
-                "effective=${effective.name} fallback=${fallbackReason != null} " +
-                "reason=${quote(fallbackReason ?: "-")}",
+                "targetProfile=${targetProfile?.sdpProfileId ?: "-"} effective=${effective.name} " +
+                "fallback=${fallbackReason != null} reason=${quote(fallbackReason ?: "-")}",
+        )
+    }
+
+    fun nvstConfig(
+        generation: Long,
+        colorMode: RequestedColorMode,
+        bitDepth: Int,
+    ) {
+        Log.i(
+            TAG,
+            "gen=$generation phase=NVST_CONFIG color=${colorMode.name} bitDepth=$bitDepth hdr=false",
         )
     }
 
@@ -310,10 +371,12 @@ internal object GfnHevcCompatLog {
         stage: String,
         effective: VideoCodecPreference,
         detail: String? = null,
+        targetProfile: GfnHevcProfile? = null,
     ) {
         Log.i(
             TAG,
-            "gen=$generation phase=MEDIA stage=$stage effective=${effective.name} detail=${quote(detail ?: "-")}",
+            "gen=$generation phase=MEDIA stage=$stage effective=${effective.name} " +
+                "targetProfile=${targetProfile?.sdpProfileId ?: "-"} detail=${quote(detail ?: "-")}",
         )
     }
 

@@ -14,24 +14,46 @@ POLICY="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoCodecNegotiatio
 SIGNALING="$ROOT/stream-signaling/src/main/kotlin/dev/gfn/signaling/GfnSignalingProtocol.kt"
 CLOUDMATCH="$ROOT/gfn-cloudmatch/src/main/kotlin/dev/gfn/cloudmatch/CloudMatchProtocol.kt"
 
-# Production guards: v6.0 is HEVC Main + SDR8 only, with H.264 fallback.
+# Compatibility guards: preserve the frozen v6.0 Main/SDR8 profile while v6.1.0
+# exposes Main10/SDR10 as a separate color/profile intent. HDR and AV1 stay closed.
 grep -Fq 'codecs = setOf(VideoCodecPreference.H264, VideoCodecPreference.Hevc)' "$CORE" || {
-  echo 'ERROR: v6.0 capability profile must expose only H264 + HEVC' >&2; exit 1;
+  echo 'ERROR: HEVC capability profile must expose only H264 + HEVC codec families' >&2; exit 1;
 }
-grep -Fq 'colorModes = setOf(RequestedColorMode.CompatibilitySdr)' "$CORE" || {
-  echo 'ERROR: v6.0 must remain CompatibilitySdr only' >&2; exit 1;
+grep -Fq 'val V60_ANDROID_WEBRTC = StreamEngineCapabilities(' "$CORE" || {
+  echo 'ERROR: historical v6.0 capability profile is missing' >&2; exit 1;
 }
-grep -Fq 'StreamCodecChoice(VideoCodecPreference.Hevc, "HEVC Main · SDR8")' "$SETTINGS" || {
-  echo 'ERROR: HEVC Main SDR8 is not exposed in next-session settings' >&2; exit 1;
+grep -Fq 'val V610_ANDROID_WEBRTC = StreamEngineCapabilities(' "$CORE" || {
+  echo 'ERROR: v6.1.0 capability profile is missing' >&2; exit 1;
+}
+grep -Fq 'colorModes = setOf(RequestedColorMode.CompatibilitySdr, RequestedColorMode.PreferSdr10)' "$CORE" || {
+  echo 'ERROR: v6.1.0 must expose SDR8 + SDR10 only' >&2; exit 1;
+}
+grep -Fq 'StreamCodecChoice(VideoCodecPreference.Hevc, "HEVC（Main / Main10 由色彩模式选择）")' "$SETTINGS" || {
+  echo 'ERROR: HEVC family is not exposed in next-session settings' >&2; exit 1;
+}
+grep -Fq 'StreamColorChoice(RequestedColorMode.CompatibilitySdr' "$SETTINGS" || {
+  echo 'ERROR: SDR8/Main color choice is missing' >&2; exit 1;
+}
+grep -Fq 'StreamColorChoice(RequestedColorMode.PreferSdr10' "$SETTINGS" || {
+  echo 'ERROR: SDR10/Main10 color choice is missing' >&2; exit 1;
 }
 grep -Fq 'codec = settings.videoCodec' "$SETTINGS" || {
   echo 'ERROR: resolver is not carrying selected codec into frozen StreamConfig' >&2; exit 1;
 }
+grep -Fq 'colorMode = settings.colorMode' "$SETTINGS" || {
+  echo 'ERROR: resolver is not carrying selected color mode into frozen StreamConfig' >&2; exit 1;
+}
 grep -Fq 'const val KEY_VIDEO_CODEC = "videoCodec"' "$STORE" || {
   echo 'ERROR: codec preference is not persisted' >&2; exit 1;
 }
+grep -Fq 'const val KEY_COLOR_MODE = "colorMode"' "$STORE" || {
+  echo 'ERROR: color/profile intent is not persisted' >&2; exit 1;
+}
 grep -Fq '.putString(KEY_VIDEO_CODEC, normalized.videoCodec.name)' "$STORE" || {
   echo 'ERROR: codec preference is not saved' >&2; exit 1;
+}
+grep -Fq '.putString(KEY_COLOR_MODE, normalized.colorMode.name)' "$STORE" || {
+  echo 'ERROR: color/profile intent is not saved' >&2; exit 1;
 }
 grep -Fq 'GfnHevcAwareVideoDecoderFactory(eglContext())' "$RUNTIME" || {
   echo 'ERROR: production HEVC-aware decoder factory is not installed' >&2; exit 1;
@@ -42,19 +64,29 @@ grep -Fq 'GfnVideoCodecNegotiationPolicy.selectForOffer' "$ENGINE" || {
 grep -Fq 'GfnVideoCodecNegotiationPolicy.selectAfterAnswer' "$ENGINE" || {
   echo 'ERROR: Answer codec policy is not wired' >&2; exit 1;
 }
-grep -Fq 'matchingAnswerHevcMainPayloadTypes(offerSdp, rawAnswer)' "$ENGINE" || {
-  echo 'ERROR: v6.0 HEVC Answer path must bind H265 back to the offered Main payload' >&2; exit 1;
+grep -Fq 'matchingAnswerHevcProfilePayloadTypes(offerSdp, rawAnswer, targetProfile)' "$ENGINE" || {
+  echo 'ERROR: HEVC Answer path must bind H265 back to the exact offered profile payload' >&2; exit 1;
+}
+grep -Fq 'fun matchingAnswerHevcMainPayloadTypes' "$SIGNALING" || {
+  echo 'ERROR: Main Answer lineage helper is missing' >&2; exit 1;
+}
+grep -Fq 'fun matchingAnswerHevcMain10PayloadTypes' "$SIGNALING" || {
+  echo 'ERROR: Main10 Answer lineage helper is missing' >&2; exit 1;
 }
 grep -Fq 'fun preferVideoCodecInAnswer' "$SIGNALING" || {
   echo 'ERROR: generic video codec Answer filter is missing' >&2; exit 1;
 }
-# Do not move codec selection into CloudMatch in this single-variable version.
+# Codec selection remains SDP/WebRTC-owned. CloudMatch may carry the frozen SDR8/SDR10
+# bit-depth request, but must not switch codec families itself.
 if grep -Fq 'streamConfig.codec' "$CLOUDMATCH" || grep -Fq 'VideoCodecPreference' "$CLOUDMATCH"; then
-  echo 'ERROR: v6.0 must not add client codec selection to CloudMatch request semantics' >&2; exit 1;
+  echo 'ERROR: codec-family selection leaked into CloudMatch request semantics' >&2; exit 1;
 fi
-# Main10/HDR/AV1 must not be in the user-facing v6.0 codec choices.
-if grep -F 'StreamCodecChoice(' "$SETTINGS" | grep -Eiq 'main10|hdr|av1'; then
-  echo 'ERROR: v6.0 codec choices accidentally expose Main10/HDR/AV1' >&2; exit 1;
+# Main10 is now intentionally exposed through the color/profile selector; HDR/AV1 remain closed.
+if grep -F 'StreamCodecChoice(' "$SETTINGS" | grep -Eiq 'hdr|av1'; then
+  echo 'ERROR: codec choices accidentally expose HDR/AV1' >&2; exit 1;
+fi
+if grep -F 'StreamColorChoice(' "$SETTINGS" | grep -Eiq 'hdr'; then
+  echo 'ERROR: v6.1.0 color choices accidentally expose HDR activation' >&2; exit 1;
 fi
 printf '%s\n' 'V600_HEVC_STATIC_GUARDS=PASS'
 
@@ -94,6 +126,7 @@ fun main() {
     check(original.h264PayloadTypes == listOf(96))
     check(original.hevcPayloadTypes == listOf(98, 100))
     check(original.hevcMainPayloadTypes == listOf(98))
+    check(original.hevcMain10PayloadTypes == listOf(100))
 
     val hevc = GfnSdpTools.preferVideoCodecInAnswer(mixed, "H265", preferredHevcProfileId = 1)
     val hs = GfnSdpTools.summarize(hevc, false)
@@ -104,6 +137,13 @@ fun main() {
     check(!hevc.contains("a=rtpmap:100 H265"))
     check(!hevc.contains("a=rtpmap:101 rtx"))
     check(hevc.contains("a=rtpmap:111 opus/48000/2"))
+
+    val main10 = GfnSdpTools.preferVideoCodecInAnswer(mixed, "H265", preferredHevcProfileId = 2)
+    val m10s = GfnSdpTools.summarize(main10, false)
+    check(m10s.h264PayloadTypes.isEmpty())
+    check(m10s.hevcPayloadTypes == listOf(100))
+    check(m10s.hevcMain10PayloadTypes == listOf(100))
+    check(main10.contains("m=video 9 UDP/TLS/RTP/SAVPF 100 101 116 117")) { main10 }
 
     val h264 = GfnSdpTools.preferVideoCodecInAnswer(mixed, "H264")
     val h264s = GfnSdpTools.summarize(h264, false)
@@ -116,7 +156,7 @@ fun main() {
     check(unchanged == missingMain) // No Main fabrication.
 
     println("V600_HEVC_SDP_FIXTURE=PASS")
-    println("OFFER_H264=${original.h264PayloadTypes} HEVC=${original.hevcPayloadTypes} MAIN=${original.hevcMainPayloadTypes}")
+    println("OFFER_H264=${original.h264PayloadTypes} HEVC=${original.hevcPayloadTypes} MAIN=${original.hevcMainPayloadTypes} MAIN10=${original.hevcMain10PayloadTypes}")
     println("HEVC_ANSWER=${hs.videoCodecs} MAIN=${hs.hevcMainPayloadTypes}")
     println("H264_ANSWER=${h264s.videoCodecs}")
 }
@@ -210,6 +250,13 @@ fun main() {
         h264Available = true,
         hevcCompatibleAvailable = true,
     ).isFailure)
+    check(GfnVideoCodecNegotiationPolicy.selectForOffer(
+        requested = VideoCodecPreference.Hevc,
+        h264Available = true,
+        hevcCompatibleAvailable = false,
+        allowHevcFallback = false,
+        hevcProfileLabel = "Main10",
+    ).isFailure)
     println("V600_HEVC_POLICY_FIXTURE=PASS")
     println("HEVC=${hevc.codec} INCOMPATIBLE=${incompatible.codec} ANSWER_FALLBACK=${answerFallback.codec}")
 
@@ -220,6 +267,12 @@ fun main() {
         VideoCodecPreference.H264, VideoCodecPreference.Hevc,
     ))
     check(StreamCapabilityProfiles.V60_ANDROID_WEBRTC.colorModes == setOf(RequestedColorMode.CompatibilitySdr))
+    check(StreamCapabilityProfiles.V610_ANDROID_WEBRTC.codecs == setOf(
+        VideoCodecPreference.H264, VideoCodecPreference.Hevc,
+    ))
+    check(StreamCapabilityProfiles.V610_ANDROID_WEBRTC.colorModes == setOf(
+        RequestedColorMode.CompatibilitySdr, RequestedColorMode.PreferSdr10,
+    ))
     val subscription = SubscriptionInfo(
         membershipTier = "fixture",
         entitledResolutions = listOf(EntitledResolution(1920, 1080, 60)),
@@ -242,6 +295,17 @@ fun main() {
     check(hevcProfile.streamConfig.maxBitrateKbps == 100_000)
     check(hevcProfile.streamConfig.audioChannels == 6)
     check("codec=Hevc" in hevcProfile.summary)
+    val main10Profile = GfnStreamSettingsResolver.resolve(
+        PersistentStreamSettings(
+            keyboardLayoutSelection = "en-US",
+            maxBitrateKbps = 100_000,
+            videoCodec = VideoCodecPreference.Hevc,
+            colorMode = RequestedColorMode.PreferSdr10,
+        ),
+        subscription, "zh-CN", "zh_CN",
+    )
+    check(main10Profile.streamConfig.codec == VideoCodecPreference.Hevc)
+    check(main10Profile.streamConfig.colorMode == RequestedColorMode.PreferSdr10)
     check(GfnStreamSettingsCatalog.normalize(
         PersistentStreamSettings(videoCodec = VideoCodecPreference.Av1),
     ).videoCodec == VideoCodecPreference.H264)
@@ -252,9 +316,16 @@ fun main() {
     val prefs = MemoryPrefs()
     val store = AndroidStreamSettingsStore(FakeContext(prefs))
     check(store.load().videoCodec == VideoCodecPreference.H264)
-    check(store.save(PersistentStreamSettings(videoCodec = VideoCodecPreference.Hevc)).videoCodec == VideoCodecPreference.Hevc)
+    val savedMain10 = store.save(PersistentStreamSettings(
+        videoCodec = VideoCodecPreference.Hevc,
+        colorMode = RequestedColorMode.PreferSdr10,
+    ))
+    check(savedMain10.videoCodec == VideoCodecPreference.Hevc)
+    check(savedMain10.colorMode == RequestedColorMode.PreferSdr10)
     check(prefs.values["videoCodec"] == "Hevc")
+    check(prefs.values["colorMode"] == "PreferSdr10")
     check(store.load().videoCodec == VideoCodecPreference.Hevc)
+    check(store.load().colorMode == RequestedColorMode.PreferSdr10)
     prefs.values["videoCodec"] = "Main10"
     val recovered = store.load().videoCodec
     check(recovered == VideoCodecPreference.H264)

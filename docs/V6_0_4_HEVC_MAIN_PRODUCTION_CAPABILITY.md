@@ -1,5 +1,31 @@
 # GFN Android v6.0.4 — HEVC Main Production Capability
 
+## 0. Closeout — `45.log` TRUE-DEVICE PRODUCTION PASS
+
+`45.log` satisfies the complete v6.0.4 production gate with the original GFN Tier1 Offer. The device advertised a real Main / High-Tier capability, WebRTC retained H265 without any Tier0 rewrite, the same bound hardware component decoded `video/hevc`, FIRST_FRAME arrived, and rendering remained approximately 60fps.
+
+```text
+HEVC Main / SDR8
+Production PASS
+```
+
+Observed closeout chain:
+
+```text
+HEVC_DECODER_CANDIDATE profile=1 tier=1 maxLevel=186 hardware=true supports1080p60=true
+HEVC_PRODUCTION_ADVERTISEMENT enabled=true profile=1 tier=1 level=186
+original Offer profile-id=1 tier-flag=1 level-id=153
+OFFER_HEVC_COMPATIBLE compatible=true
+RAW_ANSWER H265 Main
+FINAL_ANSWER H265 Main
+fallback=false
+c2.qti.hevc.decoder / video/hevc
+FIRST_FRAME effective=Hevc
+~60fps stable
+```
+
+No `OFFER_TIER_AB`/Tier0 rewrite was present. v6.0.4 codec behavior is frozen at closeout; Main10 work proceeds separately in v6.1.0.
+
 ## 1. Baseline
 
 v6.0.3 true-device evidence (`44.log`) established the experimental HEVC Main / SDR8 chain:
@@ -179,9 +205,9 @@ If the real Android decoder reports no Main / High-Tier / Level >= 5.1 capabilit
 
 A prior experimental HEVC decode success does not override this production capability gate.
 
-## 11. Production true-device PASS gate
+## 11. Production true-device PASS gate — CLOSED
 
-v6.0.4 is not `Production PASS` until a new Session proves all of:
+`45.log` proved all of the originally defined gate:
 
 ```text
 Requested codec = Hevc
@@ -202,9 +228,9 @@ FIRST_FRAME effective=Hevc
 stable decode/render around 60fps
 ```
 
-## 12. Frozen / separate scope
+## 12. Closeout boundary / next scope
 
-Still frozen:
+At v6.0.4 closeout, these were deliberately outside the Main/SDR8 change:
 
 ```text
 Main10 / profile-id=2
@@ -212,6 +238,8 @@ Main10 / profile-id=2
 HDR10 / HDR metadata
 AV1
 ```
+
+The v6.0.4 PASS now unlocks Main10/SDR10 as a separate v6.1 line. HDR activation remains deferred to v6.2; AV1 remains outside the current milestone.
 
 Separate backlog:
 

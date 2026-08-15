@@ -307,3 +307,55 @@ original GFN Tier1 Offer
 + stable ~60fps
 = HEVC Main / SDR8 Production PASS
 ```
+
+---
+
+## HEVC — v6.0.4 true-device closeout (`45.log`)
+
+| Gate | True-device evidence | Verdict |
+|---|---|---|
+| Real Main capability | hardware Main / High, maxLevel 6.2, 1080p60 | PASS |
+| Explicit local SDP | profile-id=1, tier-flag=1, level-id=186 | PASS |
+| Original remote Offer | profile-id=1, tier-flag=1, level-id=153; no Tier0 rewrite | PASS |
+| Compatibility | Main target matched and stream-safe | PASS |
+| RAW/FINAL Answer | H265 Main retained, H264 removed in final Answer | PASS |
+| Fallback | `fallback=false` | PASS |
+| Decoder binding | bound `c2.qti.hevc.decoder`, `video/hevc` | PASS |
+| Media | FIRST_VIDEO_RTP + FIRST_FRAME + ~60fps stable | PASS |
+
+Final v6.0.4 verdict: **HEVC Main / SDR8 Production PASS**.
+
+## HEVC — v6.1.0 Main10 / SDR10 capability + negotiation
+
+| Layer | Reference / evidence rule | gfn-android v6.1.0 decision | Verification |
+|---|---|---|---|
+| Profile separation | Main and Main10 are distinct HEVC profiles | probe `HEVCProfileMain` and `HEVCProfileMain10` independently | Kotlin production fixture |
+| HDR-only profiles | Main10 HDR10/Plus constants do not prove plain Main10 path by themselves | do not use HDR-only profiles as Main10 substitutes | source guard |
+| Local capability | real MediaCodec `profileLevels` + nullable `VideoCapabilities` | require hardware Main10 / High / >=5.1 / 1080p60 | factory fixture |
+| Component binding | advertised capability must match actual decoder | profile-specific exact `MediaCodecInfo.name` predicate | factory fixture |
+| Local SDP | generic H265 is ambiguous | explicit `profile-id=2;tier-flag=1;level-id=<real max>` | factory fixture |
+| Remote Offer | GFN already exposes profile2 Main10 candidate | preserve original profile2/tier1/level; no codec SDP rewrite | source/static guard |
+| Compatibility | profile+tier+tx-mode+level+workload | profile2 only; remote level <= local max; size/rate/bitrate safe | matcher fixture |
+| Dynamic PT | payload values are session-local | exact profile2 Offer/Answer lineage; no hardcoded PT107 | lineage fixture |
+| CloudMatch SDR10 | 10-bit request is distinct from HDR request | `bitDepth=1`, `sdrHdrMode=0`, HDR display capability null | cross-layer fixture |
+| NVST | same frozen Session intent must reach transport config | SDR10 -> bitDepth=10, hdr=false | source guard / true-device log |
+| H264 fallback | fallback would turn a Main10 test into SDR8 | disabled for Main10/SDR10; fail Session instead | policy fixture |
+| 10-bit render | negotiation does not prove output bit depth | explicitly deferred to v6.1.1 | not claimed |
+| HDR activation | separate variable | OFF in v6.1.0; v6.2 milestone | negative fixture |
+
+### v6.1.0 PASS boundary
+
+```text
+HEVC + PreferSdr10 frozen Session
++ CloudMatch bitDepth=1 / sdrHdrMode=0 / hdr=false
++ real bound Main10 capability
++ explicit profile-id=2 local advertisement
++ original GFN Main10 Offer unchanged
++ targetProfile=2 compatibility=true
++ RAW/FINAL Answer Main10 lineage
++ fallback=false
++ NVST bitDepth=10
+= v6.1.0 Main10 capability/negotiation PASS
+```
+
+This boundary does **not** equal 10-bit render PASS. v6.1.1 must separately prove 10-bit decode/output/render fidelity.

@@ -1,47 +1,92 @@
-# GFN Android Lab · v6.0.4 HEVC Main Production Capability
+# GFN Android Lab · v6.1.0 HEVC Main10 / SDR10 Capability & Negotiation
 
-这是一个独立 Android GeForce NOW 客户端实验工程。v6.0.3 真机已经完成 HEVC Main / SDR8 的 negotiated + decoded + rendered 实验闭环；v6.0.4 的目标是删除 `tier-flag=1 -> 0` 实验 rewrite，依赖 Android 真实 HEVC High-Tier capability 与原始 GFN Tier1 Offer 自然协商。Main10/HDR/AV1 继续冻结。
+这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已把 v6.0.4 **HEVC Main / SDR8 Production PASS** 闭环：原始 GFN Tier1 Offer、真实 Android High-Tier capability、绑定硬件 decoder、RAW/FINAL H265、`fallback=false`、`video/hevc`、FIRST_FRAME 与约 60fps 稳态全部成立。
+
+v6.1.0 在冻结 v6.0.4 Main/SDR8 行为的同时，开始 **HEVC Main10 / SDR10** 的 capability + negotiation 阶段。HDR Session / HDR render 仍关闭；真实 10-bit output/render fidelity 留给 v6.1.1。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.0.4 本轮新增
+## v6.0.4 closeout
 
 ```text
-MediaCodecList / MediaCodecInfo.profileLevels
-        ↓
-explicit Main / High / normalized maxLevel
-        ↓
-size-rate / bitrate safety gate
-        ↓
-GfnHevcAwareVideoDecoderFactory
-        ↓
-explicit H265 profile-id=1;tier-flag=1;level-id=<real max>
-        ↓
-exact MediaCodec component binding
-        ↓
-original GFN Main / High-Tier Offer
-        ↓
-profile + tier + tx-mode + level intersection
-        ↓
-createAnswer
-        ↓
-HEVC or same-session H264 fallback
+HEVC Main / SDR8
+original Tier1 Offer
++ explicit Main/High local advertisement
++ exact decoder component binding
++ RAW/FINAL H265
++ fallback=false
++ c2.qti.hevc.decoder / video/hevc
++ FIRST_FRAME
++ ~60fps stable
+= Production PASS
 ```
 
-生产路径不再修改 GFN 的 H265 `profile-id/tier-flag/level-id`。Android HEVC Main/High Tier level 常量通过显式映射转换成项目内部顺序模型，禁止直接用常量整数大小推导 level。
+实验 `tier-flag=1 -> 0` rewrite 已关闭且不再进入 production path。
+
+## v6.1.0 本轮新增
+
+```text
+PersistentStreamSettings.colorMode
+        ↓ resolve once
+ResolvedLaunchProfile
+        ↓
+HEVC + PreferSdr10
+        ↓
+CloudMatch bitDepth=1 / sdrHdrMode=0 / HDR metadata=null
+        ↓
+Android MediaCodec Main10 independent probe
+        ↓
+explicit H265 profile-id=2 advertisement
+        ↓
+exact Main10 decoder-component binding
+        ↓
+original GFN profile-id=2 / tier-flag=1 Offer
+        ↓
+profile + tier + tx-mode + level + workload safety gate
+        ↓
+RAW/FINAL Answer Main10 lineage
+        ↓
+strict fallback=false or Session failure
+        ↓
+NVST bitDepth=10 / hdr=false
+```
+
+Main 与 Main10 使用独立 Android profile 探测，绝不从 Main 能力推断 Main10，也不把 HDR-only profile 当 Main10。Main/SDR8 继续允许已验证的 H264 fallback；Main10/SDR10 禁止静默回退 H264。
+
+本版本只要求 Main10 **capability + Session request + negotiation** 正确，不宣称现有 libwebrtc renderer 已保持 10-bit。v6.1.1 将单独验证 decode/output/render bit depth；如果不能证明，则再评估 direct `MediaCodec -> Surface`。
+
+HDR 边界保持：
+
+```text
+PreferHdr10              OFF / rejected
+CloudMatch sdrHdrMode    0
+HDR display metadata     OFF
+HDR render activation    OFF
+```
 
 验证入口：
 
 ```text
-sh ./verify-hevc-production.sh
 sh ./verify-hevc.sh
+sh ./verify-hevc-production.sh
 sh ./verify-hevc-answer-lineage.sh
+sh ./verify-main10.sh
 sh ./verify-reconnect-engine.sh
-sh ./verify-audio.sh
 sh ./verify-stream-settings.sh
+sh ./verify-audio.sh
 ```
 
-详细见 `docs/V6_0_4_HEVC_MAIN_PRODUCTION_CAPABILITY.md`、`docs/STATUS.md`、`docs/REFERENCE_MATRIX.md`。完整 Gradle/APK build 仍受本地 Gradle 9.5.0 是否可用影响；离线验证不能替代下一次真机 production PASS。
+详细见：
+
+```text
+docs/STATUS.md
+docs/V6_0_4_HEVC_MAIN_PRODUCTION_CAPABILITY.md
+docs/V6_1_0_MAIN10_CAPABILITY_NEGOTIATION.md
+docs/V6_1_0_TEST_GUIDE.md
+docs/REFERENCE_MATRIX.md
+```
+
+完整 Android Gradle/APK build 仍需 Android/Gradle 环境或 GitHub Actions 验证；离线 API-shaped compile 不替代真实 APK build，也不替代 Main10 真机结果。
 
 ## v6.0 历史基线
 

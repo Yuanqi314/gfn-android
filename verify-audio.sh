@@ -255,15 +255,22 @@ import org.webrtc.EglBase
 import org.webrtc.VideoCodecInfo
 import org.webrtc.VideoDecoderFactory
 data class GfnHevcDecoderCapability(val codecName:String, val profile:GfnHevcProfile=GfnHevcProfile.Main, val tier:GfnHevcTier=GfnHevcTier.High, val maxLevel:GfnHevcLevel=GfnHevcLevel.Level51)
-enum class GfnHevcProfile(val sdpProfileId:String) { Main("1") }
+enum class GfnHevcProfile(val sdpProfileId:String) { Main("1"), Main10("2") }
 enum class GfnHevcTier(val sdpTierFlag:String) { High("1") }
 enum class GfnHevcLevel(val sdpLevelId:String) { Level51("153") }
-data class GfnHevcDecoderProbeResult(val candidates:List<GfnHevcDecoderCapability> = emptyList(), val selected:GfnHevcDecoderCapability? = null, val errors:List<String> = emptyList())
-data class GfnHevcStreamSupport(val supported:Boolean, val sizeAndRateSupported:Boolean, val bitrateSupported:Boolean, val bitrateRangeKbps:IntRange?, val reason:String)
+data class GfnHevcDecoderProbeResult(
+    val candidates:List<GfnHevcDecoderCapability> = emptyList(),
+    val selected:GfnHevcDecoderCapability? = null,
+    val errors:List<String> = emptyList(),
+    val selectedMain10:GfnHevcDecoderCapability? = null,
+)
+class GfnHevcStreamSupport(val supported:Boolean, val sizeAndRateSupported:Boolean, val bitrateSupported:Boolean, val bitrateRangeKbps:IntRange?, val reason:String)
 class GfnHevcAwareVideoDecoderFactory(c:EglBase.Context) : VideoDecoderFactory {
     val probeResult = GfnHevcDecoderProbeResult()
     val productionCapability: GfnHevcDecoderCapability? = null
-    val advertisementReason = "stub"
+    val main10ProductionCapability: GfnHevcDecoderCapability? = null
+    val advertisementReason = "stub Main"
+    val main10AdvertisementReason = "stub Main10"
     override fun getSupportedCodecs(): Array<VideoCodecInfo> = arrayOf(VideoCodecInfo("H264"))
 }
 object GfnHevcDecoderCapabilityProbe {

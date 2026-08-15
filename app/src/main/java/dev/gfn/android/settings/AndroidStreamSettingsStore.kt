@@ -1,6 +1,7 @@
 package dev.gfn.android.settings
 
 import android.content.Context
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.stream.VideoCodecPreference
 
 /** Persistent next-Session stream settings. Existing v5.1.8 keyboard preference is migrated in-place. */
@@ -21,6 +22,9 @@ class AndroidStreamSettingsStore(context: Context) {
             videoCodec = prefs.getString(KEY_VIDEO_CODEC, null)?.let { raw ->
                 runCatching { VideoCodecPreference.valueOf(raw) }.getOrNull()
             } ?: VideoCodecPreference.H264,
+            colorMode = prefs.getString(KEY_COLOR_MODE, null)?.let { raw ->
+                runCatching { RequestedColorMode.valueOf(raw) }.getOrNull()
+            } ?: RequestedColorMode.CompatibilitySdr,
             audioChannels = prefs.getInt(KEY_AUDIO_CHANNELS, GfnStreamSettingsCatalog.DEFAULT_AUDIO_CHANNELS),
         ),
     )
@@ -33,6 +37,7 @@ class AndroidStreamSettingsStore(context: Context) {
             .putInt(KEY_FPS, normalized.fpsSelection)
             .putInt(KEY_MAX_BITRATE, normalized.maxBitrateKbps)
             .putString(KEY_VIDEO_CODEC, normalized.videoCodec.name)
+            .putString(KEY_COLOR_MODE, normalized.colorMode.name)
             .putInt(KEY_AUDIO_CHANNELS, normalized.audioChannels)
             .apply()
         return normalized
@@ -46,6 +51,7 @@ class AndroidStreamSettingsStore(context: Context) {
         const val KEY_FPS = "fpsSelection"
         const val KEY_MAX_BITRATE = "maxBitrateKbps"
         const val KEY_VIDEO_CODEC = "videoCodec"
+        const val KEY_COLOR_MODE = "colorMode"
         const val KEY_AUDIO_CHANNELS = "audioChannels"
     }
 }

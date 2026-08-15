@@ -78,8 +78,11 @@ Full Android Gradle/APK build:
 BLOCKED BY ENVIRONMENT, NOT CLAIMED PASS.
 The repository wrapper requires Gradle 9.5.0. This container has no cached distribution and DNS cannot resolve services.gradle.org, so the wrapper cannot download it.
 
-True-device v6.0.4 production result:
-NOT YET VERIFIED. A new Session must prove the original Tier1 Offer, explicit local Main/High capability, HEVC RAW/FINAL Answer, bound decoder creation, FIRST_FRAME Hevc, and sustained rendering without the experimental tier rewrite.
+True-device v6.0.4 production result (`45.log`):
+PASS. Original GFN Main/Tier1 Offer remained unchanged; explicit local Main/High capability was advertised; RAW/FINAL Answer retained H265; fallback=false; the bound c2.qti.hevc.decoder decoded video/hevc; FIRST_FRAME arrived; rendering remained approximately 60fps; no experimental Tier0 rewrite was present.
+
+Final closeout verdict:
+HEVC Main / SDR8 Production PASS.
 
 CI nullability correction (GitHub Actions run 31863874419 / job 94961687002):
 - Affected commit: 9fbf3610f432b924a3765796d43659fa10a64048

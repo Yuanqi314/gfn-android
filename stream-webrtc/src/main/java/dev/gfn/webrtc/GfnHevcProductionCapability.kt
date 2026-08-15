@@ -11,8 +11,15 @@ import org.webrtc.VideoCodecInfo
 import org.webrtc.VideoDecoder
 import org.webrtc.VideoDecoderFactory
 
-internal enum class GfnHevcProfile(val sdpProfileId: String) {
-    Main("1"),
+internal enum class GfnHevcProfile(val sdpProfileId: String, val label: String) {
+    Main("1", "Main"),
+    Main10("2", "Main10"),
+    ;
+
+    companion object {
+        fun fromSdpProfileId(value: String?): GfnHevcProfile? =
+            entries.firstOrNull { it.sdpProfileId == value?.trim() }
+    }
 }
 
 internal enum class GfnHevcTier(val sdpTierFlag: String) {
@@ -63,11 +70,21 @@ internal data class GfnHevcDecoderCapability(
         )
 }
 
+/**
+ * v6.0.4 keeps [selected] as the production Main capability. v6.1.0 adds [selectedMain10]
+ * independently; Main success is never used to infer Main10 support.
+ */
 internal data class GfnHevcDecoderProbeResult(
     val candidates: List<GfnHevcDecoderCapability>,
     val selected: GfnHevcDecoderCapability?,
     val errors: List<String>,
-)
+    val selectedMain10: GfnHevcDecoderCapability? = null,
+) {
+    fun selectedFor(profile: GfnHevcProfile): GfnHevcDecoderCapability? = when (profile) {
+        GfnHevcProfile.Main -> selected
+        GfnHevcProfile.Main10 -> selectedMain10
+    }
+}
 
 internal data class GfnHevcStreamSupport(
     val supported: Boolean,
@@ -125,6 +142,16 @@ internal object GfnHevcDecoderCapabilityProbe {
     private const val productionHeight = 1080
     private const val productionFps = 60
 
+    private data class AndroidProfile(
+        val profile: GfnHevcProfile,
+        val androidProfile: Int,
+    )
+
+    private val probedProfiles = listOf(
+        AndroidProfile(GfnHevcProfile.Main, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain),
+        AndroidProfile(GfnHevcProfile.Main10, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10),
+    )
+
     fun probe(): GfnHevcDecoderProbeResult {
         val errors = mutableListOf<String>()
         val candidates = mutableListOf<GfnHevcDecoderCapability>()
@@ -135,6 +162,7 @@ internal object GfnHevcDecoderCapabilityProbe {
                 candidates = emptyList(),
                 selected = null,
                 errors = listOf("MediaCodecList failed: ${error.message ?: error.javaClass.simpleName}"),
+                selectedMain10 = null,
             )
         }
 
@@ -148,22 +176,6 @@ internal object GfnHevcDecoderCapabilityProbe {
                     errors += "${info.name}: getCapabilitiesForType failed: ${error.message ?: error.javaClass.simpleName}"
                     return@forEach
                 }
-            val mainLevels = caps.profileLevels
-                .asSequence()
-                .filter { it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain }
-                .mapNotNull { GfnHevcAndroidLevelMapper.normalize(it.level) }
-                .toList()
-            if (mainLevels.isEmpty()) {
-                errors += "${info.name}: HEVCProfileMain has no recognized tier/level"
-                return@forEach
-            }
-            val highestHigh = mainLevels
-                .filter { it.tier == GfnHevcTier.High }
-                .maxByOrNull { it.level.rank }
-            val highestMain = mainLevels
-                .filter { it.tier == GfnHevcTier.Main }
-                .maxByOrNull { it.level.rank }
-            val best = highestHigh ?: highestMain ?: return@forEach
             val videoCaps: MediaCodecInfo.VideoCapabilities? = caps.videoCapabilities
             if (videoCaps == null) {
                 errors += "${info.name}: HEVC videoCapabilities unavailable"
@@ -183,28 +195,57 @@ internal object GfnHevcDecoderCapabilityProbe {
                     (range.lower / 1_000)..(range.upper / 1_000)
                 }.getOrNull()
             }
-            candidates += GfnHevcDecoderCapability(
-                codecName = info.name,
-                profile = GfnHevcProfile.Main,
-                tier = best.tier,
-                maxLevel = best.level,
-                hardwareAccelerated = info.isHardwareAccelerated,
-                supports1080p60 = supports1080p60,
-                bitrateRangeKbps = bitrateRangeKbps,
-            )
+
+            var foundRecognizedProfile = false
+            probedProfiles.forEach profileLoop@ { target ->
+                val profileLevels = caps.profileLevels
+                    .asSequence()
+                    .filter { it.profile == target.androidProfile }
+                    .mapNotNull { GfnHevcAndroidLevelMapper.normalize(it.level) }
+                    .toList()
+                if (profileLevels.isEmpty()) return@profileLoop
+                foundRecognizedProfile = true
+                val highestHigh = profileLevels
+                    .filter { it.tier == GfnHevcTier.High }
+                    .maxByOrNull { it.level.rank }
+                val highestMain = profileLevels
+                    .filter { it.tier == GfnHevcTier.Main }
+                    .maxByOrNull { it.level.rank }
+                val best = highestHigh ?: highestMain ?: return@profileLoop
+                candidates += GfnHevcDecoderCapability(
+                    codecName = info.name,
+                    profile = target.profile,
+                    tier = best.tier,
+                    maxLevel = best.level,
+                    hardwareAccelerated = info.isHardwareAccelerated,
+                    supports1080p60 = supports1080p60,
+                    bitrateRangeKbps = bitrateRangeKbps,
+                )
+            }
+            if (!foundRecognizedProfile) {
+                errors += "${info.name}: HEVC Main/Main10 has no recognized tier/level"
+            }
         }
 
-        val selected = candidates.firstOrNull { candidate ->
-            candidate.hardwareAccelerated &&
-                candidate.tier == GfnHevcTier.High &&
-                candidate.maxLevel.rank >= GfnHevcLevel.Level51.rank &&
-                candidate.supports1080p60
-        }
+        val selectedMain = selectProductionCandidate(candidates, GfnHevcProfile.Main)
+        val selectedMain10 = selectProductionCandidate(candidates, GfnHevcProfile.Main10)
         return GfnHevcDecoderProbeResult(
             candidates = candidates,
-            selected = selected,
+            selected = selectedMain,
             errors = errors,
+            selectedMain10 = selectedMain10,
         )
+    }
+
+    private fun selectProductionCandidate(
+        candidates: List<GfnHevcDecoderCapability>,
+        profile: GfnHevcProfile,
+    ): GfnHevcDecoderCapability? = candidates.firstOrNull { candidate ->
+        candidate.profile == profile &&
+            candidate.hardwareAccelerated &&
+            candidate.tier == GfnHevcTier.High &&
+            candidate.maxLevel.rank >= GfnHevcLevel.Level51.rank &&
+            candidate.supports1080p60
     }
 
     fun evaluateStream(
@@ -270,78 +311,128 @@ internal object GfnHevcDecoderCapabilityProbe {
 }
 
 /**
- * Production HEVC decoder factory for v6.0.4.
+ * Production HEVC decoder factory for v6.0.4 Main and v6.1.0 Main10 negotiation.
  *
- * Non-H265 codecs keep the upstream DefaultVideoDecoderFactory path. H265 is advertised only when
- * Android reports a concrete hardware decoder with HEVC Main / High Tier / Level >= 5.1 and
- * 1080p60 support. H265 decoder creation is then delegated to a HardwareVideoDecoderFactory whose
- * predicate accepts only that exact MediaCodec component.
+ * Main and Main10 are probed independently. Each explicit SDP capability is bound to the exact
+ * MediaCodec component that proved that profile. Main10 is never inferred from Main support.
  */
 internal class GfnHevcAwareVideoDecoderFactory(
     sharedContext: EglBase.Context?,
     val probeResult: GfnHevcDecoderProbeResult = GfnHevcDecoderCapabilityProbe.probe(),
 ) : VideoDecoderFactory {
     private val fallbackFactory = DefaultVideoDecoderFactory(sharedContext)
-    private val probedCapability = probeResult.selected
-    private val boundHevcFactory = probedCapability?.let { capability ->
-        HardwareVideoDecoderFactory(
-            sharedContext,
-            Predicate<MediaCodecInfo> { info -> info.name == capability.codecName },
-        )
+
+    private val probedMainCapability = probeResult.selectedFor(GfnHevcProfile.Main)
+    private val probedMain10Capability = probeResult.selectedFor(GfnHevcProfile.Main10)
+
+    private val boundMainFactory = probedMainCapability?.let { capability ->
+        hardwareFactoryFor(sharedContext, capability)
     }
-    private val boundFactoryHasH265 = boundHevcFactory?.getSupportedCodecs()
-        ?.any { normalizeCodecName(it.name) == "H265" }
-        ?: false
+    private val boundMain10Factory = probedMain10Capability?.let { capability ->
+        hardwareFactoryFor(sharedContext, capability)
+    }
 
     val productionCapability: GfnHevcDecoderCapability? =
-        probedCapability?.takeIf { boundFactoryHasH265 }
+        probedMainCapability?.takeIf { boundMainFactory.hasH265() }
 
-    val advertisementReason: String = when {
-        probedCapability == null ->
-            "no hardware HEVC Main High-Tier Level>=5.1 decoder with 1080p60 capability"
-        !boundFactoryHasH265 ->
-            "bound WebRTC HardwareVideoDecoderFactory rejected ${probedCapability.codecName}"
-        else ->
-            "advertising ${probedCapability.codecName} as H265 Main/High level ${probedCapability.maxLevel.label}"
-    }
+    val main10ProductionCapability: GfnHevcDecoderCapability? =
+        probedMain10Capability?.takeIf { boundMain10Factory.hasH265() }
+
+    val productionCapabilities: List<GfnHevcDecoderCapability> =
+        listOfNotNull(productionCapability, main10ProductionCapability)
+
+    val advertisementReason: String = advertisementReasonFor(
+        profile = GfnHevcProfile.Main,
+        probed = probedMainCapability,
+        advertised = productionCapability,
+    )
+
+    val main10AdvertisementReason: String = advertisementReasonFor(
+        profile = GfnHevcProfile.Main10,
+        probed = probedMain10Capability,
+        advertised = main10ProductionCapability,
+    )
 
     override fun getSupportedCodecs(): Array<VideoCodecInfo> {
         val result = mutableListOf<VideoCodecInfo>()
-        var insertedH265 = false
+        var insertedExplicitH265 = false
         fallbackFactory.getSupportedCodecs().forEach { codec ->
             if (normalizeCodecName(codec.name) == "H265") {
-                if (!insertedH265) {
-                    productionCapability?.let { capability ->
-                        result += VideoCodecInfo(
-                            "H265",
-                            capability.sdpParameters,
-                            emptyList(),
-                        )
+                if (!insertedExplicitH265) {
+                    productionCapabilities.forEach { capability ->
+                        result += capability.toVideoCodecInfo()
                     }
-                    insertedH265 = true
+                    insertedExplicitH265 = true
                 }
             } else {
                 result += codec
             }
         }
-        if (!insertedH265) {
-            productionCapability?.let { capability ->
-                result += VideoCodecInfo(
-                    "H265",
-                    capability.sdpParameters,
-                    emptyList(),
-                )
+        if (!insertedExplicitH265) {
+            productionCapabilities.forEach { capability ->
+                result += capability.toVideoCodecInfo()
             }
         }
         return result.toTypedArray()
     }
 
-    override fun createDecoder(info: VideoCodecInfo): VideoDecoder? =
-        if (normalizeCodecName(info.name) == "H265") {
-            if (productionCapability == null) null else boundHevcFactory?.createDecoder(info)
-        } else {
-            fallbackFactory.createDecoder(info)
+    override fun createDecoder(info: VideoCodecInfo): VideoDecoder? {
+        if (normalizeCodecName(info.name) != "H265") return fallbackFactory.createDecoder(info)
+        val profile = GfnHevcProfile.fromSdpProfileId(info.params.orEmpty().parameter("profile-id"))
+        return when (profile) {
+            GfnHevcProfile.Main -> {
+                if (productionCapability == null) null else boundMainFactory?.createDecoder(info)
+            }
+            GfnHevcProfile.Main10 -> {
+                if (main10ProductionCapability == null) null else boundMain10Factory?.createDecoder(info)
+            }
+            null -> genericHevcFactory()?.createDecoder(info)
         }
+    }
+
+    /**
+     * Some libwebrtc paths can request an H265 decoder without carrying profile-id back to Java.
+     * Never guess Main when Main/Main10 were proven by different components. A generic request is
+     * safe only when exactly one HEVC production capability exists or both profiles resolve to the
+     * same MediaCodec component.
+     */
+    private fun genericHevcFactory(): HardwareVideoDecoderFactory? = when {
+        productionCapability != null && main10ProductionCapability == null -> boundMainFactory
+        productionCapability == null && main10ProductionCapability != null -> boundMain10Factory
+        productionCapability != null && main10ProductionCapability != null &&
+            productionCapability.codecName == main10ProductionCapability.codecName -> boundMainFactory
+        else -> null
+    }
+
+    private fun hardwareFactoryFor(
+        sharedContext: EglBase.Context?,
+        capability: GfnHevcDecoderCapability,
+    ): HardwareVideoDecoderFactory = HardwareVideoDecoderFactory(
+        sharedContext,
+        Predicate<MediaCodecInfo> { info -> info.name == capability.codecName },
+    )
+
+    private fun HardwareVideoDecoderFactory?.hasH265(): Boolean =
+        this?.getSupportedCodecs()?.any { normalizeCodecName(it.name) == "H265" } ?: false
+
+    private fun GfnHevcDecoderCapability.toVideoCodecInfo(): VideoCodecInfo =
+        VideoCodecInfo("H265", sdpParameters, emptyList())
+
+    private fun advertisementReasonFor(
+        profile: GfnHevcProfile,
+        probed: GfnHevcDecoderCapability?,
+        advertised: GfnHevcDecoderCapability?,
+    ): String = when {
+        probed == null ->
+            "no hardware HEVC ${profile.label} High-Tier Level>=5.1 decoder with 1080p60 capability"
+        advertised == null ->
+            "bound WebRTC HardwareVideoDecoderFactory rejected ${probed.codecName} for ${profile.label}"
+        else ->
+            "advertising ${advertised.codecName} as H265 ${profile.label}/High level ${advertised.maxLevel.label}"
+    }
+
+    private fun Map<String, String>.parameter(name: String): String? =
+        entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
 
     private fun normalizeCodecName(value: String): String = when (value.trim().uppercase()) {
         "HEVC" -> "H265"

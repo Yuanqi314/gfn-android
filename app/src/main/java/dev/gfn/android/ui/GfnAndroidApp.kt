@@ -51,6 +51,7 @@ import dev.gfn.android.session.SessionUiState
 import dev.gfn.android.settings.GfnKeyboardLayoutCatalog
 import dev.gfn.android.settings.GfnStreamSettingsCatalog
 import dev.gfn.android.settings.PersistentStreamSettings
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.android.settings.ResolvedLaunchProfile
 import dev.gfn.android.stream.GfnStreamingController
 import dev.gfn.core.model.GameDetail
@@ -230,6 +231,7 @@ fun GfnAndroidApp(runtime: GfnAppRuntimeViewModel) {
                         onFpsSelected = streamSettingsController::setFps,
                         onMaxBitrateSelected = streamSettingsController::setMaxBitrateKbps,
                         onVideoCodecSelected = streamSettingsController::setVideoCodec,
+                        onColorModeSelected = streamSettingsController::setColorMode,
                         onAudioChannelsSelected = streamSettingsController::setAudioChannels,
                         onToggleTheme = { darkTheme = !darkTheme },
                     )
@@ -260,7 +262,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v6.0.4 HEVC Main Production Capability",
+                "独立 Android GFN 客户端 · v6.1.0 HEVC Main10 Capability & Negotiation",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -605,7 +607,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v6.0.4 保持 GFN 原始 HEVC Main/High Tier Offer，不再改写 tier-flag；仅在真实 Android decoder capability 与原始 Offer 兼容时启用 HEVC。")
+            Text("v6.0.4 HEVC Main/SDR8 已 Production PASS；v6.1.0 在同一 production capability 框架上新增独立 Main10/profile-id=2 + SDR10 协商，HDR 仍关闭。")
         }
 
         if (resumeRecord != null) {
@@ -918,18 +920,24 @@ private fun DiagnosticsScreen(
                     "Offer H264 PT" to streamDiagnostics.offer.h264PayloadTypes.joinToString().ifBlank { "-" },
                     "Offer HEVC PT" to streamDiagnostics.offer.hevcPayloadTypes.joinToString().ifBlank { "-" },
                     "Offer HEVC Main PT" to streamDiagnostics.offer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
+                    "Offer HEVC Main10 PT" to streamDiagnostics.offer.hevcMain10PayloadTypes.joinToString().ifBlank { "-" },
+                    "Offer HEVC target-compatible PT" to streamDiagnostics.offer.hevcTargetMatchedPayloadTypes.joinToString().ifBlank { "-" },
                     "Raw Answer" to streamDiagnostics.rawAnswer.answerPresent.asYesNo(),
                     "Raw Answer codecs" to streamDiagnostics.rawAnswer.videoCodecs.joinToString().ifBlank { "-" },
                     "Raw Answer H264 PT" to streamDiagnostics.rawAnswer.h264PayloadTypes.joinToString().ifBlank { "-" },
                     "Raw Answer HEVC PT" to streamDiagnostics.rawAnswer.hevcPayloadTypes.joinToString().ifBlank { "-" },
                     "Raw Answer HEVC Main PT" to streamDiagnostics.rawAnswer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
+                    "Raw Answer HEVC Main10 PT" to streamDiagnostics.rawAnswer.hevcMain10PayloadTypes.joinToString().ifBlank { "-" },
                     "Raw Answer HEVC Main matched PT" to streamDiagnostics.rawAnswer.hevcMainMatchedPayloadTypes.joinToString().ifBlank { "-" },
+                    "Raw Answer HEVC target matched PT" to streamDiagnostics.rawAnswer.hevcTargetMatchedPayloadTypes.joinToString().ifBlank { "-" },
                     "Final Answer" to streamDiagnostics.answer.answerPresent.asYesNo(),
                     "Final Answer codecs" to streamDiagnostics.answer.videoCodecs.joinToString().ifBlank { "-" },
                     "Final Answer H264 PT" to streamDiagnostics.answer.h264PayloadTypes.joinToString().ifBlank { "-" },
                     "Final Answer HEVC PT" to streamDiagnostics.answer.hevcPayloadTypes.joinToString().ifBlank { "-" },
                     "Final Answer HEVC Main PT" to streamDiagnostics.answer.hevcMainPayloadTypes.joinToString().ifBlank { "-" },
+                    "Final Answer HEVC Main10 PT" to streamDiagnostics.answer.hevcMain10PayloadTypes.joinToString().ifBlank { "-" },
                     "Final Answer HEVC Main matched PT" to streamDiagnostics.answer.hevcMainMatchedPayloadTypes.joinToString().ifBlank { "-" },
+                    "Final Answer HEVC target matched PT" to streamDiagnostics.answer.hevcTargetMatchedPayloadTypes.joinToString().ifBlank { "-" },
                     "ICE ufrag/pwd" to "${streamDiagnostics.answer.iceUfragPresent.asYesNo()}/${streamDiagnostics.answer.icePasswordPresent.asYesNo()}",
                     "DTLS fingerprint" to streamDiagnostics.answer.dtlsFingerprintPresent.asYesNo(),
                 ),
@@ -1027,17 +1035,29 @@ private fun DiagnosticsScreen(
                 "视频",
                 listOf(
                     "Requested codec" to streamDiagnostics.video.requestedCodec,
+                    "Requested color" to streamDiagnostics.video.requestedColorMode,
+                    "Requested HEVC profile" to (streamDiagnostics.video.requestedHevcProfile ?: "-"),
+                    "Expected bit depth" to "${streamDiagnostics.video.expectedBitDepth}-bit",
                     "Negotiated codec" to (streamDiagnostics.video.negotiatedCodec ?: "-"),
+                    "Negotiated HEVC profile" to (streamDiagnostics.video.negotiatedHevcProfile ?: "-"),
                     "Local decoder codecs" to streamDiagnostics.video.localDecoderCodecs.joinToString().ifBlank { "-" },
                     "Local receiver codecs" to streamDiagnostics.video.localReceiverCodecs.joinToString().ifBlank { "-" },
                     "HEVC production ready" to streamDiagnostics.video.hevcProductionCapabilityReady.asYesNo(),
                     "HEVC bound decoder" to (streamDiagnostics.video.hevcProductionDecoder ?: "-"),
-                    "HEVC local profile/tier/level" to listOf(
+                    "HEVC Main local profile/tier/level" to listOf(
                         streamDiagnostics.video.hevcProductionProfile ?: "-",
                         streamDiagnostics.video.hevcProductionTier ?: "-",
                         streamDiagnostics.video.hevcProductionMaxLevel ?: "-",
                     ).joinToString(" / "),
-                    "HEVC stream safety gate" to when (streamDiagnostics.video.hevcProductionStreamSafe) {
+                    "HEVC Main10 production ready" to streamDiagnostics.video.hevcMain10ProductionCapabilityReady.asYesNo(),
+                    "HEVC Main10 bound decoder" to (streamDiagnostics.video.hevcMain10ProductionDecoder ?: "-"),
+                    "HEVC Main10 local profile/tier/level" to listOf(
+                        streamDiagnostics.video.hevcMain10ProductionProfile ?: "-",
+                        streamDiagnostics.video.hevcMain10ProductionTier ?: "-",
+                        streamDiagnostics.video.hevcMain10ProductionMaxLevel ?: "-",
+                    ).joinToString(" / "),
+                    "HEVC Main10 capability reason" to (streamDiagnostics.video.hevcMain10ProductionReason ?: "-"),
+                    "HEVC target stream safety gate" to when (streamDiagnostics.video.hevcProductionStreamSafe) {
                         true -> "PASS"
                         false -> "FAIL"
                         null -> "NOT EVALUATED"
@@ -1053,7 +1073,8 @@ private fun DiagnosticsScreen(
                     "Logcat tag" to "GfnHevcCompat",
                     "Codec fallback" to streamDiagnostics.video.codecFallbackUsed.asYesNo(),
                     "Fallback reason" to (streamDiagnostics.video.codecFallbackReason ?: "-"),
-                    "Color" to "SDR8（Main10/HDR 未启用）",
+                    "Color intent" to streamDiagnostics.video.requestedColorMode,
+                    "HDR activation" to "OFF（v6.1.0）",
                     "Remote video track" to streamDiagnostics.video.remoteVideoTrackPresent.asYesNo(),
                     "First RTP packet" to streamDiagnostics.video.firstRtpPacketReceived.asYesNo(),
                     "First surface frame" to streamDiagnostics.video.firstFrameRendered.asYesNo(),
@@ -1066,7 +1087,7 @@ private fun DiagnosticsScreen(
         }
         item {
             DiagnosticSection(
-                "后续能力（v6.0.4 未启用）",
+                "HDR diagnostics（v6.1.0 只读，未激活）",
                 listOf(
                     "显示器 HDR10" to snapshot.localVideo.displayHdr10.asYesNo(),
                     "HEVC Main10" to snapshot.localVideo.hevcMain10.asYesNo(),
@@ -1105,6 +1126,7 @@ private fun SettingsScreen(
     onFpsSelected: (Int) -> Unit,
     onMaxBitrateSelected: (Int) -> Unit,
     onVideoCodecSelected: (dev.gfn.stream.VideoCodecPreference) -> Unit,
+    onColorModeSelected: (RequestedColorMode) -> Unit,
     onAudioChannelsSelected: (Int) -> Unit,
     onToggleTheme: () -> Unit,
 ) {
@@ -1112,6 +1134,7 @@ private fun SettingsScreen(
     var resolutionMenuOpen by remember { mutableStateOf(false) }
     var fpsMenuOpen by remember { mutableStateOf(false) }
     var codecMenuOpen by remember { mutableStateOf(false) }
+    var colorMenuOpen by remember { mutableStateOf(false) }
     var audioMenuOpen by remember { mutableStateOf(false) }
 
     val settings = GfnStreamSettingsCatalog.normalize(streamSettings)
@@ -1127,6 +1150,7 @@ private fun SettingsScreen(
         .first { it.code == settings.resolutionSelection }
     val fpsChoice = GfnStreamSettingsCatalog.fpsChoices.first { it.fps == settings.fpsSelection }
     val codecChoice = GfnStreamSettingsCatalog.codecChoices.first { it.codec == settings.videoCodec }
+    val colorChoice = GfnStreamSettingsCatalog.colorChoices.first { it.colorMode == settings.colorMode }
     val audioChoice = GfnStreamSettingsCatalog.audioChoices.first { it.channels == settings.audioChannels }
     val activeOrResumable = hasFrozenLaunchProfile || (
         sessionState !is SessionUiState.Idle &&
@@ -1228,8 +1252,28 @@ private fun SettingsScreen(
                         }
                     }
                     if (settings.videoCodec == dev.gfn.stream.VideoCodecPreference.Hevc) {
+                        Text("HEVC Profile / 色彩", fontWeight = FontWeight.SemiBold)
+                        OutlinedButton(onClick = { colorMenuOpen = true }) { Text(colorChoice.label) }
+                        DropdownMenu(
+                            expanded = colorMenuOpen,
+                            onDismissRequest = { colorMenuOpen = false },
+                        ) {
+                            GfnStreamSettingsCatalog.colorChoices.forEach { choice ->
+                                DropdownMenuItem(
+                                    text = { Text(choice.label) },
+                                    onClick = {
+                                        colorMenuOpen = false
+                                        onColorModeSelected(choice.colorMode)
+                                    },
+                                )
+                            }
+                        }
                         Text(
-                            "HEVC 仅启用 Main/profile-id=1 + SDR8；若本机 decoder、GFN Offer 或 libwebrtc Answer 不接受，会在同一 Session 明确回退 H.264。",
+                            if (settings.colorMode == RequestedColorMode.PreferSdr10) {
+                                "v6.1.0 Main10/profile-id=2 + SDR10：要求真实 Main10/High decoder、原始 GFN Main10 Offer 和 RAW/FINAL Answer 全部匹配；禁止静默回退 H.264。HDR Session 仍关闭，本阶段不宣称 10-bit render PASS。"
+                            } else {
+                                "HEVC Main/profile-id=1 + SDR8：保持 v6.0.4 Production PASS 路径；不兼容时允许同 Session 明确回退 H.264。"
+                            },
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -1285,7 +1329,7 @@ private fun SettingsScreen(
                         }
                     }
 
-                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 / HEVC Main SDR8 · ADM 2ch + experimental multiopus 6ch")
+                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 SDR8 / HEVC Main SDR8 / HEVC Main10 SDR10 · HDR OFF · ADM 2ch + experimental multiopus 6ch")
                     Text(
                         "5.1/6ch 为实验性 multiopus negotiation/receive probe；当前真机已确认 6ch 模式可以正常播放音频，但 upstream Android Java ADM 仍配置 2ch，因此该结果不能证明离散原生 5.1。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1304,7 +1348,7 @@ private fun SettingsScreen(
                         )
                     } else {
                         Text(
-                            "下一 Session intent：keyboard=$effectiveKeyboardLayout · resolution=${resolutionChoice.code} · fps=${fpsChoice.fps} · max=${settings.maxBitrateKbps / 1_000}Mbps · codec=${settings.videoCodec} · audio=${settings.audioChannels}ch",
+                            "下一 Session intent：keyboard=$effectiveKeyboardLayout · resolution=${resolutionChoice.code} · fps=${fpsChoice.fps} · max=${settings.maxBitrateKbps / 1_000}Mbps · codec=${settings.videoCodec} · color=${settings.colorMode} · audio=${settings.audioChannels}ch",
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -1329,7 +1373,8 @@ private fun SettingsScreen(
                     Text("v5.2.1：同 Session RESUME/Claim → 新 Signaling / PeerConnection / DataChannel")
                     Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
                     Text("v5.4 Audio：2ch Stereo；6ch multiopus 模式真机可正常播放；离散 Native 5.1 仍未验证。")
-                    Text("v6.0.4 HEVC Main production：原始 Tier1 Offer 不改写；MediaCodec capability 与实际 decoder component 绑定；Main10 / HDR / 120 FPS 仍冻结。")
+                    Text("v6.0.4 closeout：HEVC Main / SDR8 Production PASS（原始 Tier1 Offer、绑定 decoder、FIRST_FRAME、~60fps）。")
+                    Text("v6.1.0：Main10 / SDR10 capability + negotiation 开发中；HDR capability 可诊断但 Session/HDR output 仍关闭，10-bit render 留到 v6.1.1。")
                 }
             }
         }

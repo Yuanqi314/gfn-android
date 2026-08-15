@@ -128,10 +128,10 @@ class SessionRequestFactory(
 }
 
 /**
- * v4 CloudMatch 实现。
+ * CloudMatch Session implementation.
  *
- * 这一版刻意固定 H.264/SDR8 语义，只验证 Session Lifecycle。
- * Main10/HDR 的 request 映射留到媒体阶段，不在 v4 同时引入变量。
+ * v6.1.0 permits SDR8 and SDR10 as separate, immutable Session intents. HDR remains disabled:
+ * SDR10 changes requestedStreamingFeatures.bitDepth only and keeps sdrHdrMode=0 / HDR display data null.
  */
 class GfnCloudMatchClient(
     private val transport: HttpTransport,
@@ -146,8 +146,11 @@ class GfnCloudMatchClient(
     override suspend fun createSession(request: SessionCreateRequest): SessionInfo {
         require(request.appId.isNotBlank()) { "CloudMatch appId 不能为空" }
         require(request.streamingBaseUrl.isNotBlank()) { "streamingBaseUrl 不能为空" }
-        require(request.requestedColorMode == RequestedColorMode.CompatibilitySdr) {
-            "v4 只允许 SDR8 Session；Main10/HDR 留到媒体阶段"
+        require(
+            request.requestedColorMode == RequestedColorMode.CompatibilitySdr ||
+                request.requestedColorMode == RequestedColorMode.PreferSdr10,
+        ) {
+            "v6.1.0 仅允许 SDR8 / SDR10 Session；HDR Session request 仍关闭。"
         }
 
         val clientId = uuid().toString()
@@ -335,6 +338,7 @@ class GfnCloudMatchClient(
         subSessionId: String,
     ): Map<String, Any?> {
         val audioChannels = request.audioChannels.coerceIn(2, 6)
+        val tenBitRequested = request.requestedColorMode == RequestedColorMode.PreferSdr10
         val physicalResolution = Json.stringify(
             mapOf("horizontalPixels" to request.width, "verticalPixels" to request.height),
         )
@@ -388,10 +392,11 @@ class GfnCloudMatchClient(
                 "accountLinked" to request.accountLinked,
                 "enablePersistingInGameSettings" to request.persistInGameSettings,
                 "userAge" to 26,
-                // v4 固定 SDR8：bitDepth=0；chromaFormat 保留 CloudNow 当前已验证值 1。
+                // v6.1.0 SDR10 uses the same SDR/HDR mode (0) and 4:2:0 chroma; only bitDepth
+                // changes to 1. HDR display/session fields stay null/off until the separate HDR phase.
                 "requestedStreamingFeatures" to mapOf(
                     "reflex" to false,
-                    "bitDepth" to 0,
+                    "bitDepth" to if (tenBitRequested) 1 else 0,
                     "cloudGsync" to false,
                     "enabledL4S" to false,
                     "profile" to 0,

@@ -211,7 +211,12 @@ class GfnSessionController(
                     persistInGameSettings = false,
                     appLaunchMode = 1,
                 )
-                Log.i(PROFILE_TAG, "CREATE ${active.profile.summary}")
+                Log.i(
+                    PROFILE_TAG,
+                    "CREATE ${active.profile.summary} cloudMatchBitDepth=" +
+                        (if (streamConfig.colorMode == dev.gfn.core.model.RequestedColorMode.PreferSdr10) 1 else 0) +
+                        " sdrHdrMode=0 hdr=false",
+                )
                 var session = orchestrator.createSession(request, attempt)
                 if (!isCurrent(operation)) return@launch
                 ensureQueueAdsSupported(session)

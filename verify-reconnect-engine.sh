@@ -131,10 +131,10 @@ data class GfnVideoCodecCapabilitySnapshot(
     val normalizedName: String get() = if (name.equals("HEVC", ignoreCase = true)) "H265" else name.uppercase()
 }
 
-enum class GfnHevcProfile(val sdpProfileId: String) { Main("1") }
+enum class GfnHevcProfile(val sdpProfileId: String, val label: String) { Main("1","Main"), Main10("2","Main10") }
 enum class GfnHevcTier(val sdpTierFlag: String) { Main("0"), High("1") }
 enum class GfnHevcLevel(val label: String, val rank: Int, val sdpLevelId: String) {
-    Level31("3.1",31,"93"), Level51("5.1",51,"153"), Level52("5.2",52,"156"), Level6("6",60,"180");
+    Level31("3.1",31,"93"), Level51("5.1",51,"153"), Level52("5.2",52,"156"), Level6("6",60,"180"), Level62("6.2",62,"186");
     companion object { fun fromSdpLevelId(v: String?): GfnHevcLevel? = entries.firstOrNull { it.sdpLevelId == v } }
 }
 data class GfnHevcDecoderCapability(
@@ -146,30 +146,38 @@ data class GfnHevcDecoderCapability(
     val supports1080p60: Boolean,
     val bitrateRangeKbps: IntRange?,
 )
-data class GfnHevcDecoderProbeResult(val candidates: List<GfnHevcDecoderCapability>, val selected: GfnHevcDecoderCapability?, val errors: List<String>)
+data class GfnHevcDecoderProbeResult(val candidates: List<GfnHevcDecoderCapability>, val selected: GfnHevcDecoderCapability?, val errors: List<String>, val selectedMain10: GfnHevcDecoderCapability? = null)
 data class GfnHevcStreamSupport(val supported: Boolean, val sizeAndRateSupported: Boolean, val bitrateSupported: Boolean, val bitrateRangeKbps: IntRange?, val reason: String)
 
 object GfnWebRtcRuntime {
     fun factory(context: Context): PeerConnectionFactory = PeerConnectionFactory()
     fun decoderCodecNames(context: Context): Set<String> = setOf("H264", "H265")
     private val hevcCap = GfnHevcDecoderCapability("c2.stub.hevc.decoder", GfnHevcProfile.Main, GfnHevcTier.High, GfnHevcLevel.Level51, true, true, 1..200000)
+    private val hevcMain10Cap = GfnHevcDecoderCapability("c2.stub.hevc.decoder", GfnHevcProfile.Main10, GfnHevcTier.High, GfnHevcLevel.Level62, true, true, 1..200000)
     fun decoderCodecCapabilities(context: Context): List<GfnVideoCodecCapabilitySnapshot> = listOf(
         GfnVideoCodecCapabilitySnapshot("GfnHevcAwareVideoDecoderFactory", 0, name = "H264"),
         GfnVideoCodecCapabilitySnapshot("GfnHevcAwareVideoDecoderFactory", 1, name = "H265", parameters = mapOf("profile-id" to "1", "tier-flag" to "1", "level-id" to "153")),
+        GfnVideoCodecCapabilitySnapshot("GfnHevcAwareVideoDecoderFactory", 2, name = "H265", parameters = mapOf("profile-id" to "2", "tier-flag" to "1", "level-id" to "186")),
     )
     fun receiverCodecCapabilities(context: Context): List<GfnVideoCodecCapabilitySnapshot> = listOf(
         GfnVideoCodecCapabilitySnapshot("PeerConnectionFactory.receiver", 0, 96, "H265", "video/H265", 90_000, mapOf("profile-id" to "1", "tier-flag" to "1", "level-id" to "153")),
-        GfnVideoCodecCapabilitySnapshot("PeerConnectionFactory.receiver", 1, 97, "H264", "video/H264", 90_000),
+        GfnVideoCodecCapabilitySnapshot("PeerConnectionFactory.receiver", 1, 98, "H265", "video/H265", 90_000, mapOf("profile-id" to "2", "tier-flag" to "1", "level-id" to "186")),
+        GfnVideoCodecCapabilitySnapshot("PeerConnectionFactory.receiver", 2, 97, "H264", "video/H264", 90_000),
     )
     fun liveVideoReceiverCodecCapabilities(context: Context): List<RtpCapabilities.CodecCapability> = listOf(
         RtpCapabilities.CodecCapability(96, "H265", mapOf("profile-id" to "1", "tier-flag" to "1", "level-id" to "153"), "video/H265"),
+        RtpCapabilities.CodecCapability(98, "H265", mapOf("profile-id" to "2", "tier-flag" to "1", "level-id" to "186"), "video/H265"),
         RtpCapabilities.CodecCapability(97, "H264", emptyMap(), "video/H264"),
     )
-    fun hevcDecoderProbeResult(context: Context): GfnHevcDecoderProbeResult = GfnHevcDecoderProbeResult(listOf(hevcCap), hevcCap, emptyList())
+    fun hevcDecoderProbeResult(context: Context): GfnHevcDecoderProbeResult = GfnHevcDecoderProbeResult(listOf(hevcCap, hevcMain10Cap), hevcCap, emptyList(), hevcMain10Cap)
     fun hevcProductionCapability(context: Context): GfnHevcDecoderCapability = hevcCap
-    fun hevcAdvertisementReason(context: Context): String = "stub production capability"
-    fun hevcStreamSupport(context: Context, width: Int, height: Int, fps: Int, maxBitrateKbps: Int): GfnHevcStreamSupport =
-        GfnHevcStreamSupport(true, true, true, 1..200000, "stub stream-safe")
+    fun hevcMain10ProductionCapability(context: Context): GfnHevcDecoderCapability = hevcMain10Cap
+    fun hevcProductionCapability(context: Context, profile: GfnHevcProfile): GfnHevcDecoderCapability = if (profile == GfnHevcProfile.Main10) hevcMain10Cap else hevcCap
+    fun hevcAdvertisementReason(context: Context): String = "stub Main capability"
+    fun hevcMain10AdvertisementReason(context: Context): String = "stub Main10 capability"
+    fun hevcAdvertisementReason(context: Context, profile: GfnHevcProfile): String = if (profile == GfnHevcProfile.Main10) "stub Main10 capability" else "stub Main capability"
+    fun hevcStreamSupport(context: Context, profile: GfnHevcProfile = GfnHevcProfile.Main, width: Int, height: Int, fps: Int, maxBitrateKbps: Int): GfnHevcStreamSupport =
+        GfnHevcStreamSupport(true, true, true, 1..200000, "stub ${profile.label} stream-safe")
 }
 data class GfnAudioRouteSnapshot(val likelyMaxChannels: Int? = 2, val summary: String = "stub")
 object GfnAndroidAudioRouteProbe { fun detect(context: Context): GfnAudioRouteSnapshot = GfnAudioRouteSnapshot() }
@@ -382,3 +390,4 @@ test -s "$BUILD/check.jar"
 echo 'V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS'
 echo 'V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS'
 echo 'V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS'
+echo 'V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS'

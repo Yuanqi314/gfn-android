@@ -89,8 +89,8 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$ROOT/app/src/main/java/dev/gfn/android/settings/GfnKeyboardLayoutCatalog.kt" \
   "$ROOT/app/src/main/java/dev/gfn/android/settings/GfnStreamSettings.kt" \
   "$BUILD/resolver/StreamSettingsFixture.kt" \
-  -d "$BUILD/resolver/check.jar"
-kotlin -J-Dfile.encoding=UTF-8 -classpath "$BUILD/resolver/check.jar" StreamSettingsFixtureKt
+  -include-runtime -d "$BUILD/resolver/check.jar"
+java -Dfile.encoding=UTF-8 -jar "$BUILD/resolver/check.jar"
 
 cat > "$BUILD/store/AndroidContentStub.kt" <<'KT'
 package android.content
@@ -177,8 +177,8 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$ROOT/app/src/main/java/dev/gfn/android/settings/GfnStreamSettings.kt" \
   "$ROOT/app/src/main/java/dev/gfn/android/settings/AndroidStreamSettingsStore.kt" \
   "$BUILD/store/StoreFixture.kt" \
-  -d "$BUILD/store/check.jar"
-kotlin -J-Dfile.encoding=UTF-8 -classpath "$BUILD/store/check.jar" StoreFixtureKt
+  -include-runtime -d "$BUILD/store/check.jar"
+java -Dfile.encoding=UTF-8 -jar "$BUILD/store/check.jar"
 
 cat > "$BUILD/record/AndroidContentStub.kt" <<'KT'
 package android.content
@@ -296,8 +296,8 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$ROOT/app/src/main/java/dev/gfn/android/settings/GfnStreamSettings.kt" \
   "$ROOT/app/src/main/java/dev/gfn/android/session/AndroidSessionPersistence.kt" \
   "$BUILD/record/RecordFixture.kt" \
-  -d "$BUILD/record/check.jar"
-kotlin -J-Dfile.encoding=UTF-8 -classpath "$BUILD/record/check.jar" RecordFixtureKt
+  -include-runtime -d "$BUILD/record/check.jar"
+java -Dfile.encoding=UTF-8 -jar "$BUILD/record/check.jar"
 
 # Compile the production settings controller itself with minimal Android stubs.
 cat > "$BUILD/controller/AndroidStubs.kt" <<'KT'

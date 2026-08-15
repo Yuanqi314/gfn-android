@@ -3,7 +3,7 @@ package dev.gfn.stream
 import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionInfo
 
-/** Video codec intent. v6.0 enables HEVC Main for SDR8 while AV1 remains unavailable. */
+/** Video codec intent. HEVC profile/bit depth is selected independently through RequestedColorMode. */
 enum class VideoCodecPreference {
     H264,
     Hevc,
@@ -92,6 +92,21 @@ object StreamCapabilityProfiles {
         audioChannels = setOf(2, 6),
         nativeAudioOutputChannels = setOf(2),
     )
+
+    /**
+     * v6.1.0 adds HEVC Main10 / SDR10 as an explicit next-Session request while HDR remains off.
+     * The runtime still requires a real bound Main10 decoder and an explicit profile-id=2 Offer
+     * intersection before createAnswer can keep Main10.
+     */
+    val V610_ANDROID_WEBRTC = StreamEngineCapabilities(
+        resolutions = setOf(StreamResolution(1920, 1080)),
+        frameRates = setOf(60),
+        maxBitrateKbpsRange = 5_000..100_000,
+        codecs = setOf(VideoCodecPreference.H264, VideoCodecPreference.Hevc),
+        colorModes = setOf(RequestedColorMode.CompatibilitySdr, RequestedColorMode.PreferSdr10),
+        audioChannels = setOf(2, 6),
+        nativeAudioOutputChannels = setOf(2),
+    )
 }
 
 sealed interface StreamState {
@@ -128,7 +143,9 @@ data class SdpDiagnostics(
     val h264PayloadTypes: List<Int> = emptyList(),
     val hevcPayloadTypes: List<Int> = emptyList(),
     val hevcMainPayloadTypes: List<Int> = emptyList(),
+    val hevcMain10PayloadTypes: List<Int> = emptyList(),
     val hevcMainMatchedPayloadTypes: List<Int> = emptyList(),
+    val hevcTargetMatchedPayloadTypes: List<Int> = emptyList(),
     val iceUfragPresent: Boolean = false,
     val icePasswordPresent: Boolean = false,
     val dtlsFingerprintPresent: Boolean = false,
@@ -240,7 +257,11 @@ data class ControlDiagnostics(
 
 data class VideoDiagnostics(
     val requestedCodec: String = "H264",
+    val requestedColorMode: String = "CompatibilitySdr",
+    val requestedHevcProfile: String? = null,
     val negotiatedCodec: String? = null,
+    val negotiatedHevcProfile: String? = null,
+    val expectedBitDepth: Int = 8,
     val localDecoderCodecs: List<String> = emptyList(),
     val localReceiverCodecs: List<String> = emptyList(),
     val hevcProductionCapabilityReady: Boolean = false,
@@ -248,6 +269,12 @@ data class VideoDiagnostics(
     val hevcProductionProfile: String? = null,
     val hevcProductionTier: String? = null,
     val hevcProductionMaxLevel: String? = null,
+    val hevcMain10ProductionCapabilityReady: Boolean = false,
+    val hevcMain10ProductionDecoder: String? = null,
+    val hevcMain10ProductionProfile: String? = null,
+    val hevcMain10ProductionTier: String? = null,
+    val hevcMain10ProductionMaxLevel: String? = null,
+    val hevcMain10ProductionReason: String? = null,
     val hevcProductionStreamSafe: Boolean? = null,
     val hevcProductionReason: String? = null,
     val hevcCompatibleOfferPayloadTypes: List<Int> = emptyList(),

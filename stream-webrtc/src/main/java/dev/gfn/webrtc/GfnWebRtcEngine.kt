@@ -1,6 +1,7 @@
 package dev.gfn.webrtc
 
 import android.content.Context
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionConnectionInfo
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.input.GfnInputHandshake
@@ -38,7 +39,7 @@ import org.webrtc.SessionDescription
 import org.json.JSONObject
 import org.webrtc.VideoTrack
 
-/** v6.0.4: production HEVC Main capability advertisement; Main10/HDR remain disabled. */
+/** v6.1.0: production HEVC Main/Main10 capability negotiation; HDR activation remains disabled. */
 class GfnWebRtcEngine(
     context: Context,
     private val listener: Listener,
@@ -63,7 +64,10 @@ class GfnWebRtcEngine(
         .sorted()
     private val hevcProbeResult: GfnHevcDecoderProbeResult = GfnWebRtcRuntime.hevcDecoderProbeResult(appContext)
     private val hevcProductionCapability: GfnHevcDecoderCapability? = GfnWebRtcRuntime.hevcProductionCapability(appContext)
+    private val hevcMain10ProductionCapability: GfnHevcDecoderCapability? =
+        GfnWebRtcRuntime.hevcMain10ProductionCapability(appContext)
     private val hevcAdvertisementReason: String = GfnWebRtcRuntime.hevcAdvertisementReason(appContext)
+    private val hevcMain10AdvertisementReason: String = GfnWebRtcRuntime.hevcMain10AdvertisementReason(appContext)
     private val lock = Any()
     private val generation = AtomicLong(0)
 
@@ -118,14 +122,19 @@ class GfnWebRtcEngine(
                 return
             }
         val currentGeneration = generation.incrementAndGet()
+        val requestedHevcProfile = targetHevcProfile(config)
         GfnHevcCompatLog.sessionStart(
             generation = currentGeneration,
             requestedCodec = config.codec,
+            requestedColorMode = config.colorMode,
+            targetProfile = requestedHevcProfile,
             decoderCapabilities = localDecoderCapabilities,
             receiverCapabilities = localReceiverCapabilities,
             probeResult = hevcProbeResult,
-            productionCapability = hevcProductionCapability,
-            advertisementReason = hevcAdvertisementReason,
+            mainCapability = hevcProductionCapability,
+            mainAdvertisementReason = hevcAdvertisementReason,
+            main10Capability = hevcMain10ProductionCapability,
+            main10AdvertisementReason = hevcMain10AdvertisementReason,
         )
         val audioRoute = GfnAndroidAudioRouteProbe.detect(appContext)
         synchronized(lock) {
@@ -170,6 +179,9 @@ class GfnWebRtcEngine(
                 ),
                 video = VideoDiagnostics(
                     requestedCodec = config.codec.name,
+                    requestedColorMode = config.colorMode.name,
+                    requestedHevcProfile = requestedHevcProfile.sdpProfileId.takeIf { config.codec == VideoCodecPreference.Hevc },
+                    expectedBitDepth = requestedBitDepth(config),
                     localDecoderCodecs = localDecoderCodecs.sorted(),
                     localReceiverCodecs = localReceiverCodecNames,
                     hevcProductionCapabilityReady = hevcProductionCapability != null,
@@ -177,7 +189,13 @@ class GfnWebRtcEngine(
                     hevcProductionProfile = hevcProductionCapability?.profile?.sdpProfileId,
                     hevcProductionTier = hevcProductionCapability?.tier?.sdpTierFlag,
                     hevcProductionMaxLevel = hevcProductionCapability?.maxLevel?.sdpLevelId,
-                    hevcProductionReason = hevcAdvertisementReason,
+                    hevcMain10ProductionCapabilityReady = hevcMain10ProductionCapability != null,
+                    hevcMain10ProductionDecoder = hevcMain10ProductionCapability?.codecName,
+                    hevcMain10ProductionProfile = hevcMain10ProductionCapability?.profile?.sdpProfileId,
+                    hevcMain10ProductionTier = hevcMain10ProductionCapability?.tier?.sdpTierFlag,
+                    hevcMain10ProductionMaxLevel = hevcMain10ProductionCapability?.maxLevel?.sdpLevelId,
+                    hevcMain10ProductionReason = hevcMain10AdvertisementReason,
+                    hevcProductionReason = GfnWebRtcRuntime.hevcAdvertisementReason(appContext, requestedHevcProfile),
                     decoderPath = decoderPathFor(config.codec),
                 ),
             )
@@ -312,6 +330,28 @@ class GfnWebRtcEngine(
     private fun inputControllers(): Pair<GfnKeyboardMouseInputController?, GfnGamepadInputController?> =
         synchronized(lock) { inputController to gamepadController }
 
+    private fun targetHevcProfile(config: StreamConfig = this.config): GfnHevcProfile =
+        if (config.codec == VideoCodecPreference.Hevc && config.colorMode == RequestedColorMode.PreferSdr10) {
+            GfnHevcProfile.Main10
+        } else {
+            GfnHevcProfile.Main
+        }
+
+    private fun requestedBitDepth(config: StreamConfig = this.config): Int =
+        if (config.colorMode == RequestedColorMode.PreferSdr10) 10 else 8
+
+    private fun allowHevcFallback(config: StreamConfig = this.config): Boolean =
+        !(config.codec == VideoCodecPreference.Hevc && config.colorMode == RequestedColorMode.PreferSdr10)
+
+    private fun targetProfilePayloadTypes(summary: dev.gfn.signaling.SdpSummary, profile: GfnHevcProfile): List<Int> =
+        when (profile) {
+            GfnHevcProfile.Main -> summary.hevcMainPayloadTypes
+            GfnHevcProfile.Main10 -> summary.hevcMain10PayloadTypes
+        }
+
+    private fun matchingAnswerHevcProfilePayloadTypes(offer: String, answer: String, profile: GfnHevcProfile): List<Int> =
+        GfnSdpTools.matchingAnswerHevcProfilePayloadTypes(offer, answer, profile.sdpProfileId)
+
     private fun notifyInputStreamConnected(connected: Boolean) {
         val (keyboard, gamepad) = inputControllers()
         keyboard?.onStreamConnected(connected)
@@ -321,7 +361,11 @@ class GfnWebRtcEngine(
     private fun validate(session: SessionInfo, config: StreamConfig): String? = when {
         !session.isReadyStatus -> "v5 只接受已 Ready/Claimed 的 Session（status=${session.status}）。"
         session.signalingUrl.isNullOrBlank() -> "Claimed Session 缺少 signalingUrl。"
-        else -> StreamCapabilityProfiles.V60_ANDROID_WEBRTC.rejectionReason(config)
+        config.colorMode == RequestedColorMode.PreferSdr10 && config.codec != VideoCodecPreference.Hevc ->
+            "v6.1.0 SDR10 必须与 HEVC/Main10 一起请求，不能与 ${config.codec} 配对。"
+        config.colorMode == RequestedColorMode.PreferHdr10 || config.colorMode == RequestedColorMode.Automatic ->
+            "v6.1.0 只开放 CompatibilitySdr / PreferSdr10；HDR Session request 仍关闭。"
+        else -> StreamCapabilityProfiles.V610_ANDROID_WEBRTC.rejectionReason(config)
     }
 
     fun unbindVideoOutput(output: GfnVideoSurfaceView) {
@@ -397,6 +441,7 @@ class GfnWebRtcEngine(
                     h264PayloadTypes = offerSummary.h264PayloadTypes,
                     hevcPayloadTypes = offerSummary.hevcPayloadTypes,
                     hevcMainPayloadTypes = offerSummary.hevcMainPayloadTypes,
+                    hevcMain10PayloadTypes = offerSummary.hevcMain10PayloadTypes,
                     iceUfragPresent = offerSummary.iceUfragPresent,
                     icePasswordPresent = offerSummary.icePasswordPresent,
                     dtlsFingerprintPresent = offerSummary.dtlsFingerprintPresent,
@@ -404,8 +449,11 @@ class GfnWebRtcEngine(
             )
         }
         val offerVideoCodecs = GfnSdpTools.firstVideoCodecDetails(offerSdp)
+        val targetProfile = targetHevcProfile(config)
+        val targetCapability = GfnWebRtcRuntime.hevcProductionCapability(appContext, targetProfile)
         val hevcStreamSupport = GfnWebRtcRuntime.hevcStreamSupport(
             context = appContext,
+            profile = targetProfile,
             width = config.width,
             height = config.height,
             fps = config.fps,
@@ -413,10 +461,18 @@ class GfnWebRtcEngine(
         )
         val hevcCompatibility = GfnHevcProductionCompatibilityMatcher.evaluate(
             remoteCodecs = offerVideoCodecs,
-            localCapability = hevcProductionCapability,
+            targetProfile = targetProfile,
+            localCapability = targetCapability,
             streamSupport = hevcStreamSupport,
         )
         GfnHevcCompatLog.offerCompatibility(eventGeneration, hevcCompatibility)
+        updateDiagnostics { current ->
+            current.copy(
+                offer = current.offer.copy(
+                    hevcTargetMatchedPayloadTypes = hevcCompatibility.compatiblePayloadTypes,
+                ),
+            )
+        }
         updateVideo { current ->
             current.copy(
                 hevcProductionStreamSafe = hevcStreamSupport.supported,
@@ -432,7 +488,7 @@ class GfnWebRtcEngine(
         }
         synchronized(lock) {
             if (peerConnection != null) {
-                fail("v6.0 收到重复 Offer；当前版本不做 renegotiation。")
+                fail("v6.1.0 收到重复 Offer；当前版本不做 renegotiation。")
                 return
             }
         }
@@ -444,8 +500,8 @@ class GfnWebRtcEngine(
         createExpectedDataChannels(pc, partialReliableThresholdMs, eventGeneration)
 
         val mediaIp = resolveMediaIp(currentSession)
-        // v6.0.4 production path preserves all server codec capability attributes. The existing
-        // connection-address correction is transport-only and does not modify H265 fmtp/profile/tier/level.
+        // v6.1.0 preserves the original server Main/Main10 codec attributes. The existing
+        // connection-address correction is transport-only and never modifies H265 fmtp/profile/tier/level.
         val fixedOffer = mediaIp?.let { GfnSdpTools.rewriteOfferConnectionAddresses(offerSdp, it) } ?: offerSdp
         pc.setRemoteDescription(
             setObserver(
@@ -823,11 +879,15 @@ class GfnWebRtcEngine(
     private fun decoderPathFor(codec: VideoCodecPreference): String = when (codec) {
         VideoCodecPreference.H264 ->
             "libwebrtc DefaultVideoDecoderFactory -> H264（具体硬件/软件 decoder 待真机确认）"
-        VideoCodecPreference.Hevc -> hevcProductionCapability?.let { capability ->
-            "GfnHevcAwareVideoDecoderFactory -> ${capability.codecName} (bound H265 Main/High level ${capability.maxLevel.label})"
-        } ?: "GfnHevcAwareVideoDecoderFactory -> H265 unavailable"
+        VideoCodecPreference.Hevc -> {
+            val profile = targetHevcProfile()
+            GfnWebRtcRuntime.hevcProductionCapability(appContext, profile)?.let { capability ->
+                "GfnHevcAwareVideoDecoderFactory -> ${capability.codecName} " +
+                    "(bound H265 ${profile.label}/High level ${capability.maxLevel.label})"
+            } ?: "GfnHevcAwareVideoDecoderFactory -> H265 ${profile.label} unavailable"
+        }
         VideoCodecPreference.Av1 ->
-            "AV1（v6.0 未启用）"
+            "AV1（v6.1.0 未启用）"
     }
 
     private fun selectVideoCodecForOffer(
@@ -839,6 +899,8 @@ class GfnWebRtcEngine(
             h264Available = offerSummary.h264PayloadTypes.isNotEmpty(),
             hevcCompatibleAvailable = hevcCompatibility.compatible,
             hevcIncompatibilityReason = hevcCompatibility.reason,
+            allowHevcFallback = allowHevcFallback(),
+            hevcProfileLabel = hevcCompatibility.targetProfile.label,
         ).getOrElse { error ->
             fail(error.message ?: "无法选择视频 codec。")
             return null
@@ -850,6 +912,7 @@ class GfnWebRtcEngine(
             requested = config.codec,
             effective = decision.codec,
             fallbackReason = decision.fallbackReason,
+            targetProfile = targetHevcProfile(),
         )
         updateVideo {
             it.copy(
@@ -914,13 +977,15 @@ class GfnWebRtcEngine(
             }
             return
         }
+        val targetProfile = targetHevcProfile()
         val plan = GfnHevcCodecPreferencePlanner.build(
             capabilities = liveCapabilities,
             remoteCodecs = GfnSdpTools.firstVideoCodecDetails(offerSdp),
+            targetProfile = targetProfile,
         )
         GfnHevcCompatLog.preferencePlan(eventGeneration, plan)
         if (!plan.hasHevcCandidate || plan.orderedCapabilities.isEmpty()) {
-            val reason = "receiver capability list has no H265 Main/High candidate compatible with original Offer"
+            val reason = "receiver capability list has no H265 ${targetProfile.label}/High candidate compatible with original Offer"
             GfnHevcCompatLog.preferenceApply(
                 generation = eventGeneration,
                 attempted = true,
@@ -992,7 +1057,7 @@ class GfnWebRtcEngine(
             attempted = true,
             applied = applied,
             transceiverMid = runCatching { transceiver.mid }.getOrNull(),
-            reason = errorText ?: "compatible H265 Main/High -> H264 -> auxiliary",
+            reason = errorText ?: "compatible H265 ${targetProfile.label}/High -> H264 -> auxiliary",
         )
         updateVideo {
             it.copy(
@@ -1003,13 +1068,14 @@ class GfnWebRtcEngine(
         }
     }
 
-    private fun selectVideoCodecInAnswer(rawAnswer: String, hevcMainMatchedPayloadTypes: List<Int>): String? {
+    private fun selectVideoCodecInAnswer(rawAnswer: String, hevcTargetMatchedPayloadTypes: List<Int>): String? {
         val selected = synchronized(lock) { effectiveVideoCodec }
+        val targetProfile = targetHevcProfile()
         val hevcCandidate = if (selected == VideoCodecPreference.Hevc) {
             GfnSdpTools.preferVideoCodecInAnswer(
                 rawAnswer,
                 codec = "H265",
-                allowedPrimaryPayloadTypes = hevcMainMatchedPayloadTypes.toSet(),
+                allowedPrimaryPayloadTypes = hevcTargetMatchedPayloadTypes.toSet(),
             )
         } else {
             rawAnswer
@@ -1019,7 +1085,9 @@ class GfnWebRtcEngine(
         val decision = GfnVideoCodecNegotiationPolicy.selectAfterAnswer(
             selected = selected,
             h264Available = h264Summary.h264PayloadTypes.isNotEmpty(),
-            hevcMainAvailable = hevcMainMatchedPayloadTypes.isNotEmpty(),
+            hevcMainAvailable = hevcTargetMatchedPayloadTypes.isNotEmpty(),
+            allowHevcFallback = allowHevcFallback(),
+            hevcProfileLabel = targetProfile.label,
         ).getOrElse { error ->
             fail(error.message ?: "Answer 未形成可用视频 codec 交集。")
             return null
@@ -1032,10 +1100,12 @@ class GfnWebRtcEngine(
             requested = config.codec,
             effective = decision.codec,
             fallbackReason = videoCodecFallbackReason,
+            targetProfile = targetProfile,
         )
         updateVideo {
             it.copy(
                 negotiatedCodec = decision.codec.name,
+                negotiatedHevcProfile = targetProfile.sdpProfileId.takeIf { decision.codec == VideoCodecPreference.Hevc },
                 localDecoderCodecs = localDecoderCodecs.sorted(),
                 localReceiverCodecs = localReceiverCodecNames,
                 codecFallbackUsed = videoCodecFallbackReason != null,
@@ -1048,6 +1118,7 @@ class GfnWebRtcEngine(
 
     private fun createAnswer(pc: PeerConnection, offerSdp: String, eventGeneration: Long) {
         val offerSummary = GfnSdpTools.summarize(offerSdp, isOffer = true)
+        val targetProfile = targetHevcProfile()
         pc.createAnswer(
             object : SdpObserver {
                 override fun onCreateSuccess(description: SessionDescription) {
@@ -1055,13 +1126,14 @@ class GfnWebRtcEngine(
                     val rawAnswer = description.description
                     GfnHevcCompatLog.sdp(eventGeneration, "RAW_ANSWER", rawAnswer)
                     val rawAnswerSummary = GfnSdpTools.summarize(rawAnswer, isOffer = false)
-                    val rawAnswerHevcMainMatched = GfnSdpTools.matchingAnswerHevcMainPayloadTypes(offerSdp, rawAnswer)
-                    GfnHevcCompatLog.answerHevcMainLineage(
+                    val rawAnswerHevcTargetMatched = matchingAnswerHevcProfilePayloadTypes(offerSdp, rawAnswer, targetProfile)
+                    GfnHevcCompatLog.answerHevcProfileLineage(
                         generation = eventGeneration,
                         stage = "RAW_ANSWER",
-                        offerMainPayloadTypes = offerSummary.hevcMainPayloadTypes,
+                        targetProfile = targetProfile,
+                        offerProfilePayloadTypes = targetProfilePayloadTypes(offerSummary, targetProfile),
                         answerHevcPayloadTypes = rawAnswerSummary.hevcPayloadTypes,
-                        matchedPayloadTypes = rawAnswerHevcMainMatched,
+                        matchedPayloadTypes = rawAnswerHevcTargetMatched,
                     )
                     updateDiagnostics {
                         it.copy(
@@ -1071,14 +1143,16 @@ class GfnWebRtcEngine(
                                 h264PayloadTypes = rawAnswerSummary.h264PayloadTypes,
                                 hevcPayloadTypes = rawAnswerSummary.hevcPayloadTypes,
                                 hevcMainPayloadTypes = rawAnswerSummary.hevcMainPayloadTypes,
-                                hevcMainMatchedPayloadTypes = rawAnswerHevcMainMatched,
+                                hevcMain10PayloadTypes = rawAnswerSummary.hevcMain10PayloadTypes,
+                                hevcMainMatchedPayloadTypes = if (targetProfile == GfnHevcProfile.Main) rawAnswerHevcTargetMatched else emptyList(),
+                                hevcTargetMatchedPayloadTypes = rawAnswerHevcTargetMatched,
                                 iceUfragPresent = rawAnswerSummary.iceUfragPresent,
                                 icePasswordPresent = rawAnswerSummary.icePasswordPresent,
                                 dtlsFingerprintPresent = rawAnswerSummary.dtlsFingerprintPresent,
                             ),
                         )
                     }
-                    val videoAnswer = selectVideoCodecInAnswer(rawAnswer, rawAnswerHevcMainMatched) ?: return
+                    val videoAnswer = selectVideoCodecInAnswer(rawAnswer, rawAnswerHevcTargetMatched) ?: return
                     val audioMunge = GfnSdpTools.mungeAudioAnswer(
                         answer = videoAnswer,
                         offer = offerSdp,
@@ -1106,13 +1180,14 @@ class GfnWebRtcEngine(
                     )
                     GfnHevcCompatLog.sdp(eventGeneration, "FINAL_ANSWER", bounded)
                     val answerSummary = GfnSdpTools.summarize(bounded, isOffer = false)
-                    val finalAnswerHevcMainMatched = GfnSdpTools.matchingAnswerHevcMainPayloadTypes(offerSdp, bounded)
-                    GfnHevcCompatLog.answerHevcMainLineage(
+                    val finalAnswerHevcTargetMatched = matchingAnswerHevcProfilePayloadTypes(offerSdp, bounded, targetProfile)
+                    GfnHevcCompatLog.answerHevcProfileLineage(
                         generation = eventGeneration,
                         stage = "FINAL_ANSWER",
-                        offerMainPayloadTypes = offerSummary.hevcMainPayloadTypes,
+                        targetProfile = targetProfile,
+                        offerProfilePayloadTypes = targetProfilePayloadTypes(offerSummary, targetProfile),
                         answerHevcPayloadTypes = answerSummary.hevcPayloadTypes,
-                        matchedPayloadTypes = finalAnswerHevcMainMatched,
+                        matchedPayloadTypes = finalAnswerHevcTargetMatched,
                     )
                     val answerAudio = GfnSdpTools.firstAudioCodec(
                         bounded,
@@ -1132,7 +1207,7 @@ class GfnWebRtcEngine(
                     val finalCodec = synchronized(lock) { effectiveVideoCodec }
                     val finalCodecAccepted = when (finalCodec) {
                         VideoCodecPreference.H264 -> answerSummary.h264PayloadTypes.isNotEmpty()
-                        VideoCodecPreference.Hevc -> finalAnswerHevcMainMatched.isNotEmpty()
+                        VideoCodecPreference.Hevc -> finalAnswerHevcTargetMatched.isNotEmpty()
                         VideoCodecPreference.Av1 -> false
                     }
                     if (!finalCodecAccepted) {
@@ -1145,10 +1220,12 @@ class GfnWebRtcEngine(
                         requested = config.codec,
                         effective = finalCodec,
                         fallbackReason = videoCodecFallbackReason,
+                        targetProfile = targetProfile,
                     )
                     updateVideo { current ->
                         current.copy(
                             negotiatedCodec = finalCodec.name,
+                            negotiatedHevcProfile = targetProfile.sdpProfileId.takeIf { finalCodec == VideoCodecPreference.Hevc },
                             localDecoderCodecs = localDecoderCodecs.sorted(),
                             localReceiverCodecs = localReceiverCodecNames,
                             codecFallbackUsed = videoCodecFallbackReason != null,
@@ -1164,7 +1241,9 @@ class GfnWebRtcEngine(
                                 h264PayloadTypes = answerSummary.h264PayloadTypes,
                                 hevcPayloadTypes = answerSummary.hevcPayloadTypes,
                                 hevcMainPayloadTypes = answerSummary.hevcMainPayloadTypes,
-                                hevcMainMatchedPayloadTypes = finalAnswerHevcMainMatched,
+                                hevcMain10PayloadTypes = answerSummary.hevcMain10PayloadTypes,
+                                hevcMainMatchedPayloadTypes = if (targetProfile == GfnHevcProfile.Main) finalAnswerHevcTargetMatched else emptyList(),
+                                hevcTargetMatchedPayloadTypes = finalAnswerHevcTargetMatched,
                                 iceUfragPresent = answerSummary.iceUfragPresent,
                                 icePasswordPresent = answerSummary.icePasswordPresent,
                                 dtlsFingerprintPresent = answerSummary.dtlsFingerprintPresent,
@@ -1207,6 +1286,12 @@ class GfnWebRtcEngine(
             fail("Answer 缺少 ICE credential 或 DTLS fingerprint；不能构造 NVST SDP。")
             return
         }
+        val nvstBitDepth = requestedBitDepth()
+        GfnHevcCompatLog.nvstConfig(
+            generation = eventGeneration,
+            colorMode = config.colorMode,
+            bitDepth = nvstBitDepth,
+        )
         val nvst = GfnSdpTools.buildNvstSdp(
             credentials,
             NvstSdpConfig(
@@ -1214,7 +1299,7 @@ class GfnWebRtcEngine(
                 height = config.height,
                 fps = config.fps,
                 maxBitrateKbps = config.maxBitrateKbps,
-                bitDepth = 8,
+                bitDepth = nvstBitDepth,
                 partialReliableThresholdMs = partialReliableThresholdMs,
             ),
         )
@@ -1291,6 +1376,7 @@ class GfnWebRtcEngine(
                             generation = generation.get(),
                             stage = "FIRST_VIDEO_RTP",
                             effective = effective,
+                            targetProfile = targetHevcProfile(),
                         )
                         updateVideo { it.copy(firstRtpPacketReceived = true) }
                     }
@@ -1330,6 +1416,7 @@ class GfnWebRtcEngine(
             stage = "FIRST_FRAME",
             effective = effective,
             detail = decoderPathFor(effective),
+            targetProfile = targetHevcProfile(),
         )
         updateVideo { it.copy(firstFrameRendered = true) }
         setState(StreamState.FirstFrame)

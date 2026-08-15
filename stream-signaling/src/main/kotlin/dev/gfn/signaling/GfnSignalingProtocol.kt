@@ -203,6 +203,7 @@ data class SdpSummary(
     val h264PayloadTypes: List<Int> = emptyList(),
     val hevcPayloadTypes: List<Int> = emptyList(),
     val hevcMainPayloadTypes: List<Int> = emptyList(),
+    val hevcMain10PayloadTypes: List<Int> = emptyList(),
     val iceUfragPresent: Boolean = false,
     val icePasswordPresent: Boolean = false,
     val dtlsFingerprintPresent: Boolean = false,
@@ -273,7 +274,7 @@ data class NvstSdpConfig(
     val partialReliableThresholdMs: Int = 300,
 )
 
-/** v6.0: H.264/HEVC Main SDR8 视频选择 + Stereo/multiopus 音频 Answer 变换。 */
+/** v6.1.0: H.264 / HEVC Main SDR8 / HEVC Main10 SDR10 + Stereo/multiopus Answer 变换。 */
 object GfnSdpTools {
     fun summarize(sdp: String, isOffer: Boolean): SdpSummary {
         val allLines = lines(sdp)
@@ -284,6 +285,9 @@ object GfnSdpTools {
         val hevcMainPts = details.filter {
             it.normalizedName == "H265" && it.profileId == "1"
         }.map { it.payloadType }
+        val hevcMain10Pts = details.filter {
+            it.normalizedName == "H265" && it.profileId == "2"
+        }.map { it.payloadType }
         val target = firstVideoTarget(sdp)
         return SdpSummary(
             offerPresent = isOffer,
@@ -292,6 +296,7 @@ object GfnSdpTools {
             h264PayloadTypes = h264Pts,
             hevcPayloadTypes = hevcPts,
             hevcMainPayloadTypes = hevcMainPts,
+            hevcMain10PayloadTypes = hevcMain10Pts,
             iceUfragPresent = allLines.any { it.startsWith("a=ice-ufrag:") },
             icePasswordPresent = allLines.any { it.startsWith("a=ice-pwd:") },
             dtlsFingerprintPresent = allLines.any { it.startsWith("a=fingerprint:sha-256 ") },
@@ -354,22 +359,24 @@ object GfnSdpTools {
         }
 
     /**
-     * Correlate an H265 payload in an Answer with an H265 Main payload from the same Offer/Answer
-     * exchange. Dynamic payload numbers are not treated as globally stable codec identities; they
-     * are used only as session-local lineage after both SDP sections have independently identified
-     * the payload as H265. This lets libwebrtc omit profile-id/tier-flag in its Answer without
-     * accidentally accepting the Offer's Main10 payload.
+     * Correlate an H265 payload in an Answer with one explicit HEVC profile from the same Offer.
+     * Dynamic payload numbers are session-local lineage only; they are never hard-coded. This also
+     * handles libwebrtc Answers that omit profile-id/tier-flag while keeping Main and Main10 apart.
      */
-    fun matchingAnswerHevcMainPayloadTypes(offer: String, answer: String): List<Int> {
+    fun matchingAnswerHevcProfilePayloadTypes(
+        offer: String,
+        answer: String,
+        profileId: String,
+    ): List<Int> {
         val offerOrder = firstVideoPayloadOrder(offer).toSet()
         val answerOrder = firstVideoPayloadOrder(answer)
-        val offeredMain = firstVideoCodecDetails(offer)
+        val offeredProfile = firstVideoCodecDetails(offer)
             .asSequence()
             .filter { it.payloadType in offerOrder }
-            .filter { it.normalizedName == "H265" && it.profileId == "1" }
+            .filter { it.normalizedName == "H265" && it.profileId == profileId }
             .map { it.payloadType }
             .toSet()
-        if (offeredMain.isEmpty()) return emptyList()
+        if (offeredProfile.isEmpty()) return emptyList()
 
         val answeredH265 = firstVideoCodecDetails(answer)
             .asSequence()
@@ -377,14 +384,20 @@ object GfnSdpTools {
             .filter { it.normalizedName == "H265" }
             .map { it.payloadType }
             .toSet()
-        return answerOrder.filter { it in offeredMain && it in answeredH265 }.distinct()
+        return answerOrder.filter { it in offeredProfile && it in answeredH265 }.distinct()
     }
+
+    fun matchingAnswerHevcMainPayloadTypes(offer: String, answer: String): List<Int> =
+        matchingAnswerHevcProfilePayloadTypes(offer, answer, profileId = "1")
+
+    fun matchingAnswerHevcMain10PayloadTypes(offer: String, answer: String): List<Int> =
+        matchingAnswerHevcProfilePayloadTypes(offer, answer, profileId = "2")
 
     /**
      * Converge the first video Answer section to one receive codec while retaining its RTX and
      * repair payloads. The server Offer remains untouched. HEVC callers may constrain either an
      * explicit profile-id or a session-local set of primary payloads previously matched to the
-     * Offer, so Main10 cannot be pulled into the SDR8 experiment.
+     * Offer, so a different HEVC profile cannot be pulled into the requested Session intent.
      */
     fun preferVideoCodecInAnswer(
         sdp: String,

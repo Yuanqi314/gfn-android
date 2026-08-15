@@ -37,7 +37,9 @@ internal object GfnWebRtcRuntime {
     private var receiverCodecCapabilities: List<GfnVideoCodecCapabilitySnapshot> = emptyList()
     private var hevcProbeResult: GfnHevcDecoderProbeResult = GfnHevcDecoderProbeResult(emptyList(), null, emptyList())
     private var hevcProductionCapability: GfnHevcDecoderCapability? = null
+    private var hevcMain10ProductionCapability: GfnHevcDecoderCapability? = null
     private var hevcAdvertisementReason: String = "WebRTC runtime not initialized"
+    private var hevcMain10AdvertisementReason: String = "WebRTC runtime not initialized"
 
     fun eglContext(): EglBase.Context = eglBase.eglBaseContext
 
@@ -70,7 +72,9 @@ internal object GfnWebRtcRuntime {
         val videoDecoderFactory = GfnHevcAwareVideoDecoderFactory(eglContext())
         hevcProbeResult = videoDecoderFactory.probeResult
         hevcProductionCapability = videoDecoderFactory.productionCapability
+        hevcMain10ProductionCapability = videoDecoderFactory.main10ProductionCapability
         hevcAdvertisementReason = videoDecoderFactory.advertisementReason
+        hevcMain10AdvertisementReason = videoDecoderFactory.main10AdvertisementReason
         val supportedDecoderCodecs = videoDecoderFactory.getSupportedCodecs().toList()
         decoderCodecNames = supportedDecoderCodecs
             .map { it.name.uppercase() }
@@ -136,27 +140,67 @@ internal object GfnWebRtcRuntime {
         return synchronized(lock) { hevcProductionCapability }
     }
 
+    fun hevcMain10ProductionCapability(context: Context): GfnHevcDecoderCapability? {
+        factory(context)
+        return synchronized(lock) { hevcMain10ProductionCapability }
+    }
+
+    fun hevcProductionCapability(context: Context, profile: GfnHevcProfile): GfnHevcDecoderCapability? {
+        factory(context)
+        return synchronized(lock) {
+            when (profile) {
+                GfnHevcProfile.Main -> hevcProductionCapability
+                GfnHevcProfile.Main10 -> hevcMain10ProductionCapability
+            }
+        }
+    }
+
     fun hevcAdvertisementReason(context: Context): String {
         factory(context)
         return synchronized(lock) { hevcAdvertisementReason }
     }
 
+    fun hevcMain10AdvertisementReason(context: Context): String {
+        factory(context)
+        return synchronized(lock) { hevcMain10AdvertisementReason }
+    }
+
+    fun hevcAdvertisementReason(context: Context, profile: GfnHevcProfile): String {
+        factory(context)
+        return synchronized(lock) {
+            when (profile) {
+                GfnHevcProfile.Main -> hevcAdvertisementReason
+                GfnHevcProfile.Main10 -> hevcMain10AdvertisementReason
+            }
+        }
+    }
+
     fun hevcStreamSupport(
         context: Context,
+        profile: GfnHevcProfile = GfnHevcProfile.Main,
         width: Int,
         height: Int,
         fps: Int,
         maxBitrateKbps: Int,
     ): GfnHevcStreamSupport {
         factory(context)
-        val capability = synchronized(lock) { hevcProductionCapability }
-            ?: return GfnHevcStreamSupport(
-                supported = false,
-                sizeAndRateSupported = false,
-                bitrateSupported = false,
-                bitrateRangeKbps = null,
-                reason = synchronized(lock) { hevcAdvertisementReason },
-            )
+        val capability = synchronized(lock) {
+            when (profile) {
+                GfnHevcProfile.Main -> hevcProductionCapability
+                GfnHevcProfile.Main10 -> hevcMain10ProductionCapability
+            }
+        } ?: return GfnHevcStreamSupport(
+            supported = false,
+            sizeAndRateSupported = false,
+            bitrateSupported = false,
+            bitrateRangeKbps = null,
+            reason = synchronized(lock) {
+                when (profile) {
+                    GfnHevcProfile.Main -> hevcAdvertisementReason
+                    GfnHevcProfile.Main10 -> hevcMain10AdvertisementReason
+                }
+            },
+        )
         return GfnHevcDecoderCapabilityProbe.evaluateStream(
             capability = capability,
             width = width,
