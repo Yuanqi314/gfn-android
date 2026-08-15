@@ -142,3 +142,29 @@ SurfaceHolder explicit pixel format                  OFF in C1 first build
 HDR                                                  OFF / v6.2
 direct MediaCodec -> Surface                         NOT ENTERED
 ```
+
+## 11. Stage C1 true-device closeout (`53.log`)
+
+`53.log` closes C1. Two independent renderer lifecycles both reached:
+
+```text
+EGL10_PREFLIGHT exact fixed R10G10B10A2
+EGL_TARGET_REQUEST active=RGB10A2 fallback=NONE
+actual Main10 SPS 10/10-bit
+FIRST_FRAME
+runtime EGL_CONFIG R10G10B10A2
+tenBitRgbTarget=true
+EGL_TARGET_ACTIVE exactRgb10A2=true
+stable near 60fps
+```
+
+The observed `surfaceChanged format=4` remains a witness mismatch against `EGL_NATIVE_VISUAL_ID=43`; it does not erase the runtime EGL target evidence. Explicit `SurfaceHolder.setFormat()` remains OFF so C1 stays a single-variable experiment.
+
+C1 final verdict:
+
+```text
+Custom RGB10A2 final EGL target = TRUE-DEVICE PASS
+Full source texture precision   = NOT YET PROVEN
+```
+
+Stage C2 now owns the remaining producer/BufferQueue/SurfaceTexture/OES precision question.

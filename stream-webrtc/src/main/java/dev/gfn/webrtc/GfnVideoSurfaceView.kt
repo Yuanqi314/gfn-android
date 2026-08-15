@@ -5,6 +5,7 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceHolder
+import java.util.concurrent.atomic.AtomicBoolean
 import org.webrtc.GlRectDrawer
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
@@ -47,6 +48,7 @@ class GfnVideoSurfaceView(
     private var inputCaptureEnabled = false
     private val forensicViewId = System.identityHashCode(this)
     private var activeRgb10A2 = false
+    private val sourceFrameLogged = AtomicBoolean(false)
 
     init {
         // Resolve the existing shared root first. Stage C1 preflight then queries the already
@@ -147,6 +149,9 @@ class GfnVideoSurfaceView(
 
     override fun onFrame(frame: VideoFrame) {
         onFrameActivity?.invoke()
+        if (requestRgb10A2 && sourceFrameLogged.compareAndSet(false, true)) {
+            GfnSourceFrameDiagnostics.logObservedFrame(forensicViewId, frame)
+        }
         super.onFrame(frame)
     }
 

@@ -1,50 +1,56 @@
-# GFN Android Lab · v6.1.1 Main10 / SDR10 Stage C1 RGB10A2
+# GFN Android Lab · v6.1.1 Main10 / SDR10 Stage C2 Source Precision
 
-这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 **HEVC Main / SDR8 Production PASS**；`46.log` 已关闭 v6.1.0 **Main10 / SDR10 capability + negotiation TRUE-DEVICE PASS**；`50.log` 已关闭 Stage A/B（实际 HEVC SPS=Main10 10/10-bit，默认 M144 final EGL=RGB888）；`51.log` 已关闭 Stage C0（设备存在 exact fixed RGB10A2 window config）。
+这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 HEVC Main/SDR8；`46.log` 已关闭 Main10/SDR10 capability + negotiation；`50.log` 已关闭 Stage A/B；`51.log` 已关闭 Stage C0；`53.log` 已关闭 Stage C1：实际 Main10 10-bit 输入在两个 renderer 生命周期中都使用 runtime `R10/G10/B10/A2` final EGL target，并保持稳定约 60fps。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.1.1 当前阶段：Stage C1 custom RGB10A2 final EGL target
+## v6.1.1 当前阶段：Stage C2.0 actual source-frame type witness
 
-用户已在真机手动断开/重连 WebRTC 后确认恢复正常，因此 `51.log` 暴露的 reconnect 黑屏修复可以从当前实验阻塞项移出。该确认来自本轮人工真机操作，不冒充新的日志行证据。
-
-Stage C1 只对冻结 Session snapshot 满足以下条件的 View 激活：
+Stage C1 已经证明：
 
 ```text
-codec = HEVC
-color = PreferSdr10
-        ↓
-pre-init default-display RGB10A2 capability query
-        ↓
-exact fixed R10/G10/B10/A2
-+ nativeVisual == PixelFormat.RGBA_1010102
-        ↓
-pin EGL_CONFIG_ID
-        ↓
-M144 SurfaceViewRenderer.init(sharedContext, events, customAttrs, GlRectDrawer)
+actual HEVC SPS = Main10 / 10-bit luma / 10-bit chroma
++ runtime final EGL = exact RGB10A2
++ FIRST_FRAME
++ stable ~60fps
 ```
 
-SDR8/H264 仍保留原 M144 两参数 `init(sharedContext, events)` / `CONFIG_PLAIN` 路径。C1 第一刀不调用 `SurfaceHolder.setFormat()`，不改 decoder/shared EGL root、SurfaceTexture source path、Main10 negotiation、reconnect 逻辑或 HDR。若 preflight 不满足 exact/native-visual gate，则明确回落 RGB888，并通过 `EGL_TARGET_REQUEST` 标记 `active=WEBRTC_M144_RGB888`，不能称为 10-bit target PASS。
-
-真机 C1 PASS 必须看到：
+剩余核心未知量是 decoder 输出进入 WebRTC shader 前的 source texture/buffer precision。Stage C2.0 只读取实际送到 `GfnVideoSurfaceView.onFrame()` 的 M144 `VideoFrame.Buffer` 元数据：
 
 ```text
-EGL10_PREFLIGHT supported=true + exact R10G10B10A2
-EGL_TARGET_REQUEST requested=RGB10A2 active=RGB10A2
-SURFACE_FORMAT actualCallbackFormat=43                 // expected on current device
-EGL_CONFIG red=10 green=10 blue=10 alpha=2
-EGL_TARGET_ACTIVE active=true exactRgb10A2=true
-FIRST_FRAME + stable ~60fps
-HDR=false
+buffer class / bufferType
+TextureBuffer yes/no
+TextureBuffer.Type OES/RGB
+textureId / GL target
+scaled + unscaled dimensions
 ```
 
-即使 C1 PASS，也只证明“输入 10-bit + 最终 target 具备 10bpc”；source texture / BufferQueue / GraphicBuffer 精度仍属于 Stage C2。HDR 继续 OFF。
+本轮明确禁止 `toI420()`，不 retain/release/crop/scale live frame，不做 GL readback，不访问未暴露的 decoder private `SurfaceTextureHelper`，原 `VideoFrame` 仍直接交给既有 `SurfaceViewRenderer`。C1 RGB10A2 target、Main10 negotiation、reconnect、Surface lifecycle 与 HDR policy 全部冻结。
+
+Pinned WebRTC M144 source confirms its Android hardware decoder creates a `SurfaceTextureHelper`, renders MediaCodec output to its `Surface`, then creates `TextureBufferImpl(..., TextureBuffer.Type.OES, oesTextureId, ...)`. C2.0 still observes the actual downstream Java sink because native WebRTC may mediate the frame before it reaches the app.
+
+真机首先搜索：
+
+```text
+GfnHevc10Bit phase=SOURCE_FRAME
+```
+
+理想 C2.0 witness：
+
+```text
+texture=true
+textureType=OES
+isOes=true
+glTarget=36197
+toI420Called=false
+```
+
+若不是 OES，则先修正链路模型，不继续假设 SurfaceTexture/OES。即使得到 OES，也只关闭“frame path 类型”，不等于 10-bit precision PASS。下一步才是单独的 native-window/producer metadata witness 与受控数值实验。
 
 验证入口：
 
 ```text
 sh ./verify-hevc-10bit-forensics.sh
-sh ./verify-reconnect.sh
 sh ./verify-reconnect-engine.sh
 sh ./verify-hevc-production.sh
 sh ./verify-hevc-answer-lineage.sh
@@ -60,7 +66,7 @@ sh ./verify-hevc.sh
 docs/STATUS.md
 docs/V6_1_1_10BIT_FORENSICS.md
 docs/V6_1_1_STAGE_C_RGB10A2.md
-docs/V6_1_1_RECONNECT_BLACK_SCREEN_FIX.md
+docs/V6_1_1_STAGE_C2_SOURCE_TEXTURE_PRECISION.md
 docs/V6_1_1_TEST_GUIDE.md
 ```
 

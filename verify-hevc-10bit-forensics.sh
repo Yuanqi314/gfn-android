@@ -11,6 +11,7 @@ EGL="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnEglConfigProbe.kt"
 EGL10_CONFIG="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnEgl10BitConfig.kt"
 EGL10_CAP="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnEgl10BitCapabilityProbe.kt"
 RENDER_DIAG="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/Gfn10BitRenderDiagnostics.kt"
+SOURCE_FRAME_DIAG="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnSourceFrameDiagnostics.kt"
 FACTORY="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevcProductionCapability.kt"
 SURFACE="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoSurfaceView.kt"
 ENGINE="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt"
@@ -19,7 +20,7 @@ CONTROLLER="$ROOT/app/src/main/java/dev/gfn/android/stream/GfnStreamingControlle
 APP_UI="$ROOT/app/src/main/java/dev/gfn/android/ui/GfnAndroidApp.kt"
 FULLSCREEN_UI="$ROOT/app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt"
 
-for file in "$BITSTREAM" "$DIAG" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG"; do
+for file in "$BITSTREAM" "$DIAG" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG" "$SOURCE_FRAME_DIAG"; do
   [ -f "$file" ] || { echo "ERROR: missing v6.1.1 forensic source: $file" >&2; exit 1; }
 done
 
@@ -78,8 +79,21 @@ if grep -RqsE 'PreferHdr10[^[:cntrl:]]*(enabled|true)|sdrHdrMode" to 1|hdr=true'
   echo 'ERROR: HDR activation must remain OFF during v6.1.1 SDR10 forensics' >&2
   exit 1
 fi
+# v6.1.1-C2.0: observe the actual Java VideoFrame.Buffer without conversion or ownership changes.
+grep -Fq 'buffer as? VideoFrame.TextureBuffer' "$SOURCE_FRAME_DIAG" || { echo 'ERROR: Stage C2.0 TextureBuffer classifier missing' >&2; exit 1; }
+grep -Fq 'texture?.type?.name' "$SOURCE_FRAME_DIAG" || { echo 'ERROR: Stage C2.0 texture type witness missing' >&2; exit 1; }
+grep -Fq 'texture?.textureId' "$SOURCE_FRAME_DIAG" || { echo 'ERROR: Stage C2.0 texture id witness missing' >&2; exit 1; }
+grep -Fq 'texture?.type?.glTarget' "$SOURCE_FRAME_DIAG" || { echo 'ERROR: Stage C2.0 GL target witness missing' >&2; exit 1; }
+if grep -Eq '\.(toI420|retain|release|cropAndScale)\(' "$SOURCE_FRAME_DIAG"; then
+  echo 'ERROR: Stage C2.0 source-frame witness must not convert, retain, release, crop or scale the live frame' >&2
+  exit 1
+fi
+grep -Fq 'requestRgb10A2 && sourceFrameLogged.compareAndSet(false, true)' "$SURFACE" || { echo 'ERROR: Stage C2.0 witness must be one-shot and scoped to the SDR10/RGB10A2 view' >&2; exit 1; }
+grep -Fq 'GfnSourceFrameDiagnostics.logObservedFrame(forensicViewId, frame)' "$SURFACE" || { echo 'ERROR: Stage C2.0 live source-frame hook missing' >&2; exit 1; }
+grep -Fq 'super.onFrame(frame)' "$SURFACE" || { echo 'ERROR: Stage C2.0 must forward the original VideoFrame unchanged' >&2; exit 1; }
 printf '%s\n' 'V611_HEVC_10BIT_SOURCE_GUARDS=PASS'
 printf '%s\n' 'V611_STAGE_C1_RENDER_TARGET_SOURCE_GUARDS=PASS'
+printf '%s\n' 'V611_STAGE_C2_SOURCE_FRAME_SOURCE_GUARDS=PASS'
 
 cat > "$BUILD/ParserFixture.kt" <<'KT'
 package dev.gfn.webrtc
@@ -327,6 +341,27 @@ JAVA
 cat > "$BUILD/java/org/webrtc/VideoDecoder.java" <<'JAVA'
 package org.webrtc; public interface VideoDecoder { class Settings{} class DecodeInfo{} interface Callback{} VideoCodecStatus initDecode(Settings s, Callback c); VideoCodecStatus release(); VideoCodecStatus decode(EncodedImage f, DecodeInfo i); String getImplementationName(); }
 JAVA
+cat > "$BUILD/java/org/webrtc/VideoFrame.java" <<'JAVA'
+package org.webrtc;
+public class VideoFrame {
+  public interface Buffer {
+    default int getBufferType(){ return 0; }
+    int getWidth(); int getHeight();
+  }
+  public interface TextureBuffer extends Buffer {
+    enum Type {
+      OES(36197), RGB(3553);
+      private final int glTarget; Type(int value){glTarget=value;} public int getGlTarget(){return glTarget;}
+    }
+    Type getType(); int getTextureId();
+    default int getUnscaledWidth(){ return getWidth(); }
+    default int getUnscaledHeight(){ return getHeight(); }
+  }
+  private final Buffer buffer; private final int rotation; private final long timestampNs;
+  public VideoFrame(Buffer buffer,int rotation,long timestampNs){this.buffer=buffer;this.rotation=rotation;this.timestampNs=timestampNs;}
+  public Buffer getBuffer(){return buffer;} public int getRotation(){return rotation;} public long getTimestampNs(){return timestampNs;}
+}
+JAVA
 javac -d "$BUILD/classes" $(find "$BUILD/java" -name '*.java')
 
 cat > "$BUILD/Profile.kt" <<'KT'
@@ -438,8 +473,54 @@ fun main() {
 }
 KT
 
+cat > "$BUILD/SourceFrameFixture.kt" <<'KT'
+package dev.gfn.webrtc
+
+import org.webrtc.VideoFrame
+
+private class FakeTextureBuffer(
+    private val textureType: VideoFrame.TextureBuffer.Type,
+) : VideoFrame.TextureBuffer {
+    override fun getBufferType(): Int = 0
+    override fun getWidth(): Int = 1920
+    override fun getHeight(): Int = 1080
+    override fun getType(): VideoFrame.TextureBuffer.Type = textureType
+    override fun getTextureId(): Int = 77
+    override fun getUnscaledWidth(): Int = 1920
+    override fun getUnscaledHeight(): Int = 1088
+}
+
+private class FakeMemoryBuffer : VideoFrame.Buffer {
+    override fun getBufferType(): Int = 1
+    override fun getWidth(): Int = 640
+    override fun getHeight(): Int = 480
+}
+
+fun sourceFrameFixture() {
+    val oesFrame = VideoFrame(FakeTextureBuffer(VideoFrame.TextureBuffer.Type.OES), 0, 123456789L)
+    val oes = GfnSourceFrameDiagnostics.inspect(oesFrame)
+    check(oes.texture)
+    check(oes.textureType == "OES")
+    check(oes.isOesTexture)
+    check(oes.textureId == 77)
+    check(oes.glTarget == 36197)
+    check(oes.width == 1920 && oes.height == 1080)
+    check(oes.unscaledWidth == 1920 && oes.unscaledHeight == 1088)
+    check(oes.rotation == 0 && oes.timestampNs == 123456789L)
+
+    val memoryFrame = VideoFrame(FakeMemoryBuffer(), 90, 9L)
+    val memory = GfnSourceFrameDiagnostics.inspect(memoryFrame)
+    check(!memory.texture)
+    check(memory.textureType == null)
+    check(!memory.isOesTexture)
+    check(memory.textureId == null && memory.glTarget == null)
+    println("V611_STAGE_C2_SOURCE_FRAME_FIXTURE=PASS")
+}
+KT
+# Call the C2 fixture from the same executable after API checks.
+sed -i '0,/fun main() {/s//fun main() {\n    sourceFrameFixture()/' "$BUILD/ApiFixture.kt"
 kotlinc -J-Dfile.encoding=UTF-8 \
-  "$BITSTREAM" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG" "$DIAG" "$BUILD/Profile.kt" "$BUILD/ApiFixture.kt" \
+  "$BITSTREAM" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG" "$SOURCE_FRAME_DIAG" "$DIAG" "$BUILD/Profile.kt" "$BUILD/SourceFrameFixture.kt" "$BUILD/ApiFixture.kt" \
   -cp "$BUILD/classes" -include-runtime -d "$BUILD/api.jar"
 java -cp "$BUILD/api.jar:$BUILD/classes" dev.gfn.webrtc.ApiFixtureKt
 
@@ -488,8 +569,20 @@ JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/GlRectDrawer.java" <<'JAVA'
 package org.webrtc; public class GlRectDrawer implements RendererCommon.GlDrawer {}
 JAVA
+mkdir -p "$SURFACE_BUILD/java/android/util"
+cat > "$SURFACE_BUILD/java/android/util/Log.java" <<'JAVA'
+package android.util; public class Log { public static int i(String t,String m){return 0;} public static int w(String t,String m){return 0;} }
+JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/VideoFrame.java" <<'JAVA'
-package org.webrtc; public class VideoFrame {}
+package org.webrtc;
+public class VideoFrame {
+  public interface Buffer { default int getBufferType(){return 0;} int getWidth(); int getHeight(); }
+  public interface TextureBuffer extends Buffer {
+    enum Type { OES(36197), RGB(3553); private final int glTarget; Type(int v){glTarget=v;} public int getGlTarget(){return glTarget;} }
+    Type getType(); int getTextureId(); default int getUnscaledWidth(){return getWidth();} default int getUnscaledHeight(){return getHeight();}
+  }
+  public Buffer getBuffer(){return null;} public int getRotation(){return 0;} public long getTimestampNs(){return 0;}
+}
 JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/RendererCommon.java" <<'JAVA'
 package org.webrtc;
@@ -569,5 +662,6 @@ object GfnInputForensics {
     fun markSurfaceHandled(trace: KeyTrace, handled: Boolean) { trace.hashCode(); handled.hashCode() }
 }
 KT
-kotlinc -J-Dfile.encoding=UTF-8 "$SURFACE" "$SURFACE_BUILD/Stubs.kt" -cp "$SURFACE_BUILD/classes" -d "$SURFACE_BUILD/surface.jar"
+kotlinc -J-Dfile.encoding=UTF-8 "$SURFACE" "$SOURCE_FRAME_DIAG" "$SURFACE_BUILD/Stubs.kt" -cp "$SURFACE_BUILD/classes" -d "$SURFACE_BUILD/surface.jar"
 printf '%s\n' 'V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS'
+printf '%s\n' 'V611_STAGE_C2_SOURCE_FRAME_SURFACE_API_SHAPED_COMPILE=PASS'

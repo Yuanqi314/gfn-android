@@ -311,19 +311,22 @@ original GFN Tier1 Offer
 
 ---
 
-## HEVC — v6.1.1 Stage A/B true-device closeout and Stage C0
+## HEVC — v6.1.1 Stage A/B/C0/C1 closeout and Stage C2
 
 | Layer | Evidence / source | Current decision | State |
 |---|---|---|---|
-| Actual elementary stream | `50.log:669` SPS | Main10 / High / 4:2:0 / luma10 / chroma10 | TRUE-DEVICE PASS |
-| M144 default EGL request | pinned `SurfaceViewRenderer` + `EglBase.CONFIG_PLAIN` | RGB888 request | PROVEN |
-| Runtime default EGL | `50.log:682,1096,1456` | R8 G8 B8 A0 | TRUE-DEVICE PROVEN |
-| DecodeInfo JNI contract | pinned M144 native wrapper + `50.log` no recurrence | nullable and forwarded unchanged | TRUE-DEVICE PASS |
-| Decoder output | `COLOR_FormatSurface` | Surface mode only; no P010/8-bit inference | bounded evidence |
-| RGB10A2 capability | Stage C0 two-pass `eglChooseConfig` on current display | exact fixed/non-float 10/10/10/2 WINDOW+GLES2 | TRUE-DEVICE PASS (`51.log`, configId=65) |
-| reconnect media recovery | stale logical state vs ICE/PC + media liveness | require logical+ICE+PC health, sustained fresh frames and render-path witness before grace recovery | OFFLINE PASS; TRUE-DEVICE PENDING |
-| Android native-window format | EGL native visual + `PixelFormat.RGBA_1010102` witness | dormant evidence; explicit `holder.setFormat` stays separately gated | NOT ACTIVE |
-| Custom EGL target | R10 G10 B10 A2 | activate only after C0 supported=true | NOT ACTIVE |
-| Source texture/buffer fidelity | BufferQueue / GraphicBuffer / SurfaceTexture | Stage C2 | NOT YET PROVEN |
-| Direct MediaCodec Surface | architecture-level fallback | only after texture path evidence requires it | NOT ACTIVE |
-| HDR | separate v6.2 milestone | OFF | FROZEN |
+| Actual elementary stream | `50.log` SPS | Main10 / High / 4:2:0 / luma10 / chroma10 | TRUE-DEVICE PASS |
+| M144 default EGL | `50.log` runtime | R8 G8 B8 A0 | TRUE-DEVICE PROVEN |
+| DecodeInfo JNI contract | pinned M144 + `50.log` | nullable and forwarded unchanged | TRUE-DEVICE PASS |
+| RGB10A2 capability | `51.log` | exact fixed/non-float R10G10B10A2 | TRUE-DEVICE PASS |
+| reconnect media recovery | operator manual disconnect/reconnect | recovery normal after source repair | TRUE-DEVICE MANUAL PASS |
+| Custom final EGL target | `53.log` | runtime configId=65 R10G10B10A2; repeated two lifecycles | TRUE-DEVICE PASS |
+| SurfaceHolder callback format | `53.log` | callback format=4 vs EGL native visual 43 | witness mismatch; non-blocking |
+| M144 decoder texture architecture | pinned source `b1800a61...` | SurfaceTextureHelper -> TextureBufferImpl OES | SOURCE-CODE PROVEN |
+| Actual app sink frame type | Stage C2.0 `SOURCE_FRAME` | observe Buffer / TextureBuffer / OES without conversion | TRUE-DEVICE PENDING |
+| Producer/native-window precision | ANativeWindow / dataspace future witness | separate C2.1 variable | UNKNOWN |
+| Numeric OES precision | controlled 10-bit ramp + high-precision sampling | required for full fidelity | UNKNOWN |
+| `toI420()` | pinned M144 conversion contract | forbidden as source bit-depth witness | FROZEN OUT |
+| SurfaceHolder.setFormat | separate variable | OFF | FROZEN |
+| Direct MediaCodec Surface | architecture fallback only after C2 evidence | OFF | FROZEN |
+| HDR | separate milestone | OFF | FROZEN |

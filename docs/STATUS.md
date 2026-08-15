@@ -1,4 +1,4 @@
-# Current v6.1.1 Main10 / SDR10 — Stage C1 custom RGB10A2 target
+# Current v6.1.1 Main10 / SDR10 — Stage C2 source texture/buffer precision
 
 ## Closed milestones
 
@@ -9,124 +9,100 @@ v6.1.1  DecodeInfo JNI null hotfix                          TRUE-DEVICE PASS (50
 v6.1.1  Stage A actual HEVC SPS bit depth                   TRUE-DEVICE PASS (50.log)
 v6.1.1  Stage B exact M144 default EGL target               TRUE-DEVICE PASS / PROVEN RGB888 (50.log)
 v6.1.1  Stage C0 exact fixed RGB10A2 window capability       TRUE-DEVICE PASS (51.log)
-v6.1.1  reconnect black-screen repair                        TRUE-DEVICE MANUAL PASS (user test, 2026-08-15)
+v6.1.1  reconnect black-screen repair                        TRUE-DEVICE MANUAL PASS (operator test, 2026-08-15)
+v6.1.1  Stage C1 custom RGB10A2 final EGL target             TRUE-DEVICE PASS (53.log)
 ```
 
-The reconnect closeout above is an explicit operator true-device result from this conversation; no new reconnect log was attached with that statement, so it is not presented as line-addressable log evidence. All negotiation behavior remains frozen. HDR remains OFF.
+The reconnect closeout is an operator-reported true-device result, not a new line-addressable reconnect log. All negotiation behavior remains frozen. HDR remains OFF.
 
-## Stage A/B/C0 evidence boundary
+## Stage C1 true-device closeout (`53.log`)
 
-`50.log` directly proves the incoming elementary stream is HEVC Main10, 4:2:0, luma/chroma 10/10-bit. The same log proves the pinned M144 default final EGL target is `R8 G8 B8 A0`.
-
-`51.log` then proves the tested device exposes an exact fixed/non-float RGB10A2 window config:
+The observed chain was repeated across two renderer lifecycles:
 
 ```text
-status=Supported
-configId=65
-red=10 green=10 blue=10 alpha=2
-nativeVisualId=43
-nativeVisualMatchesSurface=true
-explicitFloat=false
+EGL10_PREFLIGHT: exact fixed R10/G10/B10/A2, configId=65
+EGL_TARGET_REQUEST: requested=RGB10A2 active=RGB10A2 fallback=NONE
+BITSTREAM_SPS: profileIdc=2, bitDepthLuma=10, bitDepthChroma=10
+FIRST_FRAME: bound c2.qti.hevc.decoder / Main10
+EGL_CONFIG: R10/G10/B10/A2, tenBitRgbTarget=true
+EGL_TARGET_ACTIVE: exactRgb10A2=true
+stable ~60fps
 ```
 
-This justifies Stage C1. It does not prove source texture precision.
+`surfaceChanged(... format=4 ...)` remains a non-blocking witness mismatch. It does not override the runtime EGLConfig evidence and C2.0 does not add `SurfaceHolder.setFormat()`.
 
-## Stage C1 active design
+## Current Stage C2.0 scope
 
-Only an immutable Session snapshot with:
+Only observe the actual Java `VideoFrame.Buffer` delivered to the existing renderer:
 
 ```text
-codec=Hevc
-colorMode=PreferSdr10
+GfnVideoSurfaceView.onFrame(frame)
+        ↓ read-only
+buffer.javaClass
+buffer.getBufferType()
+width / height / rotation / timestamp
+        ↓ if TextureBuffer
+TextureBuffer.Type
+textureId
+glTarget
+unscaledWidth / unscaledHeight
+        ↓
+original frame -> super.onFrame(frame)
 ```
 
-requests the custom target. SDR8/H264 still uses the original M144 two-argument renderer init.
-
-For an SDR10/Main10 view, Stage C1 first resolves the existing shared WebRTC EGL root, then performs a selection-only default-display preflight. Activation requires:
+Expected log:
 
 ```text
-status=Supported
-exact R10/G10/B10/A2 + WINDOW + GLES2
-not explicitly floating-point
-nativeVisualMatchesRequestedSurfaceFormat=true
+GfnHevc10Bit phase=SOURCE_FRAME
 ```
 
-The selected `EGL_CONFIG_ID` is then included in the custom renderer attributes so M144 does not merely choose an arbitrary config satisfying minimum channel sizes. Renderer creation uses the pinned overload:
+The probe is one-shot per SDR10/RGB10A2 View. It does not call `toI420()`, retain/release, crop/scale, GL readback, or any private decoder API.
+
+## Exact pinned M144 source boundary
+
+Pinned M144 (`b1800a61...`) establishes:
 
 ```text
-SurfaceViewRenderer.init(
-    sharedContext,
-    rendererEvents,
-    customConfigAttributes,
-    GlRectDrawer
-)
+AndroidVideoDecoder(sharedContext != null)
+→ SurfaceTextureHelper.create(...)
+→ Surface(surfaceTextureHelper.getSurfaceTexture())
+→ MediaCodec.configure(..., surface, ...)
+→ releaseOutputBuffer(index, render=true)
+→ SurfaceTextureHelper.updateTexImage()
+→ TextureBufferImpl(..., TextureBuffer.Type.OES, oesTextureId, ...)
 ```
 
-C1 first-build single-variable boundary:
+However, `AndroidVideoDecoder` is package-private and its `surfaceTextureHelper` / `surface` fields are private. The app's current decoder wrapper only owns the public `VideoDecoder` delegate. Therefore C2 does not claim direct access to the decoder's internal `SurfaceTexture`.
+
+## C2.1 native-window witness remains separately gated
+
+The repository currently contains no native/JNI module or CMake/NDK build path, and the present local environment exposes no Android NDK. Introducing an ANativeWindow JNI bridge in C2.0 would therefore add an independent build-system variable. C2.1 remains a separate next experiment after true-device SOURCE_FRAME classification.
+
+## Fidelity boundary
+
+Current proven facts:
 
 ```text
-final renderer EGLConfig                 RGB888 -> exact RGB10A2
-SurfaceHolder.setFormat                  NOT CALLED
-decoder/shared root EGL                  FROZEN
-MediaCodec / SurfaceTexture source path  FROZEN
-Main10 negotiation                       FROZEN
-reconnect state machine                  FROZEN
-HDR                                       OFF
+10-bit encoded source                  PROVEN
+Main10 hardware decoder                PROVEN
+runtime RGB10A2 final EGL target       PROVEN
+source Java frame type                 PENDING C2.0 TRUE-DEVICE
+producer/native-window precision       UNKNOWN
+numeric OES precision                  UNKNOWN
+full 10-bit render fidelity            NOT YET PASS
 ```
 
-If preflight is unsupported/unresolved or native-visual matching is not proven, the view explicitly uses the existing RGB888 renderer and logs a fallback reason. That is visibility fallback only and must never be labeled 10-bit target PASS.
+`toI420()` must not be used as a bit-depth witness because it converts the underlying representation to 8-bit I420 by contract.
 
-## Stage C1 true-device PASS gate
-
-The next log must show all of:
+## Frozen variables
 
 ```text
-GfnHevc10Bit phase=EGL10_PREFLIGHT
-status=Supported supported=true
-red=10 green=10 blue=10 alpha=2
-nativeVisualMatchesSurface=true
-explicitFloat=false
-
-GfnHevc10Bit phase=EGL_TARGET_REQUEST
-requested=RGB10A2
-active=RGB10A2
-selectedConfigId=<dynamic>
-holderSetFormat=false
-
-GfnHevc10Bit phase=SURFACE_FORMAT
-actualCallbackFormat=<actual>
-
-GfnHevc10Bit phase=EGL_CONFIG
-red=10 green=10 blue=10 alpha=2
-tenBitRgbTarget=true
-
-GfnHevc10Bit phase=EGL_TARGET_ACTIVE
-requestedRgb10A2=true
-active=true
-exactRgb10A2=true
-
-BITSTREAM_SPS bitDepthLuma=10 bitDepthChroma=10
-FIRST_VIDEO_RTP
-FIRST_FRAME
-stable rendering near requested 60fps
-fallback=false
-HDR=false
+CloudMatch / Session / SDP / Answer / NVST    FROZEN
+Main10 decoder binding                        FROZEN
+C1 RGB10A2 final EGL target                   FROZEN
+SurfaceHolder.setFormat                       OFF
+reconnect state machine                       FROZEN
+fullscreen lifecycle                          FROZEN
+HDR                                            OFF
+direct MediaCodec -> app-owned Surface        OFF
 ```
-
-Requested attributes alone are not a PASS. Runtime selected config is the gate.
-
-## Remaining fidelity boundary
-
-Even a Stage C1 PASS means only:
-
-```text
-Actual SPS 10-bit       PASS
-Final RGB10A2 target    PASS
-Source texture/buffer   UNKNOWN
-```
-
-Stage C2 must investigate MediaCodec producer -> BufferQueue/GraphicBuffer -> SurfaceTexture/external texture precision before full 10-bit decode/output/render fidelity can be claimed. Direct MediaCodec -> app-owned Surface remains a later escalation only.
-
-## Independent backlog
-
-Fullscreen/Activity `No surface` windows remain a separate lifecycle issue. C1 does not modify that lifecycle.

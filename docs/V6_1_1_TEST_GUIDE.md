@@ -1,8 +1,8 @@
-# GFN Android v6.1.1 — Stage C1 RGB10A2 True-device Test Guide
+# GFN Android v6.1.1 — Stage C2.0 Source Frame True-device Test Guide
 
 ## 1. Test profile
 
-Use the frozen Main10 profile:
+Keep the already proven C1 profile unchanged:
 
 ```text
 codec=HEVC
@@ -11,154 +11,129 @@ color=PreferSdr10
 HDR=false
 ```
 
-Do not change fullscreen lifecycle or network conditions during the first C1 run.
+Do not intentionally change network, fullscreen lifecycle, renderer config or SurfaceHolder format during the first C2.0 run.
 
-## 2. Frozen negotiation regression
+## 2. Regression gates
 
-Require the existing chain:
+Require the frozen chain:
 
 ```text
 RESOLVED codec=Hevc color=PreferSdr10
-CREATE cloudMatchBitDepth=1 sdrHdrMode=0 hdr=false
-HEVC_MAIN10_ADVERTISEMENT enabled=true profile=2
+CloudMatch bitDepth=1 / hdr=false
+HEVC_MAIN10_ADVERTISEMENT profile=2
 OFFER_HEVC_COMPATIBLE targetProfile=2 compatible=true
-RAW_ANSWER hevcMain10 != []
-FINAL_ANSWER hevcMain10 != []
+RAW/FINAL Answer Main10
 fallback=false
-NVST_CONFIG bitDepth=10 hdr=false
-FIRST_VIDEO_RTP effective=Hevc targetProfile=2
+NVST bitDepth=10 hdr=false
+BITSTREAM_SPS bitDepthLuma=10 bitDepthChroma=10
+FIRST_VIDEO_RTP
+FIRST_FRAME
 ```
 
-## 3. Actual bitstream regression
-
-Require:
+C1 must still be runtime active:
 
 ```text
-phase=BITSTREAM_SPS
-profileIdc=2
-chromaFormatIdc=1
-bitDepthLuma=10
-bitDepthChroma=10
-tenBit=true
+EGL_TARGET_REQUEST requested=RGB10A2 active=RGB10A2 fallback=NONE
+EGL_CONFIG red=10 green=10 blue=10 alpha=2
+EGL_TARGET_ACTIVE active=true exactRgb10A2=true
 ```
 
-If SPS changes, stop; do not blame C1.
-
-## 4. C1 preflight
+## 3. C2.0 decisive log
 
 Search:
 
 ```text
-GfnHevc10Bit phase=EGL10_PREFLIGHT
+GfnHevc10Bit phase=SOURCE_FRAME
 ```
 
-Expected on the currently tested device:
+Record the complete line.
+
+Expected if the actual downstream path matches pinned M144 texture mode:
 
 ```text
-status=Supported
-supported=true
-configId=65                  // config ids are device/driver-specific; do not hardcode in logic
-red=10 green=10 blue=10 alpha=2
-nativeVisualId=43
-nativeVisualMatchesSurface=true
-explicitFloat=false
+texture=true
+textureType=OES
+isOes=true
+glTarget=36197
+toI420Called=false
 ```
 
-The source dynamically pins whatever exact config id preflight selects.
-
-## 5. Target request
-
-Require:
+Also record:
 
 ```text
-phase=EGL_TARGET_REQUEST
-requested=RGB10A2
-active=RGB10A2
-selectedConfigId=<same preflight id>
-holderSetFormat=false
-fallback=NONE
-```
-
-If `active=WEBRTC_M144_RGB888`, C1 did not activate. Preserve the fallback reason.
-
-## 6. Native Surface witness
-
-Search:
-
-```text
-phase=SURFACE_FORMAT
-```
-
-Record:
-
-```text
-actualCallbackFormat
+bufferClass
+bufferType
 size
-expectedRgb10A2
+textureId
+unscaled size
+rotation
 ```
 
-On the current device the expected Android constant is `43`. A different value is evidence for a separate Surface-format investigation; do not silently add `holder.setFormat()` in the same run.
+Texture ids are runtime-local and must never be hardcoded.
 
-## 7. Runtime EGL — decisive C1 gate
+## 4. C2.0 PASS rule
 
-Require after a real rendered frame:
+Only this classification closes C2.0 OES path:
 
 ```text
-phase=EGL_CONFIG
-success=true
-red=10
-green=10
-blue=10
-alpha=2
-tenBitRgbTarget=true
+actual true-device SOURCE_FRAME
++ TextureBuffer
++ type=OES
 ```
 
-And:
+This proves the app sink is receiving an OES texture buffer. It does **not** prove the texture carries 10-bit numerical precision.
+
+## 5. Negative / alternate results
+
+### RGB
 
 ```text
-phase=EGL_TARGET_ACTIVE
-requestedRgb10A2=true
-active=true
-exactRgb10A2=true
+textureType=RGB
 ```
 
-A request/preflight record is not a PASS without this runtime result.
+Stop OES assumptions. Rebuild the source-path model from the observed frame.
 
-## 8. Frame stability
+### Non-texture
 
-Require:
+```text
+texture=false
+```
+
+Stop OES-specific work. Inspect the concrete buffer class/type first.
+
+### Unresolved
+
+```text
+phase=SOURCE_FRAME_UNRESOLVED
+```
+
+Treat as instrumentation failure only. Do not infer 8-bit or 10-bit.
+
+## 6. Forbidden interpretation
+
+Do not call `toI420()` to test source precision. M144 defines it as a conversion fallback to I420, so the test itself would introduce an 8-bit representation.
+
+Do not use screenshots, visual banding, natural-image histograms or unique-RGB counts as fidelity proof.
+
+## 7. Performance / safety
+
+The probe is one-shot per SDR10 View. Verify normal behavior remains:
 
 ```text
 FIRST_FRAME
-bound c2.qti.hevc.decoder unchanged
-input/output/render approximately requested 60fps
-no persistent No surface state
-no EGL thread/window-surface exception
-no SIGABRT / NPE
+stable near 60fps
+no persistent No surface
+no EGL exception
+no NPE / SIGABRT
 ```
 
-Short Surface recreation drops remain a separate known lifecycle backlog if they recover.
+## 8. Next decision
 
-## 9. SDR8/H264 negative control
-
-For an SDR8/H264 Session, source behavior must remain:
+If C2.0 is OES PASS:
 
 ```text
-requested=WEBRTC_M144_RGB888
-active=WEBRTC_M144_RGB888
-phase=EGL_REQUEST source=WebRTC_M144_CONFIG_PLAIN
-runtime EGL remains the normal M144 target
+freeze C2.0
+→ separate C2.1 native-window / producer metadata witness
 ```
 
-RGB10A2 must not be activated from live Settings or generic HEVC alone.
-
-## 10. Verdict
-
-Only when the Main10 run satisfies all gates above may we record:
-
-```text
-v6.1.1-C Custom RGB10A2 final EGL target
-TRUE-DEVICE PASS
-```
-
-This still does **not** equal full 10-bit render fidelity. Stage C2 source texture/buffer evidence remains required. HDR stays OFF.
+Do not add `holder.setFormat()`, direct MediaCodec Surface, HDR, or a new shader in the same run.

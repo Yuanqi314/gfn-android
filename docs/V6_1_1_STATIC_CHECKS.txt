@@ -1,42 +1,42 @@
-GFN Android v6.1.1 - Stage C1 custom RGB10A2 final EGL target static verification
-Version: 0.6.1.1-c1-dev / code 25
-Baseline artifact: v6.1.1 Stage C0 + reconnect black-screen fix clean full-repo ZIP
+GFN Android v6.1.1 - Stage C2.0 source-frame precision forensics static verification
+Version: 0.6.1.1-c2-dev / code 26
+GitHub baseline: 803605e4e0a910a83cbc5388f01fd3d414802288 (fix 10bit)
+Baseline artifact: v6.1.1 Stage C1 RGB10A2 final-target clean full-repo ZIP
 
-Closed true-device evidence:
-- v6.0.4 Main/SDR8 production = PASS (45.log)
-- v6.1.0 Main10/SDR10 capability + negotiation + decode-to-frame = PASS (46.log)
-- v6.1.1 DecodeInfo JNI-null hotfix = PASS (50.log)
-- v6.1.1 Stage A actual SPS Main10 / 4:2:0 / luma10 / chroma10 = PASS (50.log)
-- v6.1.1 Stage B default M144 final EGL target R8 G8 B8 A0 = PROVEN (50.log)
-- v6.1.1 Stage C0 exact fixed RGB10A2 window capability = PASS (51.log)
-  configId=65 R10/G10/B10/A2 nativeVisualId=43 nativeVisualMatchesSurface=true explicitFloat=false
-- reconnect black-screen repair = TRUE-DEVICE MANUAL PASS reported by user on 2026-08-15
-  Note: no new reconnect log accompanied that explicit manual result; it is not presented as line-addressable log evidence.
+Closed true-device evidence before this build:
+- Stage A actual HEVC Main10 SPS 10/10-bit: PASS (50.log)
+- Stage B default M144 runtime EGL RGB888: PROVEN (50.log)
+- Stage C0 exact fixed RGB10A2 capability: PASS (51.log)
+- reconnect black-screen repair: operator manual true-device PASS (2026-08-15; no new line-addressable reconnect log)
+- Stage C1 runtime RGB10A2 final EGL target: PASS (53.log; two renderer lifecycles)
 
-Stage C1 implementation boundary:
-- RGB10A2 is requested only from the immutable frozen Session snapshot when codec=Hevc and colorMode=PreferSdr10.
-- SDR8/H264 stays on the exact pinned M144 two-argument SurfaceViewRenderer.init(sharedContext, rendererEvents) path.
-- GfnWebRtcRuntime shared root is resolved before C1 preflight.
-- C1 preflight queries the already-initialized default EGLDisplay without creating/rebinding EGL context/surface state.
-- Activation requires Supported + exact fixed/non-float R10/G10/B10/A2 + nativeVisualMatchesRequestedSurfaceFormat=true.
-- The dynamically selected EGL_CONFIG_ID is inserted into custom renderer attributes.
-- Custom renderer uses pinned M144 SurfaceViewRenderer.init(sharedContext, rendererEvents, configAttributes, GlRectDrawer()).
-- SurfaceHolder.setFormat(PixelFormat.RGBA_1010102) remains OFF in the first C1 build.
-- Decoder/shared-root EGL, MediaCodec/SurfaceTexture source path, negotiation, reconnect implementation and HDR remain frozen.
-- Unsupported/Unresolved/native-visual-unproven preflight explicitly falls back to M144 RGB888 and logs the reason; fallback is never a 10-bit PASS.
+Stage C2.0 source changes:
+- added GfnSourceFrameDiagnostics.kt
+- one-shot SOURCE_FRAME witness only for SDR10/RGB10A2 GfnVideoSurfaceView
+- reads VideoFrame.Buffer class/type/size and TextureBuffer type/id/glTarget/unscaled size
+- original VideoFrame forwarded unchanged to SurfaceViewRenderer
+- toI420 / retain / release / cropAndScale: NOT CALLED
+- GL readback: NOT ADDED
+- decoder private reflection/hidden API: NOT ADDED
+- JNI / NDK / CMake bridge: NOT ADDED
+- SurfaceHolder.setFormat: OFF
+- HDR: OFF
+- direct MediaCodec -> app-owned Surface: OFF
 
-Stage C1 diagnostics:
-- phase=EGL10_PREFLIGHT
-- phase=EGL_TARGET_REQUEST
-- phase=SURFACE_FORMAT
-- phase=EGL_CONFIG
-- phase=EGL_TARGET_ACTIVE
-- phase=EGL10_CAPABILITY
+Pinned WebRTC M144 source closure:
+- commit b1800a61db8320af5c14456c13622d8b85b1ed39
+- VideoFrame.TextureBuffer exposes OES/RGB type, textureId and glTarget
+- AndroidVideoDecoder texture mode creates SurfaceTextureHelper and decoder Surface
+- decoded MediaCodec output uses releaseOutputBuffer(index, render=true)
+- SurfaceTextureHelper updateTexImage() creates TextureBufferImpl(... TextureBuffer.Type.OES, oesTextureId ...)
+- AndroidVideoDecoder implementation and live surface/helper fields are not publicly exposed to the current VideoDecoder wrapper
 
-v6.1.1 HEVC / Stage C verification:
+Dedicated C2 / HEVC forensics:
 V611_HEVC_10BIT_SOURCE_GUARDS=PASS
 V611_STAGE_C1_RENDER_TARGET_SOURCE_GUARDS=PASS
+V611_STAGE_C2_SOURCE_FRAME_SOURCE_GUARDS=PASS
 V611_HEVC_SPS_PARSER_FIXTURE=PASS
+V611_STAGE_C2_SOURCE_FRAME_FIXTURE=PASS
 V611_EGL_API_SHAPED_COMPILE=PASS
 V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS
 V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS
@@ -46,84 +46,44 @@ V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS
 V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
 V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
 V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS
+V611_STAGE_C2_SOURCE_FRAME_SURFACE_API_SHAPED_COMPILE=PASS
 
-Reconnect / frozen-target verification:
-V521_SESSION_SAME_ID_RECLAIM=PASS
-V521_STREAM_RECONNECT_STATE_MACHINE=PASS
-V611_STAGE_C1_FROZEN_PROFILE_TARGET_POLICY=PASS
-V521_VIDEO_RECOVERY_LIVENESS_TRACKER=PASS
-- Aggregate verify-reconnect.sh then reaches the pre-existing unrelated keyboard stable-baseline conflict after V519_KEYBOARD_STABLE_PACKET_FIXTURE=PASS.
-- This C1 build does not delete or alter keyboard behavior merely to force an aggregate green result.
-
-WebRTC Engine API-shaped compile:
+Production/regression:
+V604_HEVC_PRODUCTION_VERIFY=PASS
+V610_MAIN10_PRODUCTION_VERIFY=PASS
+V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
+V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
+V610_MAIN10_VERIFY=PASS
 V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
 V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
 V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
 V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
-
-Production HEVC / Main10 regression:
-V604_HEVC_PRODUCTION_SOURCE_GUARDS=PASS
-V610_MAIN10_PRODUCTION_SOURCE_GUARDS=PASS
-V604_HEVC_FACTORY_BINDING_FIXTURE=PASS
-V604_HEVC_VIDEO_CAPS_NULLABILITY_FIXTURE=PASS
-V604_HEVC_COMPATIBILITY_FIXTURE=PASS
-V610_MAIN10_FACTORY_BINDING_FIXTURE=PASS
-V610_GENERIC_H265_COMPONENT_AMBIGUITY_GUARD=PASS
-V610_MAIN10_COMPATIBILITY_FIXTURE=PASS
-V610_MAIN10_STRICT_NO_H264_FALLBACK=PASS
-V604_HEVC_PRODUCTION_VERIFY=PASS
-V610_MAIN10_PRODUCTION_VERIFY=PASS
-
-Answer lineage regression:
-V604_HEVC_LINEAGE_SOURCE_GUARD=PASS
-V610_MAIN10_LINEAGE_SOURCE_GUARD=PASS
-V604_HEVC_ANSWER_LINEAGE_FIXTURE=PASS
-V610_MAIN10_ANSWER_LINEAGE_FIXTURE=PASS
-V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
-V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
-
-Main10 cross-layer regression:
-V610_MAIN10_CROSS_LAYER_SOURCE_GUARDS=PASS
-V610_MAIN10_SETTINGS_SNAPSHOT_FIXTURE=PASS
-V610_MAIN10_CLOUDMATCH_SDR10_FIXTURE=PASS
-V610_HDR_SESSION_ACTIVATION_OFF=PASS
-V610_MAIN10_VERIFY=PASS
-
-Legacy HEVC / Audio / Settings regression:
-V600_HEVC_VERIFY=PASS
-V540_AUDIO_VERIFY=PASS
 V520_STREAM_SETTINGS_RESOLVER=PASS
 V520_STREAM_SETTINGS_STORE=PASS
 V520_SESSION_PROFILE_PERSISTENCE=PASS
 V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
 V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+V540_AUDIO_VERIFY=PASS
+V600_HEVC_VERIFY=PASS
 
-Final source audit:
-SHELL_SYNTAX=PASS
+Frozen boundary audit:
+HOLDER_SET_FORMAT=OFF
+C2_NATIVE_BRIDGE=OFF
+HDR_ACTIVATION=OFF
+FROZEN_HARDCODE_REWRITE=NONE
 TRAILING_WHITESPACE_COUNT=0
-C1_CUSTOM_EGL_INIT=1
-C1_SURFACE_SET_FORMAT=0
-C1_SOURCE_HARDCODED_CONFIG65=0
-HDR_SESSION_ACTIVATION=0
-RUNTIME_TIER_REWRITE_RESIDUE=0
-HARDCODED_HEVC_DECODER=0
-HARDCODED_GFN_HEVC_PT=0
-UI_C1_BINDINGS=2
+SHELL_SYNTAX=PASS
 
-Android Gradle build attempt:
-sh ./gradlew :app:compileDebugKotlin --no-daemon
-GRADLE_EXIT=6
-BLOCKED BEFORE COMPILATION: curl could not resolve services.gradle.org while downloading Gradle 9.5.0.
-Full Android/Kotlin Gradle compile is NOT claimed PASS.
+Full Android build attempt:
+- ./gradlew direct execution from ZIP copy: not executable (ZIP permission metadata limitation); retried with `sh ./gradlew`
+- sh ./gradlew :app:compileDebugKotlin --no-daemon
+- exit=6 before Gradle/Kotlin compilation
+- curl: (6) Could not resolve host: services.gradle.org
+- therefore full Android/Kotlin compile is NOT VERIFIED in this environment
 
-Next true-device Stage C1 gate:
-1. EGL10_PREFLIGHT must be Supported exact fixed R10/G10/B10/A2 with nativeVisualMatchesSurface=true.
-2. EGL_TARGET_REQUEST must show requested=RGB10A2 active=RGB10A2 and a dynamic selectedConfigId.
-3. SURFACE_FORMAT must record the actual callback format; current-device expectation is 43, but the runtime value is evidence, not assumed.
-4. EGL_CONFIG must be runtime R10/G10/B10/A2 and tenBitRgbTarget=true.
-5. EGL_TARGET_ACTIVE must be active=true exactRgb10A2=true.
-6. SPS must remain luma/chroma 10/10, Main10 negotiation/fallback=false must remain unchanged.
-7. FIRST_FRAME and stable rendering near requested 60fps must remain healthy.
-8. HDR must remain false.
-
-Even after Stage C1 TRUE-DEVICE PASS, source texture/buffer precision remains Stage C2 and full 10-bit render fidelity is not yet claimed.
+C2.0 true-device gate still pending:
+GfnHevc10Bit phase=SOURCE_FRAME
+- TextureBuffer + textureType=OES closes only actual app-sink OES path
+- producer/native-window precision remains UNKNOWN
+- numeric OES >8-bit fidelity remains UNKNOWN
+- full Main10/SDR10 10-bit fidelity remains NOT YET PASS

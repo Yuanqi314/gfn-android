@@ -148,23 +148,13 @@ C0 uses an exact two-pass candidate enumeration and distinguishes `Supported`, `
 
 No custom renderer is activated in C0. The existing runtime query must therefore still show RGB888 while the new capability log answers whether an exact RGB10A2 window config exists.
 
-## 6. Stage C1 activation gate
+## 6. Stage C1 true-device closeout
 
-Only after true-device:
+`53.log` proves the custom renderer actually selected and used `R10/G10/B10/A2` at runtime, with Main10 10-bit SPS, FIRST_FRAME and stable near-60fps rendering. The result repeated across two renderer lifecycles.
 
-```text
-phase=EGL10_CAPABILITY
-status=Supported
-supported=true
-red=10 green=10 blue=10 alpha=2
-explicitFloat=false
-```
+`SurfaceHolder.setFormat(RGBA_1010102)` remains OFF. The observed SurfaceHolder callback format mismatch is retained as a separate metadata witness and does not replace the runtime EGLConfig result.
 
-may the next build change the renderer EGL config to `R10G10B10A2`. The decoder EGL context, SurfaceTexture production path, factory, negotiation and Surface lifecycle remain unchanged to preserve a single render-target variable.
-
-The first C1 build does **not** automatically add `SurfaceHolder.setFormat(RGBA_1010102)`. Android EGL window-surface creation derives/programs the native-window buffer format from the selected EGLConfig; explicit `setFormat()` is retained as a separately gated follow-up variable if true-device evidence shows a native-window mismatch or window-surface creation failure.
-
-C1 PASS requires runtime `EGL_CONFIG=10/10/10/2`; source request attributes are insufficient.
+Stage C1 is therefore TRUE-DEVICE PASS.
 
 ## 7. Stage C2 remains required
 

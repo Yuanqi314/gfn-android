@@ -607,7 +607,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v6.0.4 Main/SDR8 与 v6.1.0 Main10/SDR10 协商均已真机 PASS；v6.1.1 Stage C1 仅对 HEVC + SDR10 激活 RGB10A2 final EGL target，HDR 仍关闭。")
+            Text("v6.1.1 Stage C1 已真机证明 Main10 输入 + runtime RGB10A2 final EGL target；当前 C2 只读取证 source VideoFrame/TextureBuffer 类型，HDR 仍关闭。")
         }
 
         if (resumeRecord != null) {
@@ -1271,7 +1271,7 @@ private fun SettingsScreen(
                         }
                         Text(
                             if (settings.colorMode == RequestedColorMode.PreferSdr10) {
-                                "v6.1.0 Main10/SDR10 协商已真机 PASS。v6.1.1 保持同一 profile-id=2/CloudMatch/NVST/decoder binding，只新增实际 HEVC SPS 位深与 EGL config 取证；HDR Session 仍关闭，当前仍不宣称 10-bit render PASS。"
+                                "v6.1.1 Stage A/B/C0/C1 已真机关闭：实际 SPS=Main10 10-bit，default EGL=RGB888，设备支持并实际激活 RGB10A2 final target。C2 继续只读确认 decoder→SurfaceTexture→OES source precision；HDR Session 仍关闭，尚不宣称 full 10-bit fidelity PASS。"
                             } else {
                                 "HEVC Main/profile-id=1 + SDR8：保持 v6.0.4 Production PASS 路径；不兼容时允许同 Session 明确回退 H.264。"
                             },
@@ -1375,7 +1375,7 @@ private fun SettingsScreen(
                     Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
                     Text("v5.4 Audio：2ch Stereo；6ch multiopus 模式真机可正常播放；离散 Native 5.1 仍未验证。")
                     Text("v6.0.4 closeout：HEVC Main / SDR8 Production PASS（原始 Tier1 Offer、绑定 decoder、FIRST_FRAME、~60fps）。")
-                    Text("v6.1.0 closeout：Main10 / SDR10 capability + Session + negotiation + decode-to-frame 真机 PASS。v6.1.1：只读 SPS actual bit depth + exact M144/runtime EGL config 取证；未启用自定义 10-bit renderer，HDR 仍关闭。")
+                    Text("v6.1.1：Stage C1 custom RGB10A2 final target 已真机 PASS；当前 Stage C2 只读观察实际 VideoFrame.Buffer/TextureBuffer，不调用 toI420，不改 decoder/negotiation/HDR。")
                 }
             }
         }
