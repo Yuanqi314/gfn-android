@@ -9,7 +9,7 @@ import org.webrtc.SurfaceViewRenderer
 
 /**
  * WebRTC 视频输出 + Android 输入捕获面。
- * v6.1.1 只增加只读 EGL config 取证，不改变既有 SurfaceViewRenderer 的 config、drawer 或
+ * v6.1.1 Stage C0 只增加只读 RGB10A2 capability/config 取证，不改变既有 SurfaceViewRenderer 的 config、drawer 或
  * render lifecycle。键鼠与 gamepad 的 GFN mapping/state/transport 仍由各自 controller 处理。
  */
 class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
@@ -58,6 +58,10 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
                 GfnHevc10BitDiagnostics.logRuntimeEglConfig(
                     viewId = forensicViewId,
                     result = GfnEglConfigProbe.queryCurrentEgl14(),
+                )
+                Gfn10BitRenderDiagnostics.logEgl10BitCapability(
+                    viewId = forensicViewId,
+                    result = GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14(),
                 )
             },
             0f,

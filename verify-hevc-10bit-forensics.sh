@@ -8,12 +8,15 @@ mkdir -p "$BUILD"
 BITSTREAM="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevcBitstreamProbe.kt"
 DIAG="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevc10BitDiagnostics.kt"
 EGL="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnEglConfigProbe.kt"
+EGL10_CONFIG="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnEgl10BitConfig.kt"
+EGL10_CAP="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnEgl10BitCapabilityProbe.kt"
+RENDER_DIAG="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/Gfn10BitRenderDiagnostics.kt"
 FACTORY="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevcProductionCapability.kt"
 SURFACE="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoSurfaceView.kt"
 ENGINE="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt"
 CLOUDMATCH="$ROOT/gfn-cloudmatch/src/main/kotlin/dev/gfn/cloudmatch/CloudMatchProtocol.kt"
 
-for file in "$BITSTREAM" "$DIAG" "$EGL"; do
+for file in "$BITSTREAM" "$DIAG" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG"; do
   [ -f "$file" ] || { echo "ERROR: missing v6.1.1 forensic source: $file" >&2; exit 1; }
 done
 
@@ -36,9 +39,26 @@ grep -Fq 'EGL14.eglGetCurrentDisplay()' "$EGL" || { echo 'ERROR: runtime EGL cur
 grep -Fq 'EGL14.eglGetConfigAttrib' "$EGL" || { echo 'ERROR: runtime EGL config attribute query missing' >&2; exit 1; }
 grep -Fq 'addFrameListener(' "$SURFACE" || { echo 'ERROR: render-thread one-shot EGL probe hook missing' >&2; exit 1; }
 grep -Fq '0f,' "$SURFACE" || { echo 'ERROR: EGL frame listener must use scale=0 to avoid bitmap capture' >&2; exit 1; }
-# v6.1.1-A/B are evidence-only. No custom 10-bit EGL config or HDR activation is allowed yet.
-if grep -Eq 'EGL_RED_SIZE[^\n]*10|EGL_GREEN_SIZE[^\n]*10|EGL_BLUE_SIZE[^\n]*10|RGBA_1010102|YCBCR_P010' "$SURFACE" "$EGL"; then
-  echo 'ERROR: v6.1.1-A/B must not activate a custom 10-bit render target before true-device evidence' >&2
+# v6.1.1-C0 may define/probe RGB10A2, but production SurfaceViewRenderer must remain on the pinned RGB888 path
+# until a true-device EGL10_CAPABILITY result proves an exact window config exists.
+grep -Fq 'PixelFormat.RGBA_1010102' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C RGB10A2 Surface format contract missing' >&2; exit 1; }
+grep -Fq 'EGL14.EGL_RED_SIZE' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C red-size attribute missing' >&2; exit 1; }
+grep -Fq 'RED_SIZE = 10' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C red depth must be 10' >&2; exit 1; }
+grep -Fq 'ALPHA_SIZE = 2' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C alpha depth must be 2' >&2; exit 1; }
+grep -Fq 'GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()' "$SURFACE" || { echo 'ERROR: Stage C0 read-only RGB10A2 capability hook missing' >&2; exit 1; }
+grep -Fq 'EGL14.eglChooseConfig' "$EGL10_CAP" || { echo 'ERROR: Stage C0 eglChooseConfig probe missing' >&2; exit 1; }
+grep -Fq 'EGL14.eglGetConfigAttrib' "$EGL10_CAP" || { echo 'ERROR: Stage C0 candidate attribute verification missing' >&2; exit 1; }
+grep -Fq 'EGL_COLOR_COMPONENT_TYPE_EXT' "$EGL10_CAP" || { echo 'ERROR: Stage C0 must distinguish fixed-point RGB10A2 from float configs when reported' >&2; exit 1; }
+if grep -Eq 'eglCreateContext|eglCreateWindowSurface|eglMakeCurrent|eglDestroySurface|eglDestroyContext' "$EGL10_CAP"; then
+  echo 'ERROR: Stage C0 capability probe must remain read-only and must not create/rebind EGL state' >&2
+  exit 1
+fi
+if grep -Eq 'holder\.setFormat|setFormat\(PixelFormat\.RGBA_1010102|GfnEgl10BitConfig\.rendererAttributes\(\)' "$SURFACE"; then
+  echo 'ERROR: Stage C0 must not activate RGBA_1010102 Surface or custom EGL renderer before true-device capability PASS' >&2
+  exit 1
+fi
+if grep -Eq 'RGBA_1010102|EGL_RED_SIZE[^\n]*10|EGL_GREEN_SIZE[^\n]*10|EGL_BLUE_SIZE[^\n]*10' "$EGL"; then
+  echo 'ERROR: baseline runtime EGL probe must remain evidence-only and independent from Stage C target contract' >&2
   exit 1
 fi
 if grep -RqsE 'PreferHdr10[^[:cntrl:]]*(enabled|true)|sdrHdrMode" to 1|hdr=true' "$ENGINE" "$CLOUDMATCH"; then
@@ -216,7 +236,10 @@ KT
 kotlinc -J-Dfile.encoding=UTF-8 "$BITSTREAM" "$BUILD/ParserFixture.kt" -include-runtime -d "$BUILD/parser.jar"
 java -jar "$BUILD/parser.jar"
 
-mkdir -p "$BUILD/java/android/opengl" "$BUILD/java/android/util" "$BUILD/java/org/webrtc" "$BUILD/classes"
+mkdir -p "$BUILD/java/android/opengl" "$BUILD/java/android/graphics" "$BUILD/java/android/util" "$BUILD/java/org/webrtc" "$BUILD/classes"
+cat > "$BUILD/java/android/graphics/PixelFormat.java" <<'JAVA'
+package android.graphics; public class PixelFormat { public static final int RGBA_1010102=43; }
+JAVA
 cat > "$BUILD/java/android/opengl/EGLDisplay.java" <<'JAVA'
 package android.opengl; public class EGLDisplay {}
 JAVA
@@ -234,18 +257,28 @@ package android.opengl;
 public class EGL14 {
   public static final int EGL_NONE=12344, EGL_CONFIG_ID=12328, EGL_DRAW=12377,
       EGL_RED_SIZE=12324, EGL_GREEN_SIZE=12323, EGL_BLUE_SIZE=12322, EGL_ALPHA_SIZE=12321,
-      EGL_RENDERABLE_TYPE=12352, EGL_SURFACE_TYPE=12339;
+      EGL_RENDERABLE_TYPE=12352, EGL_SURFACE_TYPE=12339, EGL_NATIVE_VISUAL_ID=12334, EGL_EXTENSIONS=12373,
+      EGL_WINDOW_BIT=4, EGL_OPENGL_ES2_BIT=4;
   public static final EGLDisplay EGL_NO_DISPLAY=new EGLDisplay();
   public static final EGLContext EGL_NO_CONTEXT=new EGLContext();
   public static final EGLSurface EGL_NO_SURFACE=new EGLSurface();
-  public static int red=8, green=8, blue=8, alpha=0, renderableType=4, surfaceType=4;
+  public static int red=8, green=8, blue=8, alpha=0, renderableType=4, surfaceType=4, nativeVisualId=1, colorComponentType=0x333A;
+  public static int returnedCount=1; public static String extensions="EGL_EXT_pixel_format_float";
   public static EGLDisplay eglGetCurrentDisplay(){ return new EGLDisplay(); }
   public static EGLContext eglGetCurrentContext(){ return new EGLContext(); }
   public static EGLSurface eglGetCurrentSurface(int which){ return new EGLSurface(); }
   public static boolean eglQueryContext(EGLDisplay d,EGLContext c,int attr,int[] value,int offset){ value[offset]=7; return true; }
   public static boolean eglQuerySurface(EGLDisplay d,EGLSurface s,int attr,int[] value,int offset){ value[offset]=7; return true; }
   public static int eglGetError(){ return 0; }
-  public static boolean eglChooseConfig(EGLDisplay d,int[] attrs,int attrsOffset,EGLConfig[] configs,int configsOffset,int size,int[] count,int countOffset){ configs[configsOffset]=new EGLConfig(); count[countOffset]=1; return true; }
+  public static String eglQueryString(EGLDisplay d,int name){ return extensions; }
+  public static boolean eglChooseConfig(EGLDisplay d,int[] attrs,int attrsOffset,EGLConfig[] configs,int configsOffset,int size,int[] count,int countOffset){
+    count[countOffset]=returnedCount;
+    if(configs==null || size==0) return true;
+    int n=Math.min(Math.min(size, returnedCount), configs.length-configsOffset);
+    for(int i=0;i<n;i++) configs[configsOffset+i]=new EGLConfig();
+    count[countOffset]=n;
+    return true;
+  }
   public static boolean eglGetConfigAttrib(EGLDisplay d,EGLConfig c,int attr,int[] value,int offset){
     switch(attr){
       case EGL_CONFIG_ID: value[offset]=7; break;
@@ -255,6 +288,8 @@ public class EGL14 {
       case EGL_ALPHA_SIZE: value[offset]=alpha; break;
       case EGL_RENDERABLE_TYPE: value[offset]=renderableType; break;
       case EGL_SURFACE_TYPE: value[offset]=surfaceType; break;
+      case EGL_NATIVE_VISUAL_ID: value[offset]=nativeVisualId; break;
+      case 0x3339: value[offset]=colorComponentType; break;
       default: return false;
     }
     return true;
@@ -304,12 +339,52 @@ private class Delegate : VideoDecoder {
     override fun getImplementationName() = "delegate"
 }
 
+private fun List<Int>.windowedValue(key: Int): Int? {
+    var index = 0
+    while (index + 1 < size) {
+        if (this[index] == EGL14.EGL_NONE) return null
+        if (this[index] == key) return this[index + 1]
+        index += 2
+    }
+    return null
+}
+
 fun main() {
     val request = GfnEglConfigProbe.webRtcPlainRequest()
     check(request.red == 8 && request.green == 8 && request.blue == 8)
     check(request.alpha == null)
 
+    val target = GfnEgl10BitConfig.rendererAttributes().toList()
+    check(GfnEgl10BitConfig.surfacePixelFormat == 43)
+    check(target.windowedValue(EGL14.EGL_RED_SIZE) == 10)
+    check(target.windowedValue(EGL14.EGL_GREEN_SIZE) == 10)
+    check(target.windowedValue(EGL14.EGL_BLUE_SIZE) == 10)
+    check(target.windowedValue(EGL14.EGL_ALPHA_SIZE) == 2)
+    check(target.windowedValue(EGL14.EGL_SURFACE_TYPE) == EGL14.EGL_WINDOW_BIT)
+    check(target.windowedValue(EGL14.EGL_RENDERABLE_TYPE) == EGL14.EGL_OPENGL_ES2_BIT)
+
+    EGL14.red = 10; EGL14.green = 10; EGL14.blue = 10; EGL14.alpha = 2
+    EGL14.surfaceType = EGL14.EGL_WINDOW_BIT; EGL14.renderableType = EGL14.EGL_OPENGL_ES2_BIT
+    EGL14.nativeVisualId = 43; EGL14.colorComponentType = GfnEgl10BitCapabilityProbe.EGL_COLOR_COMPONENT_TYPE_FIXED_EXT; EGL14.returnedCount = 1
+    val stageC0 = GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()
+    check(stageC0.supported) { stageC0 }
+    val selected = requireNotNull(stageC0.selected)
+    check(selected.isExactRgb10A2)
+    check(selected.nativeVisualMatchesRequestedSurfaceFormat == true)
+    check(!selected.isExplicitlyFloatColor)
+
+    EGL14.colorComponentType = GfnEgl10BitCapabilityProbe.EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT
+    val floatExact = GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()
+    check(!floatExact.supported && floatExact.selected == null)
+
+    EGL14.colorComponentType = GfnEgl10BitCapabilityProbe.EGL_COLOR_COMPONENT_TYPE_FIXED_EXT
+    EGL14.red = 16; EGL14.green = 16; EGL14.blue = 16; EGL14.alpha = 16
+    EGL14.nativeVisualId = 22
+    val nonExact = GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()
+    check(!nonExact.supported && nonExact.selected == null)
+
     EGL14.red = 8; EGL14.green = 8; EGL14.blue = 8; EGL14.alpha = 0
+    EGL14.nativeVisualId = 1; EGL14.returnedCount = 1
     val eight = requireNotNull(GfnEglConfigProbe.queryCurrentEgl14().snapshot)
     check(!eight.isAtLeastTenBitRgb)
     EGL14.red = 10; EGL14.green = 10; EGL14.blue = 10; EGL14.alpha = 2
@@ -331,6 +406,8 @@ fun main() {
     check(wrapper.implementationName == "delegate")
 
     println("V611_EGL_API_SHAPED_COMPILE=PASS")
+    println("V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS")
+    println("V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS")
     println("V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS")
     println("V611_DECODEINFO_NULL_JNI_FIXTURE=PASS")
     println("EGL_REQUEST=${request.red}/${request.green}/${request.blue} actual8=${eight.red}/${eight.green}/${eight.blue} actual10=${ten.red}/${ten.green}/${ten.blue}")
@@ -338,7 +415,7 @@ fun main() {
 KT
 
 kotlinc -J-Dfile.encoding=UTF-8 \
-  "$BITSTREAM" "$EGL" "$DIAG" "$BUILD/Profile.kt" "$BUILD/ApiFixture.kt" \
+  "$BITSTREAM" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG" "$DIAG" "$BUILD/Profile.kt" "$BUILD/ApiFixture.kt" \
   -cp "$BUILD/classes" -include-runtime -d "$BUILD/api.jar"
 java -cp "$BUILD/api.jar:$BUILD/classes" dev.gfn.webrtc.ApiFixtureKt
 
@@ -422,6 +499,11 @@ internal object GfnEglConfigProbe { fun queryCurrentEgl14() = GfnEglConfigProbeR
 internal object GfnHevc10BitDiagnostics {
     fun logPinnedWebRtcEglRequest() {}
     fun logRuntimeEglConfig(viewId: Int, result: GfnEglConfigProbeResult) { viewId.hashCode(); result.hashCode() }
+}
+internal data class GfnEgl10BitCapabilityResult(val supported: Boolean = true)
+internal object GfnEgl10BitCapabilityProbe { fun queryCurrentDisplayEgl14() = GfnEgl10BitCapabilityResult() }
+internal object Gfn10BitRenderDiagnostics {
+    fun logEgl10BitCapability(viewId: Int, result: GfnEgl10BitCapabilityResult) { viewId.hashCode(); result.hashCode() }
 }
 object GfnInputForensics {
     class KeyTrace

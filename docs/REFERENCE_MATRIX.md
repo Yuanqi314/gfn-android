@@ -307,3 +307,21 @@ original GFN Tier1 Offer
 + stable ~60fps
 = HEVC Main / SDR8 Production PASS
 ```
+
+---
+
+## HEVC — v6.1.1 Stage A/B true-device closeout and Stage C0
+
+| Layer | Evidence / source | Current decision | State |
+|---|---|---|---|
+| Actual elementary stream | `50.log:669` SPS | Main10 / High / 4:2:0 / luma10 / chroma10 | TRUE-DEVICE PASS |
+| M144 default EGL request | pinned `SurfaceViewRenderer` + `EglBase.CONFIG_PLAIN` | RGB888 request | PROVEN |
+| Runtime default EGL | `50.log:682,1096,1456` | R8 G8 B8 A0 | TRUE-DEVICE PROVEN |
+| DecodeInfo JNI contract | pinned M144 native wrapper + `50.log` no recurrence | nullable and forwarded unchanged | TRUE-DEVICE PASS |
+| Decoder output | `COLOR_FormatSurface` | Surface mode only; no P010/8-bit inference | bounded evidence |
+| RGB10A2 capability | Stage C0 two-pass `eglChooseConfig` on current display | Supported/Unsupported/Unresolved; exact fixed/non-float 10/10/10/2 WINDOW+GLES2 required | NEXT TRUE-DEVICE GATE |
+| Android native-window format | EGL native visual + `PixelFormat.RGBA_1010102` witness | dormant evidence; explicit `holder.setFormat` stays separately gated | NOT ACTIVE |
+| Custom EGL target | R10 G10 B10 A2 | activate only after C0 supported=true | NOT ACTIVE |
+| Source texture/buffer fidelity | BufferQueue / GraphicBuffer / SurfaceTexture | Stage C2 | NOT YET PROVEN |
+| Direct MediaCodec Surface | architecture-level fallback | only after texture path evidence requires it | NOT ACTIVE |
+| HDR | separate v6.2 milestone | OFF | FROZEN |

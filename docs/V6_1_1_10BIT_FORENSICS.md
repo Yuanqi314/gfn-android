@@ -1,12 +1,27 @@
 # GFN Android v6.1.1 — Main10 / SDR10 10-bit Forensics
 
-## 1. Purpose
+## 1. Current evidence state
 
-v6.1.0 is already TRUE-DEVICE PASS for Main10 capability, SDR10 Session request, profile-id=2 negotiation, bound H265 decoder creation and decode-to-frame. v6.1.1 does not reopen any of those variables.
+v6.1.0 negotiation is frozen and TRUE-DEVICE PASS. `50.log` additionally closes v6.1.1 Stage A/B:
 
-The unanswered question is narrower:
+```text
+Stage A actual HEVC SPS
+Main10 / High / 4:2:0
+bitDepthLuma=10
+bitDepthChroma=10
+TRUE-DEVICE PASS
 
-> Are the actual HEVC samples 10-bit, and where—if anywhere—does the current Android WebRTC render path reduce them to 8-bit?
+Stage B pinned M144 renderer
+CONFIG_PLAIN static request = RGB888
+runtime selected config = R8 G8 B8 A0
+TRUE-DEVICE PROVEN
+```
+
+Therefore the next question is no longer whether the incoming stream is 10-bit or whether the default final target is 8bpc. Both are proven.
+
+The remaining question is:
+
+> Can the existing WebRTC texture/render path be paired with a real 10bpc final target, and if so, does the source texture/buffer preserve 10-bit precision before that target?
 
 ## 2. Frozen chain
 
@@ -23,132 +38,167 @@ NVST bitDepth=10 / hdr=false
 exact decoder-component binding
 ```
 
-No v6.1.1 diagnostic is allowed to mutate the above chain.
+No v6.1.1 render diagnostic may mutate this chain.
 
-## 3. Stage A — `GfnHevcBitstreamProbe`
+## 3. Stage A — actual bitstream
 
-The probe decorates the selected H265 `VideoDecoder`. `decode(frame, info)` performs bounded synchronous inspection of `frame.buffer` and then invokes `delegate.decode(frame, info)` with the same object.
+`GfnHevcBitstreamProbe` decorates the selected H265 decoder. It synchronously inspects a duplicate/slice view of `EncodedImage.buffer` and forwards the same `EncodedImage` plus the same nullable M144 `DecodeInfo` to the exact delegate.
 
-### Byte ownership invariant
-
-```text
-caller EncodedImage object      unchanged
-caller ByteBuffer position      unchanged
-caller ByteBuffer limit         unchanged
-encoded bytes                   unchanged
-retain/release ownership        unchanged
-```
-
-The parser uses a duplicate/slice view only.
-
-### Packaging recognition
-
-Detection order:
+### Ownership invariant
 
 ```text
-1. Annex-B start codes (3 or 4 bytes)
-2. complete length-prefixed framing, length width 4/3/2/1
-3. single NAL fallback
-4. Unknown
+EncodedImage object              unchanged
+ByteBuffer position              unchanged
+ByteBuffer limit                 unchanged
+encoded bytes                    unchanged
+retain/release ownership         unchanged
+DecodeInfo nullability/identity  unchanged
 ```
 
-A framing candidate is accepted only when the whole buffer is structurally consumed; a coincidental prefix must not be treated as valid length framing.
-
-### SPS fields
-
-For NAL type 33:
+Supported framing:
 
 ```text
-NAL payload
--> EBSP to RBSP
--> sps_video_parameter_set_id
--> sps_max_sub_layers_minus1
--> profile_tier_level
--> sps_seq_parameter_set_id
--> chroma_format_idc
--> width / height / conformance window
--> bit_depth_luma_minus8
--> bit_depth_chroma_minus8
+Annex-B start code 3/4 byte
+length-prefixed NAL 1/2/3/4-byte length
+single NAL fallback
 ```
 
-Reported bit depth:
+SPS NAL type 33 parsing reaches:
 
 ```text
-bitDepthLuma   = bit_depth_luma_minus8 + 8
-bitDepthChroma = bit_depth_chroma_minus8 + 8
+profile_tier_level
+chroma_format_idc
+coded/display dimensions
+bit_depth_luma_minus8
+bit_depth_chroma_minus8
 ```
 
-Main10 evidence requires both to equal 10. `profileIdc=2` alone remains insufficient.
+`50.log:669` proves:
 
-## 4. Stage B — pinned M144 EGL closure
+```text
+profileIdc=2
+tier=1
+levelIdc=150
+chromaFormatIdc=1
+coded=1920x1088
+display=1920x1080
+bitDepthLuma=10
+bitDepthChroma=10
+tenBit=true
+```
 
-The current view still uses the existing two-argument WebRTC initializer. No custom config attributes are supplied.
+Stage A is closed PASS.
 
-Exact pinned source closure:
+## 4. Stage B — default M144 EGL closure
+
+Pinned M144:
 
 ```text
 SurfaceViewRenderer.init(sharedContext, rendererEvents)
--> init(..., EglBase.CONFIG_PLAIN, new GlRectDrawer())
-
-EglBase.CONFIG_PLAIN
--> ConfigBuilder.createConfigAttributes()
--> RED=8, GREEN=8, BLUE=8
+-> EglBase.CONFIG_PLAIN
+-> RED=8 GREEN=8 BLUE=8
 ```
 
-`GfnEglConfigProbe` then reads, but does not change:
+`GfnEglConfigProbe` queries the current render-thread EGLConfig without changing it.
+
+`50.log` proves the actual selected configuration three independent times:
 
 ```text
-current EGLDisplay
-current EGLContext
-current draw EGLSurface
-EGL_CONFIG_ID
-EGL_RED_SIZE
-EGL_GREEN_SIZE
-EGL_BLUE_SIZE
-EGL_ALPHA_SIZE
-EGL_RENDERABLE_TYPE
-EGL_SURFACE_TYPE
+configId=5
+red=8
+green=8
+blue=8
+alpha=0
+tenBitRgbTarget=false
 ```
 
-The query is dispatched through a zero-scale one-shot `SurfaceViewRenderer.addFrameListener`; in the pinned WebRTC renderer, frame-listener callbacks run on the render thread. A zero-size callback avoids pixel readback and exists only to gain render-thread/current-EGL timing.
+Stage B is closed: current default final target is RGB888 on the tested device.
 
-## 5. Current verdict semantics
+This still does **not** prove the MediaCodec producer or SurfaceTexture source is 8-bit. `COLOR_FormatSurface` only establishes Surface output mode.
 
-`BITSTREAM_SPS tenBit=true` proves the actual observed SPS requests 10-bit luma/chroma coding.
+## 5. Stage C0 — RGB10A2 capability
 
-`EGL_CONFIG red=8 green=8 blue=8` proves the current final EGL config is 8bpc at the renderer target.
-
-Neither statement alone proves where an earlier texture/buffer conversion occurred. Full v6.1.1 PASS still requires downstream preservation evidence or a render path whose precision is independently established.
-
-## 6. Escalation policy
-
-Do not introduce a renderer rewrite without evidence.
+Stage C0 is intentionally non-destructive. From the current renderer thread it calls only:
 
 ```text
-SPS10 + EGL8
--> custom 10-bit EGL/Surface candidate
-
-SPS10 + EGL10+
--> inspect source texture/GraphicBuffer path before changing renderer
-
-SPS8
--> server/session investigation, renderer unchanged
-
-SPS unresolved
--> framing/assembly/parser investigation
+eglChooseConfig
+eglGetConfigAttrib
 ```
 
-Direct `MediaCodec -> Surface` is a later fallback only if the WebRTC texture path is proven unable to preserve/expose the required precision.
-
-## 7. HDR boundary
-
-v6.1.1 remains SDR10 only:
+Target capability query:
 
 ```text
-PreferHdr10 OFF
-HDR Session OFF
-HDR metadata activation OFF
-HDR display activation OFF
+WINDOW_BIT
+GLES2
+R10 G10 B10 A2
 ```
 
-HDR10 remains v6.2.
+Candidate evidence includes:
+
+```text
+configId
+R/G/B/A
+renderableType
+surfaceType
+nativeVisualId
+colorComponentType (when EGL exposes it)
+```
+
+C0 uses an exact two-pass candidate enumeration and distinguishes `Supported`, `Unsupported` and `Unresolved`. An explicitly floating-point config is not silently classified as RGB10A2. The dormant Android format witness is `PixelFormat.RGBA_1010102`.
+
+No custom renderer is activated in C0. The existing runtime query must therefore still show RGB888 while the new capability log answers whether an exact RGB10A2 window config exists.
+
+## 6. Stage C1 activation gate
+
+Only after true-device:
+
+```text
+phase=EGL10_CAPABILITY
+status=Supported
+supported=true
+red=10 green=10 blue=10 alpha=2
+explicitFloat=false
+```
+
+may the next build change the renderer EGL config to `R10G10B10A2`. The decoder EGL context, SurfaceTexture production path, factory, negotiation and Surface lifecycle remain unchanged to preserve a single render-target variable.
+
+The first C1 build does **not** automatically add `SurfaceHolder.setFormat(RGBA_1010102)`. Android EGL window-surface creation derives/programs the native-window buffer format from the selected EGLConfig; explicit `setFormat()` is retained as a separately gated follow-up variable if true-device evidence shows a native-window mismatch or window-surface creation failure.
+
+C1 PASS requires runtime `EGL_CONFIG=10/10/10/2`; source request attributes are insufficient.
+
+## 7. Stage C2 remains required
+
+Even after a 10bpc final target is proven:
+
+```text
+10-bit encoded input     PASS
+10bpc target             PASS
+source texture precision UNKNOWN
+```
+
+Stage C2 must establish equivalent evidence for the producer/BufferQueue/GraphicBuffer/SurfaceTexture side. Absence of Java visibility is `UNKNOWN`, not 8-bit.
+
+## 8. Escalation policy
+
+```text
+C0 no exact RGB10A2 config
+-> do not activate C1
+
+C0 exact RGB10A2 config
+-> activate C1 only in next controlled build
+
+C1 runtime still RGB888 / window failure
+-> fail closed, record exact reason
+
+C1 runtime RGB10A2
+-> Stage C2 source-buffer forensics
+
+source path proven 8-bit or impossible to preserve/prove
+-> direct MediaCodec -> app-owned Surface evaluation
+```
+
+## 9. HDR and lifecycle boundaries
+
+HDR remains OFF through v6.1.1. RGB10A2 is an SDR10 precision experiment, not HDR10 activation.
+
+`Dropping frame - No surface` remains the separate fullscreen/Activity/Surface lifecycle backlog and is not changed during C0/C1.

@@ -1,21 +1,21 @@
-# GFN Android v6.1.1 — True-device 10-bit Forensics Test Guide
+# GFN Android v6.1.1 — Stage C0 RGB10A2 Capability Test Guide
 
 ## 1. Test profile
 
-Use the already proven v6.1.0 Session intent:
+Use the same frozen true-device profile that produced `50.log`:
 
 ```text
 codec = HEVC
-color = SDR10 / PreferSdr10
+color = PreferSdr10 / SDR10
 1920x1080@60
 HDR = OFF
 ```
 
-Do not change HDR or renderer settings for this test.
+Do not change fullscreen/surface lifecycle behavior for this run.
 
-## 2. First verify v6.1.0 did not regress
+## 2. Regression chain
 
-The log must still show the existing chain:
+The log must still contain:
 
 ```text
 RESOLVED codec=Hevc color=PreferSdr10
@@ -27,115 +27,123 @@ FINAL_ANSWER hevcMain10 != []
 fallback=false
 NVST_CONFIG bitDepth=10 hdr=false
 FIRST_VIDEO_RTP effective=Hevc targetProfile=2
-bound H265 decoder
-FIRST_FRAME effective=Hevc
+FIRST_FRAME effective=Hevc targetProfile=2
 ```
 
-If this chain regresses, stop: v6.1.1 diagnostics must not be used to hide a negotiation regression.
+## 3. Stage A regression
 
-## 3. Stage A — SPS
-
-Search for:
+Expect:
 
 ```text
 GfnHevc10Bit phase=BITSTREAM_SPS
-```
-
-Main10/SDR10 positive evidence:
-
-```text
 profileIdc=2
+chromaFormatIdc=1
 bitDepthLuma=10
 bitDepthChroma=10
 tenBit=true
 ```
 
-Also record:
+If this changes, stop and investigate the Session/server stream before any renderer work.
+
+## 4. Stage B regression
+
+Because C1 is still inactive, expect the current renderer to remain RGB888:
 
 ```text
-packaging
-levelIdc
-chromaFormatIdc
-coded width/height
-display width/height
-```
-
-If the only result is:
-
-```text
-phase=BITSTREAM_SPS_UNRESOLVED
-```
-
-then there is no bit-depth verdict. Preserve the log and inspect framing/frame assembly/parser coverage.
-
-If the parsed SPS says 8/8-bit, do not modify EGL; investigate the Session/server stream first.
-
-## 4. Stage B — static request log
-
-Expect once per process:
-
-```text
-GfnHevc10Bit phase=EGL_REQUEST
+phase=EGL_REQUEST
 source=WebRTC_M144_CONFIG_PLAIN
 red=8 green=8 blue=8
 ```
 
-This confirms the app is still using the frozen default WebRTC renderer request and has not silently switched to a custom config.
-
-## 5. Stage B — runtime selected config
-
-After rendered frames begin, expect one-shot:
+and:
 
 ```text
-GfnHevc10Bit phase=EGL_CONFIG
-success=true
-configId=...
-red=...
-green=...
-blue=...
-alpha=...
-tenBitRgbTarget=...
+phase=EGL_CONFIG
+red=8 green=8 blue=8
+alpha=0
+tenBitRgbTarget=false
 ```
 
-Do not infer the runtime value from the static request; use the actual log.
+If runtime EGL becomes 10bpc in C0, verify the binary/source first; Stage C0 itself does not activate a custom renderer.
 
-## 6. Decision table
+## 5. Stage C0 result
+
+Search for:
 
 ```text
-SPS 8/8
--> incoming stream not proven 10-bit
--> Session/server investigation
-
-SPS 10/10 + EGL 8/8/8
--> incoming stream is 10-bit
--> final default EGL target is 8bpc
--> next candidate: custom 10-bit EGL target
-
-SPS 10/10 + EGL >=10/10/10
--> keep current renderer
--> continue source texture/buffer preservation forensics
-
-SPS unresolved
--> parser/framing investigation
-
-EGL_CONFIG query failure
--> renderer/EGL query instrumentation investigation
+GfnHevc10Bit phase=EGL10_CAPABILITY
 ```
 
-## 7. What is still not a PASS
-
-These are insufficient by themselves:
+The log now includes:
 
 ```text
-profile-id=2
-CloudMatch bitDepth=1
-NVST bitDepth=10
-FIRST_FRAME
-hdr-static-info=<buffer>
+status=Supported|Unsupported|Unresolved
+supported=true|false
+probeRequest=R10G10B10A2
+candidateSurface=RGBA_1010102
+surfacePixelFormat=43
+candidateCount=...
+inspectedCount=...
 ```
 
-They do not prove final 10-bit render fidelity.
+### Positive gate
 
-## 8. HDR / Surface boundaries
+C1 becomes eligible only when the same record contains:
 
-HDR remains OFF throughout this test. `EglRenderer: Dropping frame - No surface` stays a separate lifecycle backlog unless it prevents the one-shot EGL query or stable rendering.
+```text
+status=Supported
+supported=true
+red=10
+green=10
+blue=10
+alpha=2
+explicitFloat=false
+```
+
+Also preserve:
+
+```text
+configId
+renderableType
+surfaceType
+nativeVisualId
+nativeVisualMatchesSurface
+colorComponentType
+```
+
+`nativeVisualMatchesSurface=false` or `UNKNOWN` is a separate native-window compatibility observation. Do not automatically convert it into either PASS or FAIL.
+
+### `status=Unsupported`
+
+The probe completed its enumeration and found no exact usable fixed/non-float R10G10B10A2 WINDOW+GLES2 candidate. Do not activate C1.
+
+### `status=Unresolved`
+
+Evidence collection failed or was incomplete. Do not interpret this as hardware/driver lack of RGB10A2 support. Preserve the `reason` and fix the probe/environment first.
+
+## 6. C1 remains inactive in this build
+
+For the Stage C0 APK, source/runtime must still show:
+
+```text
+SurfaceViewRenderer.init(sharedContext, rendererEvents)  // existing M144 CONFIG_PLAIN path
+holder.setFormat(RGBA_1010102)                           // NOT CALLED
+custom RGB10A2 renderer attributes                       // NOT ACTIVE
+```
+
+If C0 returns `Supported`, the next controlled build should first activate only the custom EGL R10G10B10A2 renderer configuration. Keep explicit `SurfaceHolder.setFormat(RGBA_1010102)` as a separately gated experiment unless native-window evidence requires it.
+
+## 7. Crash guard
+
+The `DecodeInfo` hotfix remains mandatory. There must be no recurrence of:
+
+```text
+GfnHevcBitstreamProbeVideoDecoder.decode parameter info
+NullPointerException
+jvm.cc CHECK
+SIGABRT
+```
+
+## 8. Surface lifecycle
+
+`Dropping frame - No surface` remains a separate backlog. Do not mix lifecycle changes into the C0/C1 bit-depth experiment unless it prevents the capability/runtime evidence from being collected.

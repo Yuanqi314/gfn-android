@@ -1,19 +1,35 @@
-GFN Android v6.1.1 - 10-bit Forensics Stage A/B static verification
-Baseline: v6.1.0 clean package corresponding to GitHub e0f60f8c9120fc8c7bd11e425079358232c4ae09
+GFN Android v6.1.1 - Stage C0 RGB10A2 capability static verification
+Current repository reference: GitHub 2fbb17946dfb2de93340af2504e5efd291380507 (fix 10bit)
 Version: 0.6.1.1-dev / code 24
 
-Scope:
-- v6.1.0 Main10/SDR10 negotiation is frozen.
-- Stage A adds read-only actual HEVC SPS/bit-depth forensics before the existing decoder.
-- Stage B adds exact pinned-M144 CONFIG_PLAIN closure plus read-only runtime EGLConfig query.
-- No custom RGB10/P010 renderer and no HDR activation are enabled.
+True-device evidence already closed before this build:
+- v6.0.4 Main/SDR8 production = PASS (45.log)
+- v6.1.0 Main10/SDR10 capability + negotiation + decode-to-frame = PASS (46.log)
+- v6.1.1 DecodeInfo JNI-null hotfix = PASS (50.log)
+- v6.1.1 Stage A actual SPS = Main10 / 4:2:0 / luma10 / chroma10 = PASS (50.log)
+- v6.1.1 Stage B default M144 final EGL target = R8 G8 B8 A0 = PROVEN (50.log)
 
-Dedicated v6.1.1 verifier:
+Stage C0 implementation boundary:
+- Read-only eglChooseConfig/eglGetConfigAttrib on the existing current EGLDisplay.
+- Exact two-pass candidate enumeration; >4096 candidate count is Unresolved, not Unsupported.
+- Candidate evidence includes config id, R/G/B/A, renderable/surface bits, native visual id.
+- EGL_COLOR_COMPONENT_TYPE_EXT is read when the driver advertises the pixel-format-float extension.
+- Explicit floating-point candidates are not classified as fixed/non-float RGB10A2.
+- Result states are Supported / Unsupported / Unresolved.
+- Dormant C1 R10G10B10A2 contract exists but is not connected to the production renderer.
+- No SurfaceHolder.setFormat(RGBA_1010102) activation in C0.
+- No eglCreateContext / eglCreateWindowSurface / eglMakeCurrent / EGL state mutation in the C0 probe.
+- HDR remains OFF.
+
+Dedicated v6.1.1 Stage C0 verifier:
 V611_HEVC_10BIT_SOURCE_GUARDS=PASS
 V611_HEVC_SPS_PARSER_FIXTURE=PASS
 SPS profile=2 tier=1 level=153 coded=1920x1088 display=1920x1080 bitDepth=10/10
 V611_EGL_API_SHAPED_COMPILE=PASS
+V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS
+V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS
 V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS
+V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
 EGL_REQUEST=8/8/8 actual8=8/8/8 actual10=10/10/10
 V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
 V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS
@@ -34,7 +50,7 @@ MATCHED_MAIN=[103] MATCHED_MAIN10=[107]
 V604_HEVC_PRODUCTION_VERIFY=PASS
 V610_MAIN10_PRODUCTION_VERIFY=PASS
 
-Answer lineage:
+Answer lineage regression:
 V604_HEVC_LINEAGE_SOURCE_GUARD=PASS
 V610_MAIN10_LINEAGE_SOURCE_GUARD=PASS
 V604_HEVC_ANSWER_LINEAGE_FIXTURE=PASS
@@ -43,7 +59,7 @@ MATCHED_MAIN=[103] MATCHED_MAIN10=[107]
 V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
 V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
 
-Main10 cross-layer Session regression:
+Main10 cross-layer regression:
 V610_MAIN10_CROSS_LAYER_SOURCE_GUARDS=PASS
 V610_MAIN10_SETTINGS_SNAPSHOT_FIXTURE=PASS
 PROFILE=1920x1080@60 20Mbps codec=Hevc color=PreferSdr10 audio=2ch keyboard=en-US language=en_US
@@ -51,18 +67,11 @@ V610_MAIN10_CLOUDMATCH_SDR10_FIXTURE=PASS
 V610_HDR_SESSION_ACTIVATION_OFF=PASS
 V610_MAIN10_VERIFY=PASS
 
-Engine API-shaped compile:
+WebRTC Engine API-shaped compile:
 V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
 V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
 V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
 V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
-
-Stream Settings regression:
-V520_STREAM_SETTINGS_RESOLVER=PASS
-V520_STREAM_SETTINGS_STORE=PASS
-V520_SESSION_PROFILE_PERSISTENCE=PASS
-V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
-V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
 
 Audio regression:
 V540_AUDIO_SNAPSHOT_CHAIN=PASS
@@ -80,22 +89,20 @@ V600_HEVC_SETTINGS_FIXTURE=PASS
 V600_HEVC_STORE_FIXTURE=PASS
 V600_HEVC_VERIFY=PASS
 
+Stream Settings regression note:
+- The existing verify-stream-settings.sh process still exhibits the pre-existing long-running/process-handling behavior in this environment.
+- Prior run on the same production source reached resolver/store/session-profile PASS before timeout.
+- The production controller was separately compiled with the script's exact stubs and passed.
+- Stage C0 does not modify Stream Settings source.
+- Therefore the Stage C0 result does not claim a fresh normal completion of verify-stream-settings.sh.
+
 Final source audit:
+C1_SURFACE_FORMAT_ACTIVATION=OFF
+C1_CUSTOM_EGL_ACTIVATION=OFF
+HDR activation path=OFF; the only PreferHdr10 production-source hit is the explicit validation rejection.
+RUNTIME_TIER_REWRITE_DECODER_PT_HARDCODE=NONE
 SHELL_SYNTAX=PASS
 TRAILING_WHITESPACE_COUNT=0
-RUNTIME_TIER_REWRITE_RESIDUE=NONE
-HARDCODED_HEVC_DECODER=NONE
-HARDCODED_GFN_HEVC_PT=NONE
-CUSTOM_10BIT_RENDER_TARGET=OFF
-HDR_SESSION_ACTIVATION=OFF
-V611_VERSION_AND_CORE_HOOK=PASS
-
-Exact WebRTC M144 source closure:
-- Dependency remains api("io.github.webrtc-sdk:android:144.7559.09").
-- Source closure used: webrtc-sdk/webrtc b1800a61db8320af5c14456c13622d8b85b1ed39.
-- SurfaceViewRenderer.init(sharedContext, rendererEvents) delegates to EglBase.CONFIG_PLAIN.
-- EglBase.CONFIG_PLAIN requests RED=8, GREEN=8, BLUE=8.
-- Runtime selected EGLConfig is intentionally NOT assumed; true-device EGL_CONFIG log is required.
 
 Android Gradle build attempt:
 sh ./gradlew :app:compileDebugKotlin --no-daemon
@@ -103,39 +110,25 @@ GRADLE_EXIT=6
 BLOCKED BEFORE COMPILATION: curl could not resolve services.gradle.org while downloading Gradle 9.5.0.
 Full Android/Kotlin Gradle compile is NOT claimed PASS.
 
-Known pre-existing baseline verifier inconsistency:
-verify-keyboard-stable.sh packet fixture = PASS, then script exits 1 because it requires
-stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt to be absent.
-The exact v6.1.0 baseline already contains that file, and v6.1.1 does not modify it.
-Full verify-core.sh is therefore NOT claimed green and this unrelated historical residue is not deleted to fabricate a pass.
+Known unrelated baseline verifier inconsistency:
+verify-keyboard-stable.sh historically passes its packet fixture and then exits because it requires
+GfnKeyboardWireMode.kt to be absent even though the exact baseline already contains that file.
+Stage C0 does not touch that file; it is not removed to fabricate a green aggregate verifier.
 
-True-device state:
-v6.0.4 Main/SDR8 = TRUE-DEVICE PRODUCTION PASS (45.log).
-v6.1.0 Main10/SDR10 capability + Session request + negotiation + decode-to-frame = TRUE-DEVICE PASS (46.log).
-v6.1.1 Stage A/B implementation = READY FOR TRUE-DEVICE FORENSICS.
-v6.1.1 full 10-bit decode/output/render fidelity = NOT YET VERIFIED.
-HDR10 = OFF / v6.2.
+Next true-device gate:
+GfnHevc10Bit phase=EGL10_CAPABILITY
+- status=Supported + exact red=10 green=10 blue=10 alpha=2 + explicitFloat=false -> C1 becomes eligible.
+- status=Unsupported -> do not activate C1.
+- status=Unresolved -> fix evidence collection; do not infer lack of RGB10A2 support.
 
-47.log / tombstone_12 JNI nullability crash correction
-------------------------------------------------------
-Observed true-device exception before SIGABRT:
-java.lang.NullPointerException: Parameter specified as non-null is null:
-GfnHevcBitstreamProbeVideoDecoder.decode, parameter info
+C1 / C2 remain NOT TRUE-DEVICE VERIFIED in this package.
 
-Pinned M144 source contract:
-video_decoder_wrapper.cc constructs an empty ScopedJavaLocalRef<jobject> decode_info and passes it to Java_VideoDecoder_decode.
-Therefore DecodeInfo is nullable in the real JNI call path despite the unannotated Java interface.
-
-Correction:
-GfnHevcBitstreamProbeVideoDecoder.decode(frame, info: VideoDecoder.DecodeInfo?)
-The same nullable info is forwarded unchanged; no synthetic DecodeInfo is created.
-
-Post-fix:
-V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
-V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
-V604_HEVC_PRODUCTION_VERIFY=PASS
-V610_MAIN10_PRODUCTION_VERIFY=PASS
-V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
-V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
-V610_MAIN10_VERIFY=PASS
-V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
+GitHub 2fbb179 baseline blob cross-check for existing files changed by this patch:
+README.md = ba8c1cf38a427f2d06b315eb6e73fef80a878809
+REFERENCE_MATRIX.md = 15e1c414a3284f483bf6d42ae62b4b64d7776706
+STATUS.md = 2c8a41dbdaa1e44ad4e5f415e6f87fdd5fd689b0
+V6_1_1_10BIT_FORENSICS.md = 0a00cb075cc958b70c7fee006f487775a18bdf49
+V6_1_1_TEST_GUIDE.md = 147b381d069154cb7676f396fb5606d3640f2b58
+GfnVideoSurfaceView.kt = 0a29ee91513cf6de79358dfaf26891f098ae5299
+verify-hevc-10bit-forensics.sh = cfaeba89188d3c4dff8a2cc40e966c2f897b5de6
+All listed local baseline blobs match GitHub commit 2fbb17946dfb2de93340af2504e5efd291380507.

@@ -1,47 +1,47 @@
-# GFN Android Lab · v6.0.4 HEVC Main Production Capability
+# GFN Android Lab · v6.1.1 Main10 / SDR10 10-bit Forensics
 
-这是一个独立 Android GeForce NOW 客户端实验工程。v6.0.3 真机已经完成 HEVC Main / SDR8 的 negotiated + decoded + rendered 实验闭环；v6.0.4 的目标是删除 `tier-flag=1 -> 0` 实验 rewrite，依赖 Android 真实 HEVC High-Tier capability 与原始 GFN Tier1 Offer 自然协商。Main10/HDR/AV1 继续冻结。
+这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 **HEVC Main / SDR8 Production PASS**；`46.log` 已关闭 v6.1.0 **Main10 / SDR10 capability + negotiation TRUE-DEVICE PASS**；`50.log` 已关闭 v6.1.1 Stage A/B：实际 SPS 为 Main10 4:2:0 10/10-bit，而 pinned WebRTC M144 默认最终 EGL target 真机为 RGB888。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.0.4 本轮新增
+## v6.1.1 当前阶段：Stage C0
 
 ```text
-MediaCodecList / MediaCodecInfo.profileLevels
+actual HEVC SPS = 10-bit
++ runtime default EGL = RGB888
         ↓
-explicit Main / High / normalized maxLevel
+Stage C0 read-only eglChooseConfig
+R10 G10 B10 A2 + WINDOW + GLES2
         ↓
-size-rate / bitrate safety gate
-        ↓
-GfnHevcAwareVideoDecoderFactory
-        ↓
-explicit H265 profile-id=1;tier-flag=1;level-id=<real max>
-        ↓
-exact MediaCodec component binding
-        ↓
-original GFN Main / High-Tier Offer
-        ↓
-profile + tier + tx-mode + level intersection
-        ↓
-createAnswer
-        ↓
-HEVC or same-session H264 fallback
+Supported / Unsupported / Unresolved
+        ↓ Supported
+下一构建才激活 Stage C1 custom EGL RGB10A2
 ```
 
-生产路径不再修改 GFN 的 H265 `profile-id/tier-flag/level-id`。Android HEVC Main/High Tier level 常量通过显式映射转换成项目内部顺序模型，禁止直接用常量整数大小推导 level。
+Stage C0 使用两遍 `eglChooseConfig` 完整枚举候选，并在 EGL 扩展可用时读取 color-component type，避免把浮点 config 误判为固定点 RGB10A2。当前 production View **不会**调用 `SurfaceHolder.setFormat(RGBA_1010102)`，也不会把 `SurfaceViewRenderer` 切换到 custom config；`GfnEgl10BitConfig` 仅作为 dormant C1 contract 存在。
+
+Stage C1 的第一版也继续坚持单变量：先只切 custom EGL R10G10B10A2；显式 `SurfaceHolder.setFormat()` 只有在真机 native-window 证据要求时才作为下一变量加入。HDR 继续 OFF；direct `MediaCodec -> Surface` 仍是更后面的架构级 fallback。
 
 验证入口：
 
 ```text
+sh ./verify-hevc-10bit-forensics.sh
 sh ./verify-hevc-production.sh
-sh ./verify-hevc.sh
 sh ./verify-hevc-answer-lineage.sh
+sh ./verify-main10.sh
 sh ./verify-reconnect-engine.sh
 sh ./verify-audio.sh
-sh ./verify-stream-settings.sh
+sh ./verify-hevc.sh
 ```
 
-详细见 `docs/V6_0_4_HEVC_MAIN_PRODUCTION_CAPABILITY.md`、`docs/STATUS.md`、`docs/REFERENCE_MATRIX.md`。完整 Gradle/APK build 仍受本地 Gradle 9.5.0 是否可用影响；离线验证不能替代下一次真机 production PASS。
+详细见：
+
+```text
+docs/STATUS.md
+docs/V6_1_1_10BIT_FORENSICS.md
+docs/V6_1_1_STAGE_C_RGB10A2.md
+docs/V6_1_1_TEST_GUIDE.md
+```
 
 ## v6.0 历史基线
 
