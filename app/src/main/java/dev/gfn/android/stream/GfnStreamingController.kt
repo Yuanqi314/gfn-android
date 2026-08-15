@@ -6,10 +6,12 @@ import android.os.Looper
 import android.util.Log
 import dev.gfn.android.session.StreamReconnectSessionResult
 import dev.gfn.android.settings.ResolvedLaunchProfile
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.stream.ReconnectDiagnostics
 import dev.gfn.stream.StreamDiagnostics
 import dev.gfn.stream.StreamState
+import dev.gfn.stream.VideoCodecPreference
 import dev.gfn.webrtc.GfnVideoSurfaceView
 import dev.gfn.webrtc.GfnWebRtcEngine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,6 +96,16 @@ class GfnStreamingController(
 
     fun unbindVideoOutput(view: GfnVideoSurfaceView) {
         engine.unbindVideoOutput(view)
+    }
+
+    /**
+     * Stage C1 is scoped strictly to the immutable Session snapshot. Never consult live Settings
+     * here: reconnect/fullscreen recreation must rebuild the same render-target intent.
+     */
+    fun shouldUseRgb10A2RenderTarget(): Boolean {
+        val config = frozenProfile?.streamConfig ?: return false
+        return config.codec == VideoCodecPreference.Hevc &&
+            config.colorMode == RequestedColorMode.PreferSdr10
     }
 
     override fun onUpdated(state: StreamState, diagnostics: StreamDiagnostics) {

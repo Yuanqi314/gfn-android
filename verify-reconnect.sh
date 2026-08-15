@@ -449,9 +449,11 @@ import android.os.Handler
 import dev.gfn.android.session.StreamReconnectSessionResult
 import dev.gfn.android.settings.ResolvedLaunchProfile
 import dev.gfn.android.stream.GfnStreamingController
+import dev.gfn.core.model.RequestedColorMode
 import dev.gfn.core.model.SessionInfo
 import dev.gfn.stream.StreamConfig
 import dev.gfn.stream.StreamState
+import dev.gfn.stream.VideoCodecPreference
 import dev.gfn.webrtc.GfnWebRtcEngine
 
 private class FakeContext : Context()
@@ -483,6 +485,7 @@ fun main() {
     )
     val engine = GfnWebRtcEngine.last
     controller.connectClaimedSession(original, profile)
+    check(!controller.shouldUseRgb10A2RenderTarget())
     check(engine.connectSessionIds == listOf("same-session"))
 
     engine.emitSteadyFirstFrame()
@@ -558,7 +561,20 @@ fun main() {
     check(controller.diagnostics.value.video.firstFrameRendered)
     check(controller.diagnostics.value.input.protocolReady)
 
+    val main10Controller = GfnStreamingController(context = FakeContext())
+    main10Controller.connectClaimedSession(
+        original,
+        profile.copy(
+            streamConfig = profile.streamConfig.copy(
+                codec = VideoCodecPreference.Hevc,
+                colorMode = RequestedColorMode.PreferSdr10,
+            ),
+        ),
+    )
+    check(main10Controller.shouldUseRgb10A2RenderTarget())
+
     println("V521_STREAM_RECONNECT_STATE_MACHINE=PASS")
+    println("V611_STAGE_C1_FROZEN_PROFILE_TARGET_POLICY=PASS")
     println("CONNECT_SESSION_IDS=${engine.connectSessionIds.joinToString()}")
     println("PREPARE_RECONNECT_COUNT=${engine.prepareReconnectCount}")
     println("RECOVERY_CALLS=$recoveryCalls")

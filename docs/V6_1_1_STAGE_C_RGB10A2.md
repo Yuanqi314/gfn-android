@@ -1,164 +1,144 @@
 # GFN Android v6.1.1 — Stage C RGB10A2
 
-## 1. Evidence that justifies Stage C
-
-`50.log` closes both prerequisites:
+## 1. Evidence chain
 
 ```text
-Stage A:
-actual SPS = Main10 / 4:2:0 / luma10 / chroma10
-
-Stage B:
-current M144 runtime EGLConfig = R8 G8 B8 A0
+50.log: actual HEVC SPS = Main10 / 4:2:0 / luma10 / chroma10
+50.log: current M144 final EGL = R8 G8 B8 A0
+51.log: exact fixed RGB10A2 window capability exists
+user manual true-device reconnect test: disconnect/reconnect recovered normally
 ```
 
-Therefore a custom >=10bpc final render target is justified. The exact earlier 10->8 conversion point remains unknown.
+The reconnect result above is operator-reported in this conversation and is not treated as a substitute for line-addressable log evidence. It is sufficient to remove the known reconnect blocker before changing the render-target variable.
 
-## 2. Stage C0 — read-only capability probe
+## 2. Stage C0 closeout
 
-Stage C0 must not alter the renderer. `GfnEgl10BitCapabilityProbe` runs from the existing zero-scale render-thread callback and uses the already-current EGLDisplay.
-
-Probe attributes:
+The tested device reported:
 
 ```text
-EGL_SURFACE_TYPE      = EGL_WINDOW_BIT
-EGL_RENDERABLE_TYPE   = EGL_OPENGL_ES2_BIT
-EGL_RED_SIZE          = 10
-EGL_GREEN_SIZE        = 10
-EGL_BLUE_SIZE         = 10
-EGL_ALPHA_SIZE        = 2
-```
-
-The probe performs a two-pass `eglChooseConfig` query: first obtain the exact candidate count, then inspect every returned candidate within a defensive 4096-config bound. A count beyond that bound is `Unresolved`, not `Unsupported`.
-
-For returned candidates it reads:
-
-```text
-EGL_CONFIG_ID
-EGL_RED_SIZE
-EGL_GREEN_SIZE
-EGL_BLUE_SIZE
-EGL_ALPHA_SIZE
-EGL_RENDERABLE_TYPE
-EGL_SURFACE_TYPE
-EGL_NATIVE_VISUAL_ID
-EGL_COLOR_COMPONENT_TYPE_EXT (when advertised by the EGL extension string)
-```
-
-The color-component type matters because an R/G/B/A channel-size match alone must not silently classify a floating-point config as RGB10A2. `FLOAT_EXT` candidates are excluded from the fixed/non-float RGB10A2 selection.
-
-Stage C0 produces one of three states:
-
-```text
-Supported
-  exact R10/G10/B10/A2 + WINDOW + GLES2 candidate exists
-  and it is not explicitly floating-point
-
-Unsupported
-  complete enumeration finished and no exact usable candidate exists
-
-Unresolved
-  EGL query failed, enumeration was incomplete, or the defensive candidate bound was exceeded
-```
-
-`Unsupported` and `Unresolved` are deliberately different. Missing evidence is never converted into a negative capability verdict.
-
-No `eglCreateContext`, `eglCreateWindowSurface`, `eglMakeCurrent`, `eglDestroy*`, `holder.setFormat()` or renderer re-init occurs in C0.
-
-## 3. Stage C0 TRUE-DEVICE PASS (`51.log`)
-
-The tested device returned:
-
-```text
-phase=EGL10_CAPABILITY
-status=Supported
-supported=true
 configId=65
-red=10 green=10 blue=10 alpha=2
+R10 G10 B10 A2
+WINDOW + GLES2
 nativeVisualId=43
 nativeVisualMatchesSurface=true
 explicitFloat=false
 ```
 
-The same run still used the existing RGB888 production renderer and reached FIRST_FRAME. Stage C0 is therefore closed as TRUE-DEVICE PASS.
+Stage C0 is TRUE-DEVICE PASS.
 
-`51.log` later exposed an independent reconnect black-screen bug: stale `FirstFrame/Connected` state canceled the DISCONNECTED grace before ICE/PC or media were actually healthy. C1 activation is temporarily paused until that reconnect fix is true-device verified; this preserves the C1 render-target A/B as a single controlled variable.
+## 3. Stage C1 activation scope
 
-## 4. C1 contract is present but inactive
-
-`GfnEgl10BitConfig` defines the future RGB10A2 render-target contract:
+Stage C1 is active only when the frozen Session profile is:
 
 ```text
-EGL render target: R10 G10 B10 A2 + WINDOW + GLES2
-Android format witness: PixelFormat.RGBA_1010102
+VideoCodecPreference.Hevc
+RequestedColorMode.PreferSdr10
 ```
 
-The production view does not use these attributes yet. This is deliberate: true-device Stage C0 evidence is the activation gate.
+The decision is derived from `GfnStreamingController.frozenProfile`, not live Settings. Fullscreen recreation and reconnect therefore retain the same render-target intent.
 
-The Android native-window format must not be guessed from the Java constant alone. Stage C0 therefore records `EGL_NATIVE_VISUAL_ID` as independent evidence and preserves `UNKNOWN` when it cannot be resolved.
+SDR8/H264 views remain on the exact M144 default two-argument `SurfaceViewRenderer.init(sharedContext, rendererEvents)` path.
 
-## 5. C1 activation rule — keep the first experiment single-variable
+## 4. Pre-init exact-config gate
 
-The RGB10A2 capability prerequisite is now satisfied by `51.log`. C1 may activate only after the reconnect black-screen repair is also true-device verified; then it may activate the custom `SurfaceViewRenderer.init(..., configAttributes, GlRectDrawer())` overload with the R10G10B10A2 attributes.
-
-The first C1 experiment should change **only the renderer EGLConfig** while leaving the existing decoder EGL context, decoder SurfaceTexture path, PeerConnection factory and Surface lifecycle unchanged.
-
-An explicit:
+The shared WebRTC EGL root is initialized first. Stage C1 then performs a default-display selection-only query using the same exact C0 classifier. It must find:
 
 ```text
-holder.setFormat(PixelFormat.RGBA_1010102)
+exact R10/G10/B10/A2
+EGL_WINDOW_BIT
+EGL_OPENGL_ES2_BIT
+not explicitly FLOAT_EXT
+nativeVisual == PixelFormat.RGBA_1010102
 ```
 
-is not treated as an unconditional prerequisite in the first C1 build. Android EGL window-surface creation already derives/programs the native-window buffer format from the chosen EGLConfig. `SurfaceHolder.setFormat()` remains a separately gated follow-up variable if true-device evidence shows a native-window format mismatch or EGL window-surface creation failure. If used later, it must be called on the SurfaceView window thread.
+If this gate fails or is unresolved, custom activation is refused and the view falls back to M144 RGB888 with an explicit diagnostic.
 
-This refinement avoids changing both the EGLConfig and Java Surface format in the same first C1 A/B.
+The selected dynamic `EGL_CONFIG_ID` is inserted into the renderer attribute list. This is intentional: EGL channel-size attributes are selection constraints, and C1 must not assume WebRTC's one-config `eglChooseConfig` call will return the exact candidate that C0 inspected.
 
-## 6. C1 PASS gate
+## 5. Custom M144 renderer path
 
-Requested configuration is not sufficient. True-device runtime evidence must show:
+C1 uses the existing upstream overload:
 
 ```text
-EGL_CONFIG
-red=10
-green=10
-blue=10
-alpha=2
-tenBitRgbTarget=true
+SurfaceViewRenderer.init(sharedContext, rendererEvents, configAttributes, GlRectDrawer)
 ```
 
-The log must also preserve the selected config ID, renderable/surface bits, `nativeVisualId`, and any available color-component-type evidence.
-
-At the same time all frozen gates must remain true:
+The config contains:
 
 ```text
-SPS luma/chroma 10/10
-Main10 negotiation
-fallback=false
-bound c2.qti.hevc.decoder
-FIRST_VIDEO_RTP
-FIRST_FRAME
-stable rendering
-HDR=false
+EGL_CONFIG_ID       = preflight selected id
+EGL_SURFACE_TYPE    = WINDOW
+EGL_RENDERABLE_TYPE = GLES2
+EGL_RED_SIZE        = 10
+EGL_GREEN_SIZE      = 10
+EGL_BLUE_SIZE       = 10
+EGL_ALPHA_SIZE      = 2
 ```
 
-If custom EGL activation fails or runtime still selects RGB888, C1 fails closed. It may retain the known RGB888 path for visibility during experimentation, but diagnostics must not call that a 10-bit render PASS.
+No custom shader/drawer is introduced; `GlRectDrawer` remains the pinned M144 drawer class.
 
-## 7. Stage C1 is not full fidelity PASS
+## 6. Surface format remains a separate variable
 
-If C1 succeeds:
+C1 first build does **not** call:
 
 ```text
-10-bit encoded source    PASS
-10bpc final target       PASS
-source texture fidelity  UNKNOWN
+SurfaceHolder.setFormat(PixelFormat.RGBA_1010102)
 ```
 
-Stage C2 must then inspect the producer/BufferQueue/GraphicBuffer/SurfaceTexture side. Do not infer source precision from `COLOR_FormatSurface`.
+`EGL_NATIVE_VISUAL_ID` already matched the Android `RGBA_1010102` constant on the tested device. The actual `SurfaceHolder.Callback.surfaceChanged()` format is now logged as `phase=SURFACE_FORMAT`. If runtime proves a mismatch or `eglCreateWindowSurface` fails, explicit `holder.setFormat()` becomes a separately isolated C1b experiment.
 
-## 8. Direct MediaCodec -> Surface remains gated
+## 7. Diagnostics
 
-Do not switch architecture in C0/C1. Direct output is considered only if the existing WebRTC texture path is proven to have already lost precision or cannot expose equivalent preservation evidence.
+New/continued records:
 
-## 9. HDR boundary
+```text
+phase=EGL10_PREFLIGHT       pre-init exact config gate
+phase=EGL_TARGET_REQUEST    requested vs actually configured target
+phase=SURFACE_FORMAT        native Surface callback format
+phase=EGL_CONFIG            actual current runtime EGLConfig
+phase=EGL_TARGET_ACTIVE     exact RGB10A2 runtime verdict
+phase=EGL10_CAPABILITY      post-render capability witness
+```
 
-HDR remains OFF. RGB10A2 here is an SDR10 precision experiment, not HDR10 activation.
+For C1 PASS, `EGL_TARGET_REQUEST active=RGB10A2` is necessary but insufficient. The decisive record is runtime `EGL_CONFIG=10/10/10/2` plus `EGL_TARGET_ACTIVE active=true exactRgb10A2=true`.
+
+## 8. Failure classification
+
+```text
+preflight Unsupported/Unresolved
+→ custom target not activated; explicit RGB888 fallback; C1 FAIL/NOT TESTED
+
+preflight Supported but nativeVisual mismatch/unknown
+→ custom target not activated; C1 remains gated
+
+custom target requested/activated but no FIRST_FRAME or EGL thread/window-surface error
+→ C1 renderer compatibility failure; do not change decoder/source path simultaneously
+
+runtime EGL still RGB888 or non-exact
+→ C1 FAIL; requested attributes are not accepted as proof
+
+runtime exact RGB10A2 + stable frame rendering
+→ C1 TRUE-DEVICE PASS; proceed to C2 source-buffer/texture fidelity
+```
+
+## 9. Stage C1 is not full 10-bit fidelity PASS
+
+Even after C1 succeeds:
+
+```text
+10-bit encoded source     PASS
+10bpc final EGL target    PASS
+source texture precision  UNKNOWN
+```
+
+Stage C2 must investigate the MediaCodec producer / BufferQueue / GraphicBuffer / SurfaceTexture path. `COLOR_FormatSurface` alone cannot prove P010 or 10-bit preservation.
+
+## 10. Frozen boundaries
+
+```text
+CloudMatch / SDP / Answer / NVST / decoder binding  FROZEN
+reconnect implementation                             FROZEN
+SurfaceHolder explicit pixel format                  OFF in C1 first build
+HDR                                                  OFF / v6.2
+direct MediaCodec -> Surface                         NOT ENTERED
+```

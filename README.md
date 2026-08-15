@@ -1,26 +1,44 @@
-# GFN Android Lab · v6.1.1 Main10 / SDR10 10-bit Forensics
+# GFN Android Lab · v6.1.1 Main10 / SDR10 Stage C1 RGB10A2
 
-这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 **HEVC Main / SDR8 Production PASS**；`46.log` 已关闭 v6.1.0 **Main10 / SDR10 capability + negotiation TRUE-DEVICE PASS**；`50.log` 已关闭 v6.1.1 Stage A/B：实际 SPS 为 Main10 4:2:0 10/10-bit，而 pinned WebRTC M144 默认最终 EGL target 真机为 RGB888。
+这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 **HEVC Main / SDR8 Production PASS**；`46.log` 已关闭 v6.1.0 **Main10 / SDR10 capability + negotiation TRUE-DEVICE PASS**；`50.log` 已关闭 Stage A/B（实际 HEVC SPS=Main10 10/10-bit，默认 M144 final EGL=RGB888）；`51.log` 已关闭 Stage C0（设备存在 exact fixed RGB10A2 window config）。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.1.1 当前阶段：Stage C0 PASS + reconnect black-screen repair
+## v6.1.1 当前阶段：Stage C1 custom RGB10A2 final EGL target
+
+用户已在真机手动断开/重连 WebRTC 后确认恢复正常，因此 `51.log` 暴露的 reconnect 黑屏修复可以从当前实验阻塞项移出。该确认来自本轮人工真机操作，不冒充新的日志行证据。
+
+Stage C1 只对冻结 Session snapshot 满足以下条件的 View 激活：
 
 ```text
-actual HEVC SPS = 10-bit
-+ runtime default EGL = RGB888
+codec = HEVC
+color = PreferSdr10
         ↓
-Stage C0 read-only eglChooseConfig
-R10 G10 B10 A2 + WINDOW + GLES2
+pre-init default-display RGB10A2 capability query
         ↓
-Supported / Unsupported / Unresolved
-        ↓ Supported
-下一构建才激活 Stage C1 custom EGL RGB10A2
+exact fixed R10/G10/B10/A2
++ nativeVisual == PixelFormat.RGBA_1010102
+        ↓
+pin EGL_CONFIG_ID
+        ↓
+M144 SurfaceViewRenderer.init(sharedContext, events, customAttrs, GlRectDrawer)
 ```
 
-`51.log` 已真机关闭 Stage C0：设备返回 exact fixed/non-float RGB10A2 window config（configId=65，R10/G10/B10/A2，nativeVisualId=43）。同一日志随后暴露了与 C0 无关的旧 reconnect 黑屏缺陷：ICE/PC 已 DISCONNECTED 时，controller 因 stale `FirstFrame/Connected` 立即取消 7 秒 grace；随后即使连接状态回到 CONNECTED，decoder input 可降到 0 fps。
+SDR8/H264 仍保留原 M144 两参数 `init(sharedContext, events)` / `CONFIG_PLAIN` 路径。C1 第一刀不调用 `SurfaceHolder.setFormat()`，不改 decoder/shared EGL root、SurfaceTexture source path、Main10 negotiation、reconnect 逻辑或 HDR。若 preflight 不满足 exact/native-visual gate，则明确回落 RGB888，并通过 `EGL_TARGET_REQUEST` 标记 `active=WEBRTC_M144_RGB888`，不能称为 10-bit target PASS。
 
-当前修复保持 Stage C1 **inactive**，先把 reconnect recovery gate 改成 `logical state + ICE/PC health + sustained fresh video + render-path witness`；如果 grace 到期仍无媒体，则进入既有 same-session reclaim/rebuild。修复真机 PASS 后才继续 C1 custom EGL，避免把网络恢复 bug 和 RGB10A2 renderer A/B 混在一起。HDR 继续 OFF。
+真机 C1 PASS 必须看到：
+
+```text
+EGL10_PREFLIGHT supported=true + exact R10G10B10A2
+EGL_TARGET_REQUEST requested=RGB10A2 active=RGB10A2
+SURFACE_FORMAT actualCallbackFormat=43                 // expected on current device
+EGL_CONFIG red=10 green=10 blue=10 alpha=2
+EGL_TARGET_ACTIVE active=true exactRgb10A2=true
+FIRST_FRAME + stable ~60fps
+HDR=false
+```
+
+即使 C1 PASS，也只证明“输入 10-bit + 最终 target 具备 10bpc”；source texture / BufferQueue / GraphicBuffer 精度仍属于 Stage C2。HDR 继续 OFF。
 
 验证入口：
 
@@ -31,7 +49,7 @@ sh ./verify-reconnect-engine.sh
 sh ./verify-hevc-production.sh
 sh ./verify-hevc-answer-lineage.sh
 sh ./verify-main10.sh
-sh ./verify-reconnect-engine.sh
+sh ./verify-stream-settings.sh
 sh ./verify-audio.sh
 sh ./verify-hevc.sh
 ```

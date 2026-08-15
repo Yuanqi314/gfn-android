@@ -1,8 +1,8 @@
-GFN Android v6.1.1 - Stage C0 TRUE-DEVICE PASS + reconnect black-screen repair static verification
-Repository reference: GitHub 2fbb17946dfb2de93340af2504e5efd291380507 (fix 10bit)
-Version: 0.6.1.1-dev / code 24
+GFN Android v6.1.1 - Stage C1 custom RGB10A2 final EGL target static verification
+Version: 0.6.1.1-c1-dev / code 25
+Baseline artifact: v6.1.1 Stage C0 + reconnect black-screen fix clean full-repo ZIP
 
-True-device evidence closed before / during this repair:
+Closed true-device evidence:
 - v6.0.4 Main/SDR8 production = PASS (45.log)
 - v6.1.0 Main10/SDR10 capability + negotiation + decode-to-frame = PASS (46.log)
 - v6.1.1 DecodeInfo JNI-null hotfix = PASS (50.log)
@@ -10,62 +10,56 @@ True-device evidence closed before / during this repair:
 - v6.1.1 Stage B default M144 final EGL target R8 G8 B8 A0 = PROVEN (50.log)
 - v6.1.1 Stage C0 exact fixed RGB10A2 window capability = PASS (51.log)
   configId=65 R10/G10/B10/A2 nativeVisualId=43 nativeVisualMatchesSurface=true explicitFloat=false
+- reconnect black-screen repair = TRUE-DEVICE MANUAL PASS reported by user on 2026-08-15
+  Note: no new reconnect log accompanied that explicit manual result; it is not presented as line-addressable log evidence.
 
-51.log reconnect root cause:
-- line 804: logical FirstFrame while ICE already DISCONNECTED.
-- lines 807-813: 7s grace starts, then old code immediately logs transient recovery while ICE/PC are still DISCONNECTED.
-- same false recovery repeats at lines 1472-1482.
-- after PC/ICE later report CONNECTED, decoder media subsequently falls to input/output/render 0/0/0 (lines 925/947/969).
-- EglRenderer later reports only 5 rendered frames in ~4s / 1.2fps (line 1027).
-- Therefore the persistent black screen is media starvation after a false reconnect recovery decision, not a Stage C0 EGL capability-probe failure.
+Stage C1 implementation boundary:
+- RGB10A2 is requested only from the immutable frozen Session snapshot when codec=Hevc and colorMode=PreferSdr10.
+- SDR8/H264 stays on the exact pinned M144 two-argument SurfaceViewRenderer.init(sharedContext, rendererEvents) path.
+- GfnWebRtcRuntime shared root is resolved before C1 preflight.
+- C1 preflight queries the already-initialized default EGLDisplay without creating/rebinding EGL context/surface state.
+- Activation requires Supported + exact fixed/non-float R10/G10/B10/A2 + nativeVisualMatchesRequestedSurfaceFormat=true.
+- The dynamically selected EGL_CONFIG_ID is inserted into custom renderer attributes.
+- Custom renderer uses pinned M144 SurfaceViewRenderer.init(sharedContext, rendererEvents, configAttributes, GlRectDrawer()).
+- SurfaceHolder.setFormat(PixelFormat.RGBA_1010102) remains OFF in the first C1 build.
+- Decoder/shared-root EGL, MediaCodec/SurfaceTexture source path, negotiation, reconnect implementation and HDR remain frozen.
+- Unsupported/Unresolved/native-visual-unproven preflight explicitly falls back to M144 RGB888 and logs the reason; fallback is never a 10-bit PASS.
 
-Reconnect repair boundary:
-- GRACE transport health requires logical Connected/FirstFrame + ICE CONNECTED/COMPLETED + PC CONNECTED.
-- A stale logical FirstFrame/Connected value cannot cancel grace while ICE/PC are disconnected.
-- On true transport restoration, a fresh recovery-media window is started.
-- Recovery media gate requires sustained fresh VideoSink frames in a 2s rolling window, >= requested FPS frames, last frame age <=1000ms.
-- Recovery media gate also requires one generation-scoped frame that reached the existing renderer path via zero-scale one-shot frame listener.
-- Render witness is tokenized so stale callbacks from an invalidated recovery window are ignored.
-- If 7s grace expires without verified media, existing same-session reclaim/rebuild starts.
-- Same Session ID + frozen ResolvedLaunchProfile + bounded retry architecture remains unchanged.
-- No replacement CloudMatch Session is created by reconnect.
-- C1 custom RGB10A2 renderer remains OFF while reconnect repair awaits true-device verification.
-- HDR remains OFF.
+Stage C1 diagnostics:
+- phase=EGL10_PREFLIGHT
+- phase=EGL_TARGET_REQUEST
+- phase=SURFACE_FORMAT
+- phase=EGL_CONFIG
+- phase=EGL_TARGET_ACTIVE
+- phase=EGL10_CAPABILITY
 
-Reconnect deterministic fixtures:
+v6.1.1 HEVC / Stage C verification:
+V611_HEVC_10BIT_SOURCE_GUARDS=PASS
+V611_STAGE_C1_RENDER_TARGET_SOURCE_GUARDS=PASS
+V611_HEVC_SPS_PARSER_FIXTURE=PASS
+V611_EGL_API_SHAPED_COMPILE=PASS
+V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS
+V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS
+V611_STAGE_C1_CONFIG_ID_PINNING_FIXTURE=PASS
+V611_STAGE_C1_PREFLIGHT_FIXTURE=PASS
+V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS
+V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
+V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
+V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS
+
+Reconnect / frozen-target verification:
 V521_SESSION_SAME_ID_RECLAIM=PASS
-CREATE_COUNT=1
-CLAIM_COUNT=2
-SETTINGS_RESOLVE_COUNT=1
 V521_STREAM_RECONNECT_STATE_MACHINE=PASS
-- stale FirstFrame + ICE DISCONNECTED remains Reconnecting; grace not canceled.
-- transport + incoming frames without render witness does not recover.
-- transport + sustained incoming frames + render witness can recover without reclaim.
-- sparse/stalled media causes grace expiry and same-session rebuild.
-- hard failure on rebuilt transport still consumes bounded retry.
-- rebuilt transport success still requires FIRST_FRAME + input protocolReady.
+V611_STAGE_C1_FROZEN_PROFILE_TARGET_POLICY=PASS
 V521_VIDEO_RECOVERY_LIVENESS_TRACKER=PASS
-- generation token rejects stale render callback.
-- nanoTime-style subtraction validated across synthetic Long wrap.
-- timestamp storage bound = 2048.
-V521_RECONNECT_STATIC_GUARDS=PASS
+- Aggregate verify-reconnect.sh then reaches the pre-existing unrelated keyboard stable-baseline conflict after V519_KEYBOARD_STABLE_PACKET_FIXTURE=PASS.
+- This C1 build does not delete or alter keyboard behavior merely to force an aggregate green result.
 
 WebRTC Engine API-shaped compile:
 V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
 V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
 V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
 V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
-
-v6.1.1 HEVC / Stage C0 regression:
-V611_HEVC_10BIT_SOURCE_GUARDS=PASS
-V611_HEVC_SPS_PARSER_FIXTURE=PASS
-V611_EGL_API_SHAPED_COMPILE=PASS
-V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS
-V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS
-V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS
-V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
-V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
-V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS
 
 Production HEVC / Main10 regression:
 V604_HEVC_PRODUCTION_SOURCE_GUARDS=PASS
@@ -104,27 +98,17 @@ V520_SESSION_PROFILE_PERSISTENCE=PASS
 V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
 V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
 
-Aggregate reconnect verifier note:
-- New reconnect state-machine fixture, liveness tracker fixture and reconnect static guards all PASS.
-- verify-reconnect-engine.sh separately reaches all final PASS markers.
-- The aggregate verify-reconnect.sh still has an unrelated historical keyboard baseline conflict by default:
-  verify-keyboard-stable.sh passes V519_KEYBOARD_STABLE_PACKET_FIXTURE, then fails because it requires
-  GfnKeyboardWireMode.kt to be absent although the existing baseline contains that file.
-- This repair does not delete or alter keyboard behavior merely to fabricate a green aggregate result.
-- The aggregate script also supports GFN_SKIP_UNRELATED_KEYBOARD_BASELINE=1 to expose reconnect-only checks;
-  in this execution environment the long combined invocation timed out after V521_RECONNECT_STATIC_GUARDS=PASS,
-  while verify-reconnect-engine.sh passed separately.
-
 Final source audit:
 SHELL_SYNTAX=PASS
 TRAILING_WHITESPACE_COUNT=0
-RECONNECT_BLACK_SCREEN_SOURCE_GUARDS=PASS
-C1_SURFACE_FORMAT_ACTIVATION=OFF
-C1_CUSTOM_EGL_ACTIVATION=OFF
-RUNTIME_TIER_REWRITE=NONE
-HARDCODED_HEVC_PT=NONE
-HARDCODED_HEVC_DECODER=NONE
-HDR activation remains OFF; PreferHdr10 is still rejected by validation.
+C1_CUSTOM_EGL_INIT=1
+C1_SURFACE_SET_FORMAT=0
+C1_SOURCE_HARDCODED_CONFIG65=0
+HDR_SESSION_ACTIVATION=0
+RUNTIME_TIER_REWRITE_RESIDUE=0
+HARDCODED_HEVC_DECODER=0
+HARDCODED_GFN_HEVC_PT=0
+UI_C1_BINDINGS=2
 
 Android Gradle build attempt:
 sh ./gradlew :app:compileDebugKotlin --no-daemon
@@ -132,18 +116,14 @@ GRADLE_EXIT=6
 BLOCKED BEFORE COMPILATION: curl could not resolve services.gradle.org while downloading Gradle 9.5.0.
 Full Android/Kotlin Gradle compile is NOT claimed PASS.
 
-Next true-device gate:
-1. Stage C0 must remain Supported exact R10/G10/B10/A2; production renderer must remain RGB888 in this build.
-2. On ICE/PC DISCONNECTED, grace must NOT immediately self-cancel from stale FirstFrame/Connected state.
-3. If transport reconnects and media is healthy:
-   - transport restored; awaiting fresh video
-   - grace media gate healthy=true ... rendered=true
-   - transient recovery verified with fresh video
-4. If transport reconnects but media remains stalled:
-   - grace media gate healthy=false
-   - grace expired without verified media; rebuilding same Session
-   - CLAIM_OK sameSession=true frozenProfile=true
-   - FIRST_FRAME + protocolReady + STABLE
-5. Only after reconnect repair TRUE-DEVICE PASS should Stage C1 custom RGB10A2 renderer be activated.
+Next true-device Stage C1 gate:
+1. EGL10_PREFLIGHT must be Supported exact fixed R10/G10/B10/A2 with nativeVisualMatchesSurface=true.
+2. EGL_TARGET_REQUEST must show requested=RGB10A2 active=RGB10A2 and a dynamic selectedConfigId.
+3. SURFACE_FORMAT must record the actual callback format; current-device expectation is 43, but the runtime value is evidence, not assumed.
+4. EGL_CONFIG must be runtime R10/G10/B10/A2 and tenBitRgbTarget=true.
+5. EGL_TARGET_ACTIVE must be active=true exactRgb10A2=true.
+6. SPS must remain luma/chroma 10/10, Main10 negotiation/fallback=false must remain unchanged.
+7. FIRST_FRAME and stable rendering near requested 60fps must remain healthy.
+8. HDR must remain false.
 
-C1 / C2 remain NOT TRUE-DEVICE VERIFIED in this package.
+Even after Stage C1 TRUE-DEVICE PASS, source texture/buffer precision remains Stage C2 and full 10-bit render fidelity is not yet claimed.

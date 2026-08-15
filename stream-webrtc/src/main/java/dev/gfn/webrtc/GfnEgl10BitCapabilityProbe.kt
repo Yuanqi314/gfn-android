@@ -74,7 +74,23 @@ internal object GfnEgl10BitCapabilityProbe {
         if (display == null || display == EGL14.EGL_NO_DISPLAY) {
             return unresolved("EGL14 current display unavailable")
         }
+        return queryDisplayEgl14(display)
+    }
 
+    /**
+     * Stage C1 pre-init query. GfnWebRtcRuntime.eglContext() must be resolved first so Android's
+     * default EGLDisplay is already initialized by the existing shared WebRTC EGL root.
+     * No context/surface is created or rebound here.
+     */
+    fun queryDefaultDisplayEgl14(): GfnEgl10BitCapabilityResult {
+        val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+        if (display == null || display == EGL14.EGL_NO_DISPLAY) {
+            return unresolved("EGL14 default display unavailable")
+        }
+        return queryDisplayEgl14(display)
+    }
+
+    private fun queryDisplayEgl14(display: EGLDisplay): GfnEgl10BitCapabilityResult {
         val extensions = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS).orEmpty()
         val hasColorComponentType = extensions.split(' ').any { extension ->
             extension == "EGL_EXT_pixel_format_float" || extension == "EGL_KHR_pixel_format_float"

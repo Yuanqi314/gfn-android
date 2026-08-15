@@ -103,7 +103,7 @@ object GfnStreamSettingsCatalog {
 
     val colorChoices: List<StreamColorChoice> = listOf(
         StreamColorChoice(RequestedColorMode.CompatibilitySdr, "SDR8 · HEVC Main / H.264"),
-        StreamColorChoice(RequestedColorMode.PreferSdr10, "SDR10 · HEVC Main10（v6.1.1 10-bit 取证）"),
+        StreamColorChoice(RequestedColorMode.PreferSdr10, "SDR10 · HEVC Main10（v6.1.1 RGB10A2 C1）"),
     ).filter { it.colorMode in capabilities.colorModes }
 
     val audioChoices: List<StreamAudioChoice> =

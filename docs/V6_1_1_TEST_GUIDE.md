@@ -1,21 +1,21 @@
-# GFN Android v6.1.1 — Stage C0 RGB10A2 Capability Test Guide
+# GFN Android v6.1.1 — Stage C1 RGB10A2 True-device Test Guide
 
 ## 1. Test profile
 
-Use the same frozen true-device profile that produced `50.log`:
+Use the frozen Main10 profile:
 
 ```text
-codec = HEVC
-color = PreferSdr10 / SDR10
+codec=HEVC
+color=PreferSdr10
 1920x1080@60
-HDR = OFF
+HDR=false
 ```
 
-Do not change fullscreen/surface lifecycle behavior for this run.
+Do not change fullscreen lifecycle or network conditions during the first C1 run.
 
-## 2. Regression chain
+## 2. Frozen negotiation regression
 
-The log must still contain:
+Require the existing chain:
 
 ```text
 RESOLVED codec=Hevc color=PreferSdr10
@@ -27,15 +27,14 @@ FINAL_ANSWER hevcMain10 != []
 fallback=false
 NVST_CONFIG bitDepth=10 hdr=false
 FIRST_VIDEO_RTP effective=Hevc targetProfile=2
-FIRST_FRAME effective=Hevc targetProfile=2
 ```
 
-## 3. Stage A regression
+## 3. Actual bitstream regression
 
-Expect:
+Require:
 
 ```text
-GfnHevc10Bit phase=BITSTREAM_SPS
+phase=BITSTREAM_SPS
 profileIdc=2
 chromaFormatIdc=1
 bitDepthLuma=10
@@ -43,173 +42,123 @@ bitDepthChroma=10
 tenBit=true
 ```
 
-If this changes, stop and investigate the Session/server stream before any renderer work.
+If SPS changes, stop; do not blame C1.
 
-## 4. Stage B regression
+## 4. C1 preflight
 
-Because C1 is still inactive, expect the current renderer to remain RGB888:
-
-```text
-phase=EGL_REQUEST
-source=WebRTC_M144_CONFIG_PLAIN
-red=8 green=8 blue=8
-```
-
-and:
+Search:
 
 ```text
-phase=EGL_CONFIG
-red=8 green=8 blue=8
-alpha=0
-tenBitRgbTarget=false
+GfnHevc10Bit phase=EGL10_PREFLIGHT
 ```
 
-If runtime EGL becomes 10bpc in C0, verify the binary/source first; Stage C0 itself does not activate a custom renderer.
-
-## 5. Stage C0 result
-
-Search for:
-
-```text
-GfnHevc10Bit phase=EGL10_CAPABILITY
-```
-
-The log now includes:
-
-```text
-status=Supported|Unsupported|Unresolved
-supported=true|false
-probeRequest=R10G10B10A2
-candidateSurface=RGBA_1010102
-surfacePixelFormat=43
-candidateCount=...
-inspectedCount=...
-```
-
-### Positive gate
-
-C1 becomes eligible only when the same record contains:
+Expected on the currently tested device:
 
 ```text
 status=Supported
 supported=true
-red=10
-green=10
-blue=10
-alpha=2
-explicitFloat=false
-```
-
-Also preserve:
-
-```text
-configId
-renderableType
-surfaceType
-nativeVisualId
-nativeVisualMatchesSurface
-colorComponentType
-```
-
-`nativeVisualMatchesSurface=false` or `UNKNOWN` is a separate native-window compatibility observation. Do not automatically convert it into either PASS or FAIL.
-
-### `status=Unsupported`
-
-The probe completed its enumeration and found no exact usable fixed/non-float R10G10B10A2 WINDOW+GLES2 candidate. Do not activate C1.
-
-### `status=Unresolved`
-
-Evidence collection failed or was incomplete. Do not interpret this as hardware/driver lack of RGB10A2 support. Preserve the `reason` and fix the probe/environment first.
-
-## 6. C1 remains inactive in this build
-
-For the Stage C0 APK, source/runtime must still show:
-
-```text
-SurfaceViewRenderer.init(sharedContext, rendererEvents)  // existing M144 CONFIG_PLAIN path
-holder.setFormat(RGBA_1010102)                           // NOT CALLED
-custom RGB10A2 renderer attributes                       // NOT ACTIVE
-```
-
-If C0 returns `Supported`, the next controlled build should first activate only the custom EGL R10G10B10A2 renderer configuration. Keep explicit `SurfaceHolder.setFormat(RGBA_1010102)` as a separately gated experiment unless native-window evidence requires it.
-
-## 7. Crash guard
-
-The `DecodeInfo` hotfix remains mandatory. There must be no recurrence of:
-
-```text
-GfnHevcBitstreamProbeVideoDecoder.decode parameter info
-NullPointerException
-jvm.cc CHECK
-SIGABRT
-```
-
-## 8. Surface lifecycle
-
-`Dropping frame - No surface` remains a separate backlog. Do not mix lifecycle changes into the C0/C1 bit-depth experiment unless it prevents the capability/runtime evidence from being collected.
-
-## 9. `51.log` Stage C0 closeout and reconnect regression
-
-`51.log` has already closed Stage C0 on the tested device:
-
-```text
-phase=EGL10_CAPABILITY
-status=Supported
-supported=true
-configId=65
+configId=65                  // config ids are device/driver-specific; do not hardcode in logic
 red=10 green=10 blue=10 alpha=2
 nativeVisualId=43
 nativeVisualMatchesSurface=true
 explicitFloat=false
 ```
 
-C1 remains inactive in the reconnect-fix build. The next true-device run must first verify the reconnect repair because `51.log` exposed a deterministic stale-state recovery bug.
+The source dynamically pins whatever exact config id preflight selects.
 
-### Expected transient-disconnect behavior after the fix
+## 5. Target request
 
-When ICE/PC temporarily disconnect:
-
-```text
-GfnReconnect: grace source=... delayMs=7000
-```
-
-There must **not** be an immediate:
+Require:
 
 ```text
-transient recovery verified with fresh video
+phase=EGL_TARGET_REQUEST
+requested=RGB10A2
+active=RGB10A2
+selectedConfigId=<same preflight id>
+holderSetFormat=false
+fallback=NONE
 ```
 
-while either diagnostic still reports DISCONNECTED.
+If `active=WEBRTC_M144_RGB888`, C1 did not activate. Preserve the fallback reason.
 
-When transport becomes genuinely healthy, expect:
+## 6. Native Surface witness
+
+Search:
 
 ```text
-GfnReconnect: transport restored; awaiting fresh video source=...
+phase=SURFACE_FORMAT
 ```
 
-The recovery may be accepted only after the media gate logs sufficient recent frame activity and a render witness:
+Record:
 
 ```text
-GfnReconnect: grace media gate healthy=true ... rendered=true ...
-GfnReconnect: transient recovery verified with fresh video source=...
+actualCallbackFormat
+size
+expectedRgb10A2
 ```
 
-If ICE/PC reconnect but media remains black/stalled, expect the grace timer to remain active and then:
+On the current device the expected Android constant is `43`. A different value is evidence for a separate Surface-format investigation; do not silently add `holder.setFormat()` in the same run.
+
+## 7. Runtime EGL — decisive C1 gate
+
+Require after a real rendered frame:
 
 ```text
-GfnReconnect: grace media gate healthy=false ...
-GfnReconnect: grace expired without verified media; rebuilding same Session ...
-GfnReconnect: ATTEMPT 1/3 ...
-GfnReconnect: CLAIM_OK sameSession=true frozenProfile=true ...
+phase=EGL_CONFIG
+success=true
+red=10
+green=10
+blue=10
+alpha=2
+tenBitRgbTarget=true
 ```
 
-The rebuilt transport must again satisfy the existing strong success gate:
+And:
+
+```text
+phase=EGL_TARGET_ACTIVE
+requestedRgb10A2=true
+active=true
+exactRgb10A2=true
+```
+
+A request/preflight record is not a PASS without this runtime result.
+
+## 8. Frame stability
+
+Require:
 
 ```text
 FIRST_FRAME
-input protocolReady=true
-GfnReconnect: SUCCESS ... firstFrame=true inputHandshake=true
-GfnReconnect: STABLE ...
+bound c2.qti.hevc.decoder unchanged
+input/output/render approximately requested 60fps
+no persistent No surface state
+no EGL thread/window-surface exception
+no SIGABRT / NPE
 ```
 
-No reconnect path may create a replacement CloudMatch Session or change the frozen launch profile.
+Short Surface recreation drops remain a separate known lifecycle backlog if they recover.
+
+## 9. SDR8/H264 negative control
+
+For an SDR8/H264 Session, source behavior must remain:
+
+```text
+requested=WEBRTC_M144_RGB888
+active=WEBRTC_M144_RGB888
+phase=EGL_REQUEST source=WebRTC_M144_CONFIG_PLAIN
+runtime EGL remains the normal M144 target
+```
+
+RGB10A2 must not be activated from live Settings or generic HEVC alone.
+
+## 10. Verdict
+
+Only when the Main10 run satisfies all gates above may we record:
+
+```text
+v6.1.1-C Custom RGB10A2 final EGL target
+TRUE-DEVICE PASS
+```
+
+This still does **not** equal full 10-bit render fidelity. Stage C2 source texture/buffer evidence remains required. HDR stays OFF.

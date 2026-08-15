@@ -4,10 +4,10 @@ import android.graphics.PixelFormat
 import android.opengl.EGL14
 
 /**
- * Dormant v6.1.1-C RGB10A2 contract.
+ * v6.1.1-C RGB10A2 render-target contract.
  *
- * Stage C0 only probes whether a matching window EGLConfig exists. These attributes are deliberately
- * not wired into [GfnVideoSurfaceView] yet; Stage C1 activation is gated by true-device C0 evidence.
+ * Stage C1 uses this only for HEVC + PreferSdr10 views after a pre-init capability check resolves
+ * one exact fixed/non-float RGB10A2 window config. SDR8/H264 views stay on WebRTC CONFIG_PLAIN.
  */
 internal object GfnEgl10BitConfig {
     const val RED_SIZE = 10
@@ -19,19 +19,23 @@ internal object GfnEgl10BitConfig {
     val surfacePixelFormat: Int
         get() = PixelFormat.RGBA_1010102
 
-    fun rendererAttributes(): IntArray = intArrayOf(
-        EGL14.EGL_SURFACE_TYPE,
-        EGL14.EGL_WINDOW_BIT,
-        EGL14.EGL_RENDERABLE_TYPE,
-        EGL14.EGL_OPENGL_ES2_BIT,
-        EGL14.EGL_RED_SIZE,
-        RED_SIZE,
-        EGL14.EGL_GREEN_SIZE,
-        GREEN_SIZE,
-        EGL14.EGL_BLUE_SIZE,
-        BLUE_SIZE,
-        EGL14.EGL_ALPHA_SIZE,
-        ALPHA_SIZE,
-        EGL14.EGL_NONE,
-    )
+    fun rendererAttributes(configId: Int? = null): IntArray = buildList {
+        if (configId != null) {
+            add(EGL14.EGL_CONFIG_ID)
+            add(configId)
+        }
+        add(EGL14.EGL_SURFACE_TYPE)
+        add(EGL14.EGL_WINDOW_BIT)
+        add(EGL14.EGL_RENDERABLE_TYPE)
+        add(EGL14.EGL_OPENGL_ES2_BIT)
+        add(EGL14.EGL_RED_SIZE)
+        add(RED_SIZE)
+        add(EGL14.EGL_GREEN_SIZE)
+        add(GREEN_SIZE)
+        add(EGL14.EGL_BLUE_SIZE)
+        add(BLUE_SIZE)
+        add(EGL14.EGL_ALPHA_SIZE)
+        add(ALPHA_SIZE)
+        add(EGL14.EGL_NONE)
+    }.toIntArray()
 }

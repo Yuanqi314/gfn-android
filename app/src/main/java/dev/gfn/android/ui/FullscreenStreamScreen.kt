@@ -54,7 +54,8 @@ fun FullscreenStreamScreen(
 ) {
     val context = LocalContext.current
     val activity = context.findActivity()
-    val videoView = remember { GfnVideoSurfaceView(context) }
+    val useRgb10A2 = controller.shouldUseRgb10A2RenderTarget()
+    val videoView = remember(context, useRgb10A2) { GfnVideoSurfaceView(context, useRgb10A2) }
     var overlayOpen by remember { mutableStateOf(false) }
 
     DisposableEffect(videoView, controller) {

@@ -140,9 +140,9 @@ nativeVisualMatchesSurface=true
 explicitFloat=false
 ```
 
-Stage C1 custom RGB10A2 renderer remains **inactive** in this reconnect-fix build. The reconnect black-screen fix must be true-device verified first so a later C1 A/B does not mix a known transport-recovery defect with the 10-bit render-target variable.
+The user subsequently performed a manual true-device WebRTC disconnect/reconnect test and reported that recovery is normal. No new reconnect log was attached with that report, so this closeout is recorded as **TRUE-DEVICE MANUAL PASS**, not as line-addressable log proof.
 
-HDR remains OFF.
+This removes the reconnect blocker for the next isolated experiment. Stage C1 may now activate the final RGB10A2 EGL target while keeping the reconnect implementation frozen. HDR remains OFF.
 
 ## 8. Verification boundary
 
@@ -160,4 +160,4 @@ M144/API-shaped engine and SurfaceView compilation
 HEVC/Main10/Stage C0 regressions
 ```
 
-True-device verification is still required for the repaired reconnect behavior.
+Offline verification plus the user's manual true-device disconnect/reconnect result close the blocker for Stage C1. A future reconnect log can still strengthen the forensic record, but C1 no longer co-varies with reconnect code.

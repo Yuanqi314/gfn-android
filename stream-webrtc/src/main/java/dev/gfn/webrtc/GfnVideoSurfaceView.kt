@@ -4,16 +4,23 @@ import android.content.Context
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.SurfaceHolder
+import org.webrtc.GlRectDrawer
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoFrame
 
 /**
  * WebRTC 视频输出 + Android 输入捕获面。
- * v6.1.1 Stage C0 只增加只读 RGB10A2 capability/config 取证，不改变既有 SurfaceViewRenderer 的 config、drawer 或
- * render lifecycle。键鼠与 gamepad 的 GFN mapping/state/transport 仍由各自 controller 处理。
+ *
+ * v6.1.1 Stage C1 only switches the final SurfaceViewRenderer EGLConfig for an explicitly frozen
+ * HEVC/Main10 + PreferSdr10 session. SDR8/H264 keeps the original two-argument M144 init path.
+ * Decoder/shared-root EGL, SurfaceTexture source path and SurfaceHolder format remain unchanged.
  */
-class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
+class GfnVideoSurfaceView(
+    context: Context,
+    private val requestRgb10A2: Boolean = false,
+) : SurfaceViewRenderer(context) {
     interface InputListener {
         fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean
         fun onMouseMove(dx: Float, dy: Float)
@@ -38,29 +45,77 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
     @Volatile
     private var released = false
     private var inputCaptureEnabled = false
+    private val forensicViewId = System.identityHashCode(this)
+    private var activeRgb10A2 = false
 
     init {
-        init(
-            GfnWebRtcRuntime.eglContext(),
-            object : RendererCommon.RendererEvents {
-                override fun onFirstFrameRendered() {
-                    onFirstFrame?.invoke()
-                }
+        // Resolve the existing shared root first. Stage C1 preflight then queries the already
+        // initialized default EGLDisplay without creating/rebinding a context or surface.
+        val sharedContext = GfnWebRtcRuntime.eglContext()
+        val preflight = if (requestRgb10A2) GfnEgl10BitCapabilityProbe.queryDefaultDisplayEgl14() else null
+        val selected = preflight?.selected
+        val canActivateRgb10A2 = requestRgb10A2 &&
+            preflight?.status == GfnEgl10BitCapabilityStatus.Supported &&
+            selected != null &&
+            selected.nativeVisualMatchesRequestedSurfaceFormat == true &&
+            !selected.isExplicitlyFloatColor
 
-                override fun onFrameResolutionChanged(videoWidth: Int, videoHeight: Int, rotation: Int) {
-                    val width = if (rotation % 180 == 0) videoWidth else videoHeight
-                    val height = if (rotation % 180 == 0) videoHeight else videoWidth
-                    onResolutionChanged?.invoke(width, height)
-                }
+        val rendererEvents = object : RendererCommon.RendererEvents {
+            override fun onFirstFrameRendered() {
+                onFirstFrame?.invoke()
+            }
+
+            override fun onFrameResolutionChanged(videoWidth: Int, videoHeight: Int, rotation: Int) {
+                val width = if (rotation % 180 == 0) videoWidth else videoHeight
+                val height = if (rotation % 180 == 0) videoHeight else videoWidth
+                onResolutionChanged?.invoke(width, height)
+            }
+        }
+
+        if (canActivateRgb10A2) {
+            activeRgb10A2 = true
+            init(
+                sharedContext,
+                rendererEvents,
+                GfnEgl10BitConfig.rendererAttributes(selected!!.configId),
+                GlRectDrawer(),
+            )
+        } else {
+            // Preserve the exact M144 default behavior for SDR8/H264 and explicit C1 fallback.
+            init(sharedContext, rendererEvents)
+            GfnHevc10BitDiagnostics.logPinnedWebRtcEglRequest()
+        }
+
+        preflight?.let {
+            Gfn10BitRenderDiagnostics.logEgl10BitCapability(
+                viewId = forensicViewId,
+                result = it,
+                phase = "EGL10_PREFLIGHT",
+            )
+        }
+        Gfn10BitRenderDiagnostics.logRendererTargetRequest(
+            viewId = forensicViewId,
+            requestedRgb10A2 = requestRgb10A2,
+            activeRgb10A2 = activeRgb10A2,
+            selectedConfigId = selected?.configId,
+            fallbackReason = if (requestRgb10A2 && !activeRgb10A2) {
+                preflight?.error ?: "RGB10A2 candidate missing exact native-visual match"
+            } else {
+                null
             },
         )
-        GfnHevc10BitDiagnostics.logPinnedWebRtcEglRequest()
-        val forensicViewId = System.identityHashCode(this)
+
         addFrameListener(
             { _ ->
+                val runtime = GfnEglConfigProbe.queryCurrentEgl14()
                 GfnHevc10BitDiagnostics.logRuntimeEglConfig(
                     viewId = forensicViewId,
-                    result = GfnEglConfigProbe.queryCurrentEgl14(),
+                    result = runtime,
+                )
+                Gfn10BitRenderDiagnostics.logRuntimeTargetVerdict(
+                    viewId = forensicViewId,
+                    requestedRgb10A2 = requestRgb10A2,
+                    result = runtime,
                 )
                 Gfn10BitRenderDiagnostics.logEgl10BitCapability(
                     viewId = forensicViewId,
@@ -76,6 +131,18 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
         isFocusableInTouchMode = true
         isClickable = true
         setOnClickListener { requestKeyboardMouseCapture() }
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        super.surfaceChanged(holder, format, width, height)
+        Gfn10BitRenderDiagnostics.logSurfaceFormat(
+            viewId = forensicViewId,
+            requestedRgb10A2 = requestRgb10A2,
+            activeRgb10A2 = activeRgb10A2,
+            actualFormat = format,
+            width = width,
+            height = height,
+        )
     }
 
     override fun onFrame(frame: VideoFrame) {

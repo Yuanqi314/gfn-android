@@ -15,6 +15,9 @@ FACTORY="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevcProductionCapab
 SURFACE="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoSurfaceView.kt"
 ENGINE="$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt"
 CLOUDMATCH="$ROOT/gfn-cloudmatch/src/main/kotlin/dev/gfn/cloudmatch/CloudMatchProtocol.kt"
+CONTROLLER="$ROOT/app/src/main/java/dev/gfn/android/stream/GfnStreamingController.kt"
+APP_UI="$ROOT/app/src/main/java/dev/gfn/android/ui/GfnAndroidApp.kt"
+FULLSCREEN_UI="$ROOT/app/src/main/java/dev/gfn/android/ui/FullscreenStreamScreen.kt"
 
 for file in "$BITSTREAM" "$DIAG" "$EGL" "$EGL10_CONFIG" "$EGL10_CAP" "$RENDER_DIAG"; do
   [ -f "$file" ] || { echo "ERROR: missing v6.1.1 forensic source: $file" >&2; exit 1; }
@@ -39,22 +42,32 @@ grep -Fq 'EGL14.eglGetCurrentDisplay()' "$EGL" || { echo 'ERROR: runtime EGL cur
 grep -Fq 'EGL14.eglGetConfigAttrib' "$EGL" || { echo 'ERROR: runtime EGL config attribute query missing' >&2; exit 1; }
 grep -Fq 'addFrameListener(' "$SURFACE" || { echo 'ERROR: render-thread one-shot EGL probe hook missing' >&2; exit 1; }
 grep -Fq '0f,' "$SURFACE" || { echo 'ERROR: EGL frame listener must use scale=0 to avoid bitmap capture' >&2; exit 1; }
-# v6.1.1-C0 may define/probe RGB10A2, but production SurfaceViewRenderer must remain on the pinned RGB888 path
-# until a true-device EGL10_CAPABILITY result proves an exact window config exists.
-grep -Fq 'PixelFormat.RGBA_1010102' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C RGB10A2 Surface format contract missing' >&2; exit 1; }
-grep -Fq 'EGL14.EGL_RED_SIZE' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C red-size attribute missing' >&2; exit 1; }
-grep -Fq 'RED_SIZE = 10' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C red depth must be 10' >&2; exit 1; }
-grep -Fq 'ALPHA_SIZE = 2' "$EGL10_CONFIG" || { echo 'ERROR: dormant Stage C alpha depth must be 2' >&2; exit 1; }
-grep -Fq 'GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()' "$SURFACE" || { echo 'ERROR: Stage C0 read-only RGB10A2 capability hook missing' >&2; exit 1; }
-grep -Fq 'EGL14.eglChooseConfig' "$EGL10_CAP" || { echo 'ERROR: Stage C0 eglChooseConfig probe missing' >&2; exit 1; }
-grep -Fq 'EGL14.eglGetConfigAttrib' "$EGL10_CAP" || { echo 'ERROR: Stage C0 candidate attribute verification missing' >&2; exit 1; }
-grep -Fq 'EGL_COLOR_COMPONENT_TYPE_EXT' "$EGL10_CAP" || { echo 'ERROR: Stage C0 must distinguish fixed-point RGB10A2 from float configs when reported' >&2; exit 1; }
-if grep -Eq 'eglCreateContext|eglCreateWindowSurface|eglMakeCurrent|eglDestroySurface|eglDestroyContext' "$EGL10_CAP"; then
-  echo 'ERROR: Stage C0 capability probe must remain read-only and must not create/rebind EGL state' >&2
+# v6.1.1-C1: C0 is true-device PASS, so only HEVC+PreferSdr10 views may activate custom RGB10A2.
+grep -Fq 'PixelFormat.RGBA_1010102' "$EGL10_CONFIG" || { echo 'ERROR: Stage C RGB10A2 Surface-format contract missing' >&2; exit 1; }
+grep -Fq 'EGL14.EGL_RED_SIZE' "$EGL10_CONFIG" || { echo 'ERROR: Stage C red-size attribute missing' >&2; exit 1; }
+grep -Fq 'RED_SIZE = 10' "$EGL10_CONFIG" || { echo 'ERROR: Stage C red depth must be 10' >&2; exit 1; }
+grep -Fq 'ALPHA_SIZE = 2' "$EGL10_CONFIG" || { echo 'ERROR: Stage C alpha depth must be 2' >&2; exit 1; }
+grep -Fq 'EGL14.EGL_CONFIG_ID' "$EGL10_CONFIG" || { echo 'ERROR: Stage C1 must pin the exact preflight EGL_CONFIG_ID' >&2; exit 1; }
+grep -Fq 'GfnEgl10BitCapabilityProbe.queryDefaultDisplayEgl14()' "$SURFACE" || { echo 'ERROR: Stage C1 pre-init RGB10A2 capability gate missing' >&2; exit 1; }
+grep -Fq 'GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()' "$SURFACE" || { echo 'ERROR: Stage C0/C1 runtime capability witness missing' >&2; exit 1; }
+grep -Fq 'GfnEgl10BitConfig.rendererAttributes(selected!!.configId)' "$SURFACE" || { echo 'ERROR: Stage C1 custom renderer is not pinned to the preflight config id' >&2; exit 1; }
+grep -Fq 'GlRectDrawer()' "$SURFACE" || { echo 'ERROR: Stage C1 must use the pinned M144 custom-init drawer contract' >&2; exit 1; }
+grep -Fq 'init(sharedContext, rendererEvents)' "$SURFACE" || { echo 'ERROR: SDR8/H264 M144 default two-argument init fallback missing' >&2; exit 1; }
+grep -Fq 'nativeVisualMatchesRequestedSurfaceFormat == true' "$SURFACE" || { echo 'ERROR: Stage C1 activation must require exact native-visual match' >&2; exit 1; }
+if grep -Eq 'holder\.setFormat|setFormat\(PixelFormat\.RGBA_1010102' "$SURFACE"; then
+  echo 'ERROR: Stage C1 first experiment must not add SurfaceHolder.setFormat; EGLConfig remains the only render-target variable' >&2
   exit 1
 fi
-if grep -Eq 'holder\.setFormat|setFormat\(PixelFormat\.RGBA_1010102|GfnEgl10BitConfig\.rendererAttributes\(\)' "$SURFACE"; then
-  echo 'ERROR: Stage C0 must not activate RGBA_1010102 Surface or custom EGL renderer before true-device capability PASS' >&2
+grep -Fq 'fun shouldUseRgb10A2RenderTarget(): Boolean' "$CONTROLLER" || { echo 'ERROR: frozen-profile Stage C1 target gate missing' >&2; exit 1; }
+grep -Fq 'config.codec == VideoCodecPreference.Hevc' "$CONTROLLER" || { echo 'ERROR: RGB10A2 target must require HEVC' >&2; exit 1; }
+grep -Fq 'config.colorMode == RequestedColorMode.PreferSdr10' "$CONTROLLER" || { echo 'ERROR: RGB10A2 target must require PreferSdr10' >&2; exit 1; }
+grep -Fq 'GfnVideoSurfaceView(context, useRgb10A2)' "$APP_UI" || { echo 'ERROR: inline video view does not receive frozen Stage C1 target' >&2; exit 1; }
+grep -Fq 'GfnVideoSurfaceView(context, useRgb10A2)' "$FULLSCREEN_UI" || { echo 'ERROR: fullscreen video view does not receive frozen Stage C1 target' >&2; exit 1; }
+grep -Fq 'EGL14.eglChooseConfig' "$EGL10_CAP" || { echo 'ERROR: Stage C capability eglChooseConfig probe missing' >&2; exit 1; }
+grep -Fq 'EGL14.eglGetConfigAttrib' "$EGL10_CAP" || { echo 'ERROR: Stage C candidate attribute verification missing' >&2; exit 1; }
+grep -Fq 'EGL_COLOR_COMPONENT_TYPE_EXT' "$EGL10_CAP" || { echo 'ERROR: Stage C must distinguish fixed-point RGB10A2 from float configs when reported' >&2; exit 1; }
+if grep -Eq 'eglCreateContext|eglCreateWindowSurface|eglMakeCurrent|eglDestroySurface|eglDestroyContext' "$EGL10_CAP"; then
+  echo 'ERROR: Stage C capability/preflight probe must remain selection-only and must not create/rebind EGL state' >&2
   exit 1
 fi
 if grep -Eq 'RGBA_1010102|EGL_RED_SIZE[^\n]*10|EGL_GREEN_SIZE[^\n]*10|EGL_BLUE_SIZE[^\n]*10' "$EGL"; then
@@ -66,6 +79,7 @@ if grep -RqsE 'PreferHdr10[^[:cntrl:]]*(enabled|true)|sdrHdrMode" to 1|hdr=true'
   exit 1
 fi
 printf '%s\n' 'V611_HEVC_10BIT_SOURCE_GUARDS=PASS'
+printf '%s\n' 'V611_STAGE_C1_RENDER_TARGET_SOURCE_GUARDS=PASS'
 
 cat > "$BUILD/ParserFixture.kt" <<'KT'
 package dev.gfn.webrtc
@@ -259,12 +273,14 @@ public class EGL14 {
       EGL_RED_SIZE=12324, EGL_GREEN_SIZE=12323, EGL_BLUE_SIZE=12322, EGL_ALPHA_SIZE=12321,
       EGL_RENDERABLE_TYPE=12352, EGL_SURFACE_TYPE=12339, EGL_NATIVE_VISUAL_ID=12334, EGL_EXTENSIONS=12373,
       EGL_WINDOW_BIT=4, EGL_OPENGL_ES2_BIT=4;
+  public static final Object EGL_DEFAULT_DISPLAY=new Object();
   public static final EGLDisplay EGL_NO_DISPLAY=new EGLDisplay();
   public static final EGLContext EGL_NO_CONTEXT=new EGLContext();
   public static final EGLSurface EGL_NO_SURFACE=new EGLSurface();
   public static int red=8, green=8, blue=8, alpha=0, renderableType=4, surfaceType=4, nativeVisualId=1, colorComponentType=0x333A;
   public static int returnedCount=1; public static String extensions="EGL_EXT_pixel_format_float";
   public static EGLDisplay eglGetCurrentDisplay(){ return new EGLDisplay(); }
+  public static EGLDisplay eglGetDisplay(Object displayId){ return new EGLDisplay(); }
   public static EGLContext eglGetCurrentContext(){ return new EGLContext(); }
   public static EGLSurface eglGetCurrentSurface(int which){ return new EGLSurface(); }
   public static boolean eglQueryContext(EGLDisplay d,EGLContext c,int attr,int[] value,int offset){ value[offset]=7; return true; }
@@ -297,7 +313,7 @@ public class EGL14 {
 }
 JAVA
 cat > "$BUILD/java/android/util/Log.java" <<'JAVA'
-package android.util; public class Log { public static int i(String t,String m){return 0;} public static int w(String t,String m){return 0;} }
+package android.util; public class Log { public static int i(String t,String m){return 0;} public static int w(String t,String m){return 0;} public static int e(String t,String m){return 0;} }
 JAVA
 cat > "$BUILD/java/org/webrtc/EglBase.java" <<'JAVA'
 package org.webrtc; public interface EglBase { int[] CONFIG_PLAIN = new int[]{12324,8,12323,8,12322,8,12352,4,12344}; }
@@ -362,6 +378,8 @@ fun main() {
     check(target.windowedValue(EGL14.EGL_ALPHA_SIZE) == 2)
     check(target.windowedValue(EGL14.EGL_SURFACE_TYPE) == EGL14.EGL_WINDOW_BIT)
     check(target.windowedValue(EGL14.EGL_RENDERABLE_TYPE) == EGL14.EGL_OPENGL_ES2_BIT)
+    val pinnedTarget = GfnEgl10BitConfig.rendererAttributes(65).toList()
+    check(pinnedTarget.windowedValue(EGL14.EGL_CONFIG_ID) == 65)
 
     EGL14.red = 10; EGL14.green = 10; EGL14.blue = 10; EGL14.alpha = 2
     EGL14.surfaceType = EGL14.EGL_WINDOW_BIT; EGL14.renderableType = EGL14.EGL_OPENGL_ES2_BIT
@@ -372,6 +390,9 @@ fun main() {
     check(selected.isExactRgb10A2)
     check(selected.nativeVisualMatchesRequestedSurfaceFormat == true)
     check(!selected.isExplicitlyFloatColor)
+    val stageC1Preflight = GfnEgl10BitCapabilityProbe.queryDefaultDisplayEgl14()
+    check(stageC1Preflight.supported) { stageC1Preflight }
+    check(stageC1Preflight.selected?.nativeVisualMatchesRequestedSurfaceFormat == true)
 
     EGL14.colorComponentType = GfnEgl10BitCapabilityProbe.EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT
     val floatExact = GfnEgl10BitCapabilityProbe.queryCurrentDisplayEgl14()
@@ -390,6 +411,7 @@ fun main() {
     EGL14.red = 10; EGL14.green = 10; EGL14.blue = 10; EGL14.alpha = 2
     val ten = requireNotNull(GfnEglConfigProbe.queryCurrentEgl14().snapshot)
     check(ten.isAtLeastTenBitRgb)
+    check(ten.isExactRgb10A2)
 
     val delegate = Delegate()
     val wrapper = GfnHevcBitstreamProbeVideoDecoder(delegate, "fixture.hevc", GfnHevcProfile.Main10)
@@ -408,6 +430,8 @@ fun main() {
     println("V611_EGL_API_SHAPED_COMPILE=PASS")
     println("V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS")
     println("V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS")
+    println("V611_STAGE_C1_CONFIG_ID_PINNING_FIXTURE=PASS")
+    println("V611_STAGE_C1_PREFLIGHT_FIXTURE=PASS")
     println("V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS")
     println("V611_DECODEINFO_NULL_JNI_FIXTURE=PASS")
     println("EGL_REQUEST=${request.red}/${request.green}/${request.blue} actual8=${eight.red}/${eight.green}/${eight.blue} actual10=${ten.red}/${ten.green}/${ten.blue}")
@@ -441,6 +465,9 @@ public class KeyEvent {
   public int getRepeatCount(){return 0;} public InputDevice getDevice(){return null;} public int getSource(){return 0;}
 }
 JAVA
+cat > "$SURFACE_BUILD/java/android/view/SurfaceHolder.java" <<'JAVA'
+package android.view; public interface SurfaceHolder {}
+JAVA
 cat > "$SURFACE_BUILD/java/android/view/MotionEvent.java" <<'JAVA'
 package android.view;
 public class MotionEvent {
@@ -458,6 +485,9 @@ JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/EglRenderer.java" <<'JAVA'
 package org.webrtc; public class EglRenderer { public interface FrameListener { void onFrame(Object frame); } }
 JAVA
+cat > "$SURFACE_BUILD/java/org/webrtc/GlRectDrawer.java" <<'JAVA'
+package org.webrtc; public class GlRectDrawer implements RendererCommon.GlDrawer {}
+JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/VideoFrame.java" <<'JAVA'
 package org.webrtc; public class VideoFrame {}
 JAVA
@@ -465,15 +495,17 @@ cat > "$SURFACE_BUILD/java/org/webrtc/RendererCommon.java" <<'JAVA'
 package org.webrtc;
 public class RendererCommon {
   public interface RendererEvents { void onFirstFrameRendered(); void onFrameResolutionChanged(int w,int h,int rotation); }
+  public interface GlDrawer {}
   public enum ScalingType { SCALE_ASPECT_FIT }
 }
 JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/SurfaceViewRenderer.java" <<'JAVA'
 package org.webrtc;
-import android.content.Context; import android.view.KeyEvent; import android.view.MotionEvent;
+import android.content.Context; import android.view.KeyEvent; import android.view.MotionEvent; import android.view.SurfaceHolder;
 public class SurfaceViewRenderer {
   private boolean pointerCapture; public SurfaceViewRenderer(Context context) {}
   public void init(EglBase.Context c, RendererCommon.RendererEvents e) {}
+  public void init(EglBase.Context c, RendererCommon.RendererEvents e, int[] attrs, RendererCommon.GlDrawer drawer) {}
   public void addFrameListener(EglRenderer.FrameListener listener, float scale) { listener.onFrame(null); }
   public void setEnableHardwareScaler(boolean enabled) {} public void setMirror(boolean mirror) {}
   public void setScalingType(RendererCommon.ScalingType type) {}
@@ -486,6 +518,7 @@ public class SurfaceViewRenderer {
   public void onWindowFocusChanged(boolean focused) {} public void onPointerCaptureChange(boolean captured) {}
   public boolean onKeyDown(int keyCode, KeyEvent event){return false;} public boolean onKeyUp(int keyCode, KeyEvent event){return false;}
   public boolean onGenericMotionEvent(MotionEvent event){return false;} public boolean onCapturedPointerEvent(MotionEvent event){return false;}
+  public void surfaceChanged(SurfaceHolder holder,int format,int width,int height) {}
   public void onFrame(VideoFrame frame) {}
   public void release() {}
 }
@@ -497,17 +530,38 @@ package dev.gfn.webrtc
 import android.view.KeyEvent
 import org.webrtc.EglBase
 
-internal object GfnWebRtcRuntime { fun eglContext(): EglBase.Context? = null }
-internal data class GfnEglConfigProbeResult(val success: Boolean = true)
-internal object GfnEglConfigProbe { fun queryCurrentEgl14() = GfnEglConfigProbeResult() }
+internal object GfnWebRtcRuntime { fun eglContext(): EglBase.Context = object : EglBase.Context {} }
+internal data class GfnEglRuntimeConfigSnapshot(val isExactRgb10A2: Boolean = true)
+internal data class GfnEglRuntimeProbeResult(val snapshot: GfnEglRuntimeConfigSnapshot? = GfnEglRuntimeConfigSnapshot(), val error: String? = null)
+internal object GfnEglConfigProbe { fun queryCurrentEgl14() = GfnEglRuntimeProbeResult() }
 internal object GfnHevc10BitDiagnostics {
     fun logPinnedWebRtcEglRequest() {}
-    fun logRuntimeEglConfig(viewId: Int, result: GfnEglConfigProbeResult) { viewId.hashCode(); result.hashCode() }
+    fun logRuntimeEglConfig(viewId: Int, result: GfnEglRuntimeProbeResult) { viewId.hashCode(); result.hashCode() }
 }
-internal data class GfnEgl10BitCapabilityResult(val supported: Boolean = true)
-internal object GfnEgl10BitCapabilityProbe { fun queryCurrentDisplayEgl14() = GfnEgl10BitCapabilityResult() }
+internal enum class GfnEgl10BitCapabilityStatus { Supported, Unsupported, Unresolved }
+internal data class GfnEgl10BitConfigCandidate(
+    val configId: Int = 65,
+    val nativeVisualMatchesRequestedSurfaceFormat: Boolean? = true,
+    val isExplicitlyFloatColor: Boolean = false,
+)
+internal data class GfnEgl10BitCapabilityResult(
+    val status: GfnEgl10BitCapabilityStatus = GfnEgl10BitCapabilityStatus.Supported,
+    val selected: GfnEgl10BitConfigCandidate? = GfnEgl10BitConfigCandidate(),
+    val error: String? = null,
+)
+internal object GfnEgl10BitCapabilityProbe {
+    fun queryDefaultDisplayEgl14() = GfnEgl10BitCapabilityResult()
+    fun queryCurrentDisplayEgl14() = GfnEgl10BitCapabilityResult()
+}
+internal object GfnEgl10BitConfig {
+    val surfacePixelFormat: Int = 43
+    fun rendererAttributes(configId: Int? = null) = intArrayOf(configId ?: 0)
+}
 internal object Gfn10BitRenderDiagnostics {
-    fun logEgl10BitCapability(viewId: Int, result: GfnEgl10BitCapabilityResult) { viewId.hashCode(); result.hashCode() }
+    fun logEgl10BitCapability(viewId: Int, result: GfnEgl10BitCapabilityResult, phase: String = "EGL10_CAPABILITY") { viewId.hashCode(); result.hashCode(); phase.hashCode() }
+    fun logRendererTargetRequest(viewId: Int, requestedRgb10A2: Boolean, activeRgb10A2: Boolean, selectedConfigId: Int?, fallbackReason: String?) { viewId.hashCode(); requestedRgb10A2.hashCode(); activeRgb10A2.hashCode(); selectedConfigId.hashCode(); fallbackReason.hashCode() }
+    fun logRuntimeTargetVerdict(viewId: Int, requestedRgb10A2: Boolean, result: GfnEglRuntimeProbeResult) { viewId.hashCode(); requestedRgb10A2.hashCode(); result.hashCode() }
+    fun logSurfaceFormat(viewId: Int, requestedRgb10A2: Boolean, activeRgb10A2: Boolean, actualFormat: Int, width: Int, height: Int) { viewId.hashCode(); requestedRgb10A2.hashCode(); activeRgb10A2.hashCode(); actualFormat.hashCode(); width.hashCode(); height.hashCode() }
 }
 object GfnInputForensics {
     class KeyTrace

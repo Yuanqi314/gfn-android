@@ -607,7 +607,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v6.0.4 Main/SDR8 与 v6.1.0 Main10/SDR10 协商均已真机 PASS；v6.1.1 冻结协商，仅新增 SPS 实际位深与 EGL config 只读取证，HDR 仍关闭。")
+            Text("v6.0.4 Main/SDR8 与 v6.1.0 Main10/SDR10 协商均已真机 PASS；v6.1.1 Stage C1 仅对 HEVC + SDR10 激活 RGB10A2 final EGL target，HDR 仍关闭。")
         }
 
         if (resumeRecord != null) {
@@ -726,7 +726,8 @@ private fun StreamingVideoCard(
     diagnostics: StreamDiagnostics,
 ) {
     val context = LocalContext.current
-    val videoView = remember { GfnVideoSurfaceView(context) }
+    val useRgb10A2 = controller.shouldUseRgb10A2RenderTarget()
+    val videoView = remember(context, useRgb10A2) { GfnVideoSurfaceView(context, useRgb10A2) }
     DisposableEffect(videoView, controller) {
         controller.bindVideoOutput(videoView)
         onDispose {

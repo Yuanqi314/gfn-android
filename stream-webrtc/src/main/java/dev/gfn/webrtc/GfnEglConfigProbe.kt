@@ -23,6 +23,13 @@ internal data class GfnEglRuntimeConfigSnapshot(
 ) {
     val isAtLeastTenBitRgb: Boolean
         get() = red >= 10 && green >= 10 && blue >= 10
+
+    val isExactRgb10A2: Boolean
+        get() = red == GfnEgl10BitConfig.RED_SIZE &&
+            green == GfnEgl10BitConfig.GREEN_SIZE &&
+            blue == GfnEgl10BitConfig.BLUE_SIZE &&
+            alpha == GfnEgl10BitConfig.ALPHA_SIZE &&
+            surfaceType and EGL14.EGL_WINDOW_BIT != 0
 }
 
 internal data class GfnEglRuntimeProbeResult(
