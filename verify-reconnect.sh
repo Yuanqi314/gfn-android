@@ -506,25 +506,29 @@ grep -Fq 'oldOutput.inputListener = null' "$ENGINE_SRC"
 grep -Fq 'if (generation.get() != eventGeneration || serverEnded) return' "$ENGINE_SRC"
 grep -Fq 'listener.onServerSessionEnded(sessionId, "control_channel.exitMessage")' "$ENGINE_SRC"
 
-# Keyboard packet semantics remain soft-frozen: compare the five production files against v5.2 source if available.
-BASE_ZIP="$ROOT/../../gfn-android-main-v5.2.0-stream-settings-foundation-full-source.zip"
+# Keyboard semantics remain soft-frozen. v5.3 legitimately extends the shared protocol encoder
+# with type-12 and VideoSurfaceView with gamepad routing, so byte-compare only the keyboard-specific
+# implementation files. Packet semantics are independently covered by verify-keyboard-stable.sh.
+BASE_ZIP="$ROOT/../../gfn-android-main-v5.2.1-same-session-reconnect-full-source.zip"
+if [ ! -f "$BASE_ZIP" ]; then
+    BASE_ZIP="$ROOT/../../gfn-android-main-v5.2.0-stream-settings-foundation-full-source.zip"
+fi
 if [ -f "$BASE_ZIP" ]; then
-    BASE="$BUILD/v520-base"
+    BASE="$BUILD/keyboard-base"
     mkdir -p "$BASE"
     unzip -q "$BASE_ZIP" -d "$BASE"
     for rel in \
-      stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt \
       stream-webrtc/src/main/java/dev/gfn/webrtc/AndroidKeyboardMapper.kt \
       stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardMouseInputController.kt \
-      stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt \
-      stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoSurfaceView.kt
+      stream-webrtc/src/main/java/dev/gfn/webrtc/GfnInputForensics.kt
     do
       cmp "$ROOT/$rel" "$BASE/gfn-android-main/$rel"
     done
-    echo 'V521_KEYBOARD_SOFT_FREEZE_BYTE_IDENTICAL=PASS'
+    echo 'V530_KEYBOARD_CORE_SOFT_FREEZE_BYTE_IDENTICAL=PASS'
 else
-    echo 'V521_KEYBOARD_SOFT_FREEZE_BYTE_IDENTICAL=SKIP_BASE_ZIP_NOT_ADJACENT'
+    echo 'V530_KEYBOARD_CORE_SOFT_FREEZE_BYTE_IDENTICAL=SKIP_BASE_ZIP_NOT_ADJACENT'
 fi
+"$ROOT/verify-keyboard-stable.sh"
 
 echo 'V521_RECONNECT_STATIC_GUARDS=PASS'
 "$ROOT/verify-reconnect-engine.sh"

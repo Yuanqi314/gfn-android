@@ -108,15 +108,53 @@ same Session ID verified
 = reconnect success
 ```
 
-## Gamepad — v5.3 placeholder
+True-device result recorded before v5.3:
 
-| Feature | CloudNow | OpenNOW | gfn-android | Verified |
+```text
+network loss -> reconnect keeps the same Session ID        VERIFIED
+first reconnect attempt can remain black-screen            KNOWN DEFECT
+second disconnect/reconnect can restore video              OBSERVED
+```
+
+Per current development scope, the first-reconnect black-screen defect is explicitly deferred and is not mixed into v5.3 Gamepad changes.
+
+## Gamepad — v5.3
+
+| Feature | CloudNow | OpenNOW | gfn-android v5.3 | Verified |
 |---|---|---|---|---|
-| type12 packet | Yes | Yes | TODO | - |
-| button bitmap | TODO | TODO | TODO | - |
-| LT/RT encoding | TODO | TODO | TODO | - |
-| stick range | TODO | TODO | TODO | - |
-| controller index | TODO | TODO | TODO | - |
+| type12 raw body | 38-byte body | 38-byte body | 38-byte body | exact packet fixture |
+| body endianness | type/length/index/bitmap/state/axes/timestamp LE | same | same | exact offset fixture |
+| timestamp clock origin | wall-clock µs default | session/input clock | existing gfn input clock retained | field layout verified; origin intentionally not changed in v5.3 |
+| button bitmap | XInput flags | XInput flags | XInput flags | fixture + static guard |
+| LT/RT encoding | independent `u8` 0–255 | independent `u8` 0–255 | Android analog axis/digital fallback -> `u8` | controller fixture |
+| stick range | signed `i16`, radial deadzone 15% | signed `i16`, radial deadzone 15% | signed `i16`, radial deadzone 15% | controller fixture |
+| Y-axis convention | platform GC values mapped into XInput state | browser Y inverted for XInput | Android Y inverted for XInput | controller fixture |
+| connected bitmap | slot bit + XInput-style high bit | slot bit + XInput-style high bit | single normalized slot 0 = `0x0101` | packet/controller fixture |
+| controller index | supports slots | up to 4 | **v5.3 only slot 0** | enforced |
+| disconnect state | neutral/update bitmap | neutral/update bitmap | neutral snapshot + bitmap `0x0000` | controller fixture |
+| v3 reliable framing | current encoder emphasizes PR framing | `[0x23][ts][0x21][size][body]` supported | reliable framing, 50 bytes | exact packet fixture |
+| partially reliable gamepad | implementation supports it | capability-gated | **No in v5.3**; NVST advertises `0` | static guard |
+| periodic presence refresh | periodic snapshots/heartbeat behavior | changed state or 100ms refresh | changed state or 100ms snapshot refresh | controller fixture/static |
+| haptics / type13 | Yes | Yes | **Deferred** | - |
+| multi-controller | Yes | Yes | **Deferred** | - |
+
+### v5.3 deliberate scope
+
+```text
+Android physical gamepad
+        ↓
+normalize to one XInput-style virtual slot (slot 0)
+        ↓
+ABXY / D-Pad / LB-RB / LT-RT / Start-Back / L3-R3 / sticks
+        ↓
+GFN type12
+        ↓
+reliable input_channel_v1
+```
+
+The `0x0101` bitmap is a **client-side normalized virtual-controller declaration** for slot 0; it does not claim the physical Android controller is actually an Xbox-branded device. Guide/Mode is mapped when Android delivers `KEYCODE_BUTTON_MODE`, but Android or the device firmware may consume it before the app; true-device behavior remains unverified until device testing.
+
+v5.3 intentionally does not enable type13 rumble/haptics or the partially-reliable gamepad channel. The current NVST answer still advertises `a=ri.enablePartiallyReliableTransferGamepad:0`, so PR gamepad transport remains a later isolated experiment rather than an assumed protocol requirement.
 
 ## HEVC — v6.0 placeholder
 

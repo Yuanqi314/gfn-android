@@ -1,8 +1,56 @@
-# GFN Android Lab · v5.2.1 Same-Session Reconnect
+# GFN Android Lab · v5.3 Single-Controller Gamepad
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
+
+## v5.3 本轮新增
+
+v5.2.1 真机已确认断网后的自动恢复仍保持同一个 GFN Session ID。当前已知但按本轮范围暂缓的问题：**第一次 reconnect 可能保持黑屏，第二次断开/重连可恢复画面**。该问题记录但不混入 v5.3。
+
+v5.3 新增独立 `GfnGamepadInputController`，只做第一阶段单手柄 Xbox/XInput 风格输入：
+
+```text
+Android InputDevice / KeyEvent / MotionEvent
+        ↓
+slot 0 XInput-style normalization
+        ↓
+GFN type 12 (38-byte body)
+        ↓
+protocol v3 reliable wrapper
+        ↓
+input_channel_v1
+```
+
+支持范围：ABXY、D-Pad、LB/RB、LT/RT、Start/Back、L3/R3、双摇杆。15% radial deadzone，模拟摇杆输出 signed i16，扳机输出 0–255。当前只支持一个 controller slot；rumble/type13、多手柄、DualSense 专用特性和 partially-reliable gamepad transport 延后。
+
+当前 NVST 明确发送 `a=ri.enablePartiallyReliableTransferGamepad:0`，因此 v5.3 使用可靠 `input_channel_v1`，不在没有协商证据时复制 PR gamepad wrapper。
+
+Keyboard packet semantics 继续 soft-freeze；v5.3 只在共享 protocol encoder 增加 type12，并在 `GfnVideoSurfaceView` 增加 gamepad event routing。
+
+详细见：
+
+```text
+docs/V5_3_GAMEPAD.md
+docs/V5_3_REFERENCE_ADOPTION.md
+docs/V5_3_TEST_GUIDE.md
+docs/REFERENCE_MATRIX.md
+verify-gamepad.sh
+```
+
+### v5.3 当前验证边界
+
+```text
+38-byte type12 body exact-offset fixture       PASS
+protocol v3 reliable 50-byte wrapper           PASS
+XInput button/trigger/stick mapping fixture     PASS
+Android Y-axis inversion fixture                PASS
+device removal -> neutral bitmap=0 fixture      PASS
+keyboard stable packet regression               PASS
+WebRTC engine API-shaped compile                PASS
+true-device controller behavior                 PENDING
+```
+
 
 ## v5.2.1 本轮新增
 
@@ -71,7 +119,7 @@ keyboard packet semantics soft-freeze         PASS
 production reconnect static guards            PASS
 ```
 
-完整 Android Gradle build 仍受容器无法下载 Gradle 9.5.0 限制；不把离线 fixture 冒充真机 reconnect 成功。
+真机后续已确认：断网恢复过程中 Session ID 保持不变，same-session 主链成立；但第一次 reconnect 可能保持黑屏，第二次断开/重连可恢复画面。该缺陷已记录并按当前开发决定暂缓。完整 Android Gradle build 仍受容器无法下载 Gradle 9.5.0 限制。
 
 ## v5.2 本轮新增
 

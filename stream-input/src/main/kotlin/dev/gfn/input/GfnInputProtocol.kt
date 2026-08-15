@@ -3,7 +3,7 @@ package dev.gfn.input
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * GFN 键鼠输入协议。字段布局依据当前可工作的 CloudNow InputEncoder 行为整理。
+ * GFN 输入协议编码器。键鼠与 type-12 gamepad 字段均保持为可独立 fixture 验证的纯 Kotlin。
  * 这里不依赖 Android / WebRTC，便于做跨模块编译和 fixture 回归。
  */
 object GfnInputType {
@@ -14,6 +14,7 @@ object GfnInputType {
     const val MOUSE_BUTTON_DOWN: Int = 8
     const val MOUSE_BUTTON_UP: Int = 9
     const val MOUSE_WHEEL: Int = 10
+    const val GAMEPAD: Int = 12
 }
 
 enum class InputReleaseReason {
@@ -45,6 +46,60 @@ data class GfnKey(
 ) {
     val id: Int = (virtualKey shl 16) xor scanCode
     val isModifier: Boolean get() = modifierBit != 0
+}
+
+/** XInput button flags used by GFN type-12 gamepad snapshots. */
+object GfnGamepadButtons {
+    const val DPAD_UP = 0x0001
+    const val DPAD_DOWN = 0x0002
+    const val DPAD_LEFT = 0x0004
+    const val DPAD_RIGHT = 0x0008
+    const val START = 0x0010
+    const val BACK = 0x0020
+    const val LEFT_STICK = 0x0040
+    const val RIGHT_STICK = 0x0080
+    const val LEFT_BUMPER = 0x0100
+    const val RIGHT_BUMPER = 0x0200
+    const val GUIDE = 0x0400
+    const val A = 0x1000
+    const val B = 0x2000
+    const val X = 0x4000
+    const val Y = 0x8000
+}
+
+/** Normalized single-controller XInput-style snapshot. */
+data class GfnGamepadState(
+    val controllerId: Int = 0,
+    val buttons: Int = 0,
+    val leftTrigger: Int = 0,
+    val rightTrigger: Int = 0,
+    val leftStickX: Int = 0,
+    val leftStickY: Int = 0,
+    val rightStickX: Int = 0,
+    val rightStickY: Int = 0,
+) {
+    init {
+        require(controllerId in 0..3)
+        require(buttons in 0..0xffff)
+        require(leftTrigger in 0..0xff)
+        require(rightTrigger in 0..0xff)
+        require(leftStickX in Short.MIN_VALUE.toInt()..Short.MAX_VALUE.toInt())
+        require(leftStickY in Short.MIN_VALUE.toInt()..Short.MAX_VALUE.toInt())
+        require(rightStickX in Short.MIN_VALUE.toInt()..Short.MAX_VALUE.toInt())
+        require(rightStickY in Short.MIN_VALUE.toInt()..Short.MAX_VALUE.toInt())
+    }
+
+    companion object {
+        fun neutral(controllerId: Int = 0): GfnGamepadState = GfnGamepadState(controllerId = controllerId)
+    }
+}
+
+object GfnGamepadBitmap {
+    /** Advertise one normalized XInput-style controller in the selected slot. */
+    fun singleXInput(controllerId: Int): Int {
+        require(controllerId in 0..3)
+        return (1 shl controllerId) or (1 shl (controllerId + 8))
+    }
 }
 
 data class HeldKey(
@@ -288,6 +343,47 @@ class GfnInputPacketEncoder(
         return out
     }
 
+    /**
+     * GFN type-12 gamepad snapshot. Production v5.3 uses the reliable input channel because the
+     * current NVST answer advertises enablePartiallyReliableTransferGamepad=0.
+     *
+     * Raw body (38 bytes) matches both reference implementations:
+     * [u32 LE type=12][u16 LE 26][u16 LE slot][u16 LE bitmap][u16 LE 20]
+     * [u16 LE buttons][u8 LT][u8 RT][i16 LE LX/LY/RX/RY][u16 LE 0]
+     * [u16 LE 0x55][u16 LE 0][u64 LE timestamp].
+     *
+     * Protocol v3 reliable framing is [0x23][u64 BE timestamp][0x21][u16 BE size=38][body].
+     */
+    fun gamepad(state: GfnGamepadState, gamepadBitmap: Int): ByteArray {
+        require(gamepadBitmap in 0..0xffff)
+        val timestamp = timestampMicros()
+        val payloadOffset = if (protocolVersion >= 3) 12 else 0
+        val out = ByteArray(payloadOffset + 38)
+        if (protocolVersion >= 3) {
+            out[0] = 0x23
+            writeUInt64BE(out, 1, timestamp)
+            out[9] = 0x21
+            writeUInt16BE(out, 10, 38)
+        }
+        writeUInt32LE(out, payloadOffset, GfnInputType.GAMEPAD.toLong())
+        writeUInt16LE(out, payloadOffset + 4, 26)
+        writeUInt16LE(out, payloadOffset + 6, state.controllerId and 0x03)
+        writeUInt16LE(out, payloadOffset + 8, gamepadBitmap)
+        writeUInt16LE(out, payloadOffset + 10, 20)
+        writeUInt16LE(out, payloadOffset + 12, state.buttons)
+        out[payloadOffset + 14] = state.leftTrigger.toByte()
+        out[payloadOffset + 15] = state.rightTrigger.toByte()
+        writeInt16LE(out, payloadOffset + 16, state.leftStickX)
+        writeInt16LE(out, payloadOffset + 18, state.leftStickY)
+        writeInt16LE(out, payloadOffset + 20, state.rightStickX)
+        writeInt16LE(out, payloadOffset + 22, state.rightStickY)
+        writeUInt16LE(out, payloadOffset + 24, 0)
+        writeUInt16LE(out, payloadOffset + 26, 0x55)
+        writeUInt16LE(out, payloadOffset + 28, 0)
+        writeUInt64LE(out, payloadOffset + 30, timestamp)
+        return out
+    }
+
     private fun writeSingleEventHeader(out: ByteArray, timestamp: Long) {
         if (protocolVersion < 3) return
         out[0] = 0x23
@@ -300,6 +396,16 @@ class GfnInputPacketEncoder(
         out[offset + 1] = (value and 0xff).toByte()
     }
 
+    private fun writeUInt16LE(out: ByteArray, offset: Int, value: Int) {
+        out[offset] = (value and 0xff).toByte()
+        out[offset + 1] = ((value ushr 8) and 0xff).toByte()
+    }
+
+    private fun writeInt16LE(out: ByteArray, offset: Int, value: Int) {
+        val clamped = value.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()) and 0xffff
+        writeUInt16LE(out, offset, clamped)
+    }
+
     private fun writeInt16BE(out: ByteArray, offset: Int, value: Int) {
         val clamped = value.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()) and 0xffff
         writeUInt16BE(out, offset, clamped)
@@ -307,6 +413,10 @@ class GfnInputPacketEncoder(
 
     private fun writeUInt32LE(out: ByteArray, offset: Int, value: Long) {
         repeat(4) { i -> out[offset + i] = ((value ushr (i * 8)) and 0xff).toByte() }
+    }
+
+    private fun writeUInt64LE(out: ByteArray, offset: Int, value: Long) {
+        repeat(8) { i -> out[offset + i] = ((value ushr (i * 8)) and 0xff).toByte() }
     }
 
     private fun writeUInt64BE(out: ByteArray, offset: Int, value: Long) {

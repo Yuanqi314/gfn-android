@@ -49,7 +49,8 @@ class GfnWebRtcEngine(
         fun onTransportNeedsReconnect(sessionId: String, source: String, immediate: Boolean)
     }
 
-    private val factory: PeerConnectionFactory = GfnWebRtcRuntime.factory(context)
+    private val appContext: Context = context.applicationContext
+    private val factory: PeerConnectionFactory = GfnWebRtcRuntime.factory(appContext)
     private val lock = Any()
     private val generation = AtomicLong(0)
 
@@ -76,6 +77,7 @@ class GfnWebRtcEngine(
     private var inputDataChannel: DataChannel? = null
     private var controlDataChannel: DataChannel? = null
     private var inputController: GfnKeyboardMouseInputController? = null
+    private var gamepadController: GfnGamepadInputController? = null
     private var partialReliableThresholdMs = 300
     private var serverEnded = false
 
@@ -87,7 +89,7 @@ class GfnWebRtcEngine(
         }
 
         val hasExistingStream = synchronized(lock) {
-            peerConnection != null || signaling != null || inputController != null
+            peerConnection != null || signaling != null || inputController != null || gamepadController != null
         }
         if (hasExistingStream) {
             disconnectWithReason(InputReleaseReason.SessionSwitch, emitClosed = false) {
@@ -126,8 +128,10 @@ class GfnWebRtcEngine(
             state = StreamState.OpeningSignaling
         }
         val keyboardMouse = createKeyboardMouseController(currentGeneration)
+        val gamepad = createGamepadController(currentGeneration)
         synchronized(lock) {
             inputController = keyboardMouse
+            gamepadController = gamepad
             videoOutput?.let(::installVideoOutputCallbacksLocked)
         }
         emit()
@@ -163,11 +167,35 @@ class GfnWebRtcEngine(
         disconnectWithReason(InputReleaseReason.WebRtcDisconnect, emitClosed = false, onComplete = onDrained)
     }
 
-    fun onActivityResumed() = synchronized(lock) { inputController }?.onActivityResumed()
-    fun onActivityPaused() = synchronized(lock) { inputController }?.onActivityPaused()
-    fun onActivityDestroy() = synchronized(lock) { inputController }?.onActivityDestroy()
-    fun onOverlayChanged(open: Boolean) = synchronized(lock) { inputController }?.onOverlayChanged(open)
-    fun onFullscreenExit() = synchronized(lock) { inputController }?.releaseForFullscreenExit()
+    fun onActivityResumed() {
+        val (keyboard, gamepad) = inputControllers()
+        keyboard?.onActivityResumed()
+        gamepad?.onActivityResumed()
+    }
+
+    fun onActivityPaused() {
+        val (keyboard, gamepad) = inputControllers()
+        keyboard?.onActivityPaused()
+        gamepad?.onActivityPaused()
+    }
+
+    fun onActivityDestroy() {
+        val (keyboard, gamepad) = inputControllers()
+        keyboard?.onActivityDestroy()
+        gamepad?.onActivityDestroy()
+    }
+
+    fun onOverlayChanged(open: Boolean) {
+        val (keyboard, gamepad) = inputControllers()
+        keyboard?.onOverlayChanged(open)
+        gamepad?.onOverlayChanged(open)
+    }
+
+    fun onFullscreenExit() {
+        val (keyboard, gamepad) = inputControllers()
+        keyboard?.releaseForFullscreenExit()
+        gamepad?.releaseForFullscreenExit()
+    }
 
     fun bindVideoOutput(output: GfnVideoSurfaceView?) {
         synchronized(lock) {
@@ -207,14 +235,31 @@ class GfnWebRtcEngine(
                 synchronized(lock) { inputController }?.onMouseWheel(verticalAxis)
             }
 
+            override fun onGamepadKey(down: Boolean, event: android.view.KeyEvent): Boolean =
+                synchronized(lock) { gamepadController }?.onGamepadKey(down, event) == true
+
+            override fun onGamepadMotion(event: android.view.MotionEvent): Boolean =
+                synchronized(lock) { gamepadController }?.onGamepadMotion(event) == true
+
             override fun onWindowFocusChanged(focused: Boolean) {
-                synchronized(lock) { inputController }?.onWindowFocusChanged(focused)
+                val (keyboard, gamepad) = inputControllers()
+                keyboard?.onWindowFocusChanged(focused)
+                gamepad?.onWindowFocusChanged(focused)
             }
 
             override fun onPointerCaptureChanged(captured: Boolean) {
                 synchronized(lock) { inputController }?.onPointerCaptureChanged(captured)
             }
         }
+    }
+
+    private fun inputControllers(): Pair<GfnKeyboardMouseInputController?, GfnGamepadInputController?> =
+        synchronized(lock) { inputController to gamepadController }
+
+    private fun notifyInputStreamConnected(connected: Boolean) {
+        val (keyboard, gamepad) = inputControllers()
+        keyboard?.onStreamConnected(connected)
+        gamepad?.onStreamConnected(connected)
     }
 
     private fun validate(session: SessionInfo, config: StreamConfig): String? = when {
@@ -349,18 +394,18 @@ class GfnWebRtcEngine(
                     when (newState) {
                         PeerConnection.IceConnectionState.CONNECTED,
                         PeerConnection.IceConnectionState.COMPLETED -> {
-                            synchronized(lock) { inputController }?.onStreamConnected(true)
+                            notifyInputStreamConnected(true)
                             setState(StreamState.Connected)
                         }
                         PeerConnection.IceConnectionState.CHECKING -> setState(StreamState.IceChecking)
                         PeerConnection.IceConnectionState.DISCONNECTED -> {
-                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            notifyInputStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "ice.DISCONNECTED")
                             requestTransportReconnect(eventGeneration, "ice.DISCONNECTED", immediate = false)
                         }
-                        PeerConnection.IceConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
+                        PeerConnection.IceConnectionState.CLOSED -> notifyInputStreamConnected(false)
                         PeerConnection.IceConnectionState.FAILED -> {
-                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            notifyInputStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "ice.FAILED")
                             requestTransportReconnect(eventGeneration, "ice.FAILED", immediate = true)
                         }
@@ -374,17 +419,17 @@ class GfnWebRtcEngine(
                     updateIce { it.copy(peerConnectionState = newState.name) }
                     when (newState) {
                         PeerConnection.PeerConnectionState.CONNECTED -> {
-                            synchronized(lock) { inputController }?.onStreamConnected(true)
+                            notifyInputStreamConnected(true)
                             setState(StreamState.Connected)
                         }
                         PeerConnection.PeerConnectionState.DISCONNECTED -> {
-                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            notifyInputStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "pc.DISCONNECTED")
                             requestTransportReconnect(eventGeneration, "pc.DISCONNECTED", immediate = false)
                         }
-                        PeerConnection.PeerConnectionState.CLOSED -> synchronized(lock) { inputController }?.onStreamConnected(false)
+                        PeerConnection.PeerConnectionState.CLOSED -> notifyInputStreamConnected(false)
                         PeerConnection.PeerConnectionState.FAILED -> {
-                            synchronized(lock) { inputController }?.onStreamConnected(false)
+                            notifyInputStreamConnected(false)
                             requestSessionReconcile(eventGeneration, "pc.FAILED")
                             requestTransportReconnect(eventGeneration, "pc.FAILED", immediate = true)
                         }
@@ -510,6 +555,30 @@ class GfnWebRtcEngine(
             },
         )
 
+    private fun createGamepadController(eventGeneration: Long): GfnGamepadInputController =
+        GfnGamepadInputController(
+            context = appContext,
+            connectionGeneration = eventGeneration,
+            packetSink = object : GfnGamepadInputController.PacketSink {
+                override fun sendBinary(packet: ByteArray): Boolean {
+                    val channel = synchronized(lock) { inputDataChannel }
+                    if (channel == null || channel.state() != DataChannel.State.OPEN) return false
+                    return channel.send(DataChannel.Buffer(ByteBuffer.wrap(packet), true))
+                }
+
+                override fun isOpen(): Boolean =
+                    synchronized(lock) { inputDataChannel }?.state() == DataChannel.State.OPEN
+
+                override fun bufferedAmount(): Long =
+                    runCatching { synchronized(lock) { inputDataChannel }?.bufferedAmount() ?: 0L }.getOrDefault(0L)
+            },
+            onDiagnostics = { gamepad ->
+                ifCurrent(eventGeneration) {
+                    updateDiagnostics { it.copy(gamepad = gamepad) }
+                }
+            },
+        )
+
     private fun registerInputDataChannel(channel: DataChannel, eventGeneration: Long) {
         synchronized(lock) { inputDataChannel = channel }
         channel.registerObserver(
@@ -528,7 +597,9 @@ class GfnWebRtcEngine(
                             protocolReady = diagnostics.input.protocolReady,
                             note = "observer.onStateChange",
                         )
-                        synchronized(lock) { inputController }?.onDataChannelState(open)
+                        val (keyboard, gamepad) = inputControllers()
+                        keyboard?.onDataChannelState(open)
+                        gamepad?.onDataChannelState(open)
                         if (channelState == DataChannel.State.CLOSED) {
                             requestSessionReconcile(eventGeneration, "input_channel.CLOSED")
                             requestTransportReconnect(eventGeneration, "input_channel.CLOSED", immediate = true)
@@ -549,11 +620,14 @@ class GfnWebRtcEngine(
                         GfnInputForensics.logHandshake(eventGeneration, bytes, version)
                         version ?: return@runCatching
                         if (version < 2) return@runCatching
-                        val controller = synchronized(lock) { inputController }
+                        val (keyboard, gamepad) = inputControllers()
                         // 防御回调时序：即使 OPEN state callback 晚于第一条 handshake message，
                         // 也以 DataChannel 当前真实 state 先同步 transport gate，再处理 protocolReady。
-                        controller?.onDataChannelState(channel.state() == DataChannel.State.OPEN)
-                        controller?.onProtocolReady(version)
+                        val open = channel.state() == DataChannel.State.OPEN
+                        keyboard?.onDataChannelState(open)
+                        gamepad?.onDataChannelState(open)
+                        keyboard?.onProtocolReady(version)
+                        gamepad?.onProtocolReady(version)
                     }
                 }
             },
@@ -565,7 +639,10 @@ class GfnWebRtcEngine(
             protocolReady = diagnostics.input.protocolReady,
             note = "observer.registered",
         )
-        synchronized(lock) { inputController }?.onDataChannelState(initialState == DataChannel.State.OPEN)
+        val (keyboard, gamepad) = inputControllers()
+        val open = initialState == DataChannel.State.OPEN
+        keyboard?.onDataChannelState(open)
+        gamepad?.onDataChannelState(open)
     }
 
     private fun registerServerDataChannel(channel: DataChannel, eventGeneration: Long) {
@@ -854,6 +931,7 @@ class GfnWebRtcEngine(
         val oldPc: PeerConnection?
         val oldSignaling: GfnSignalingClient?
         val oldInput: GfnKeyboardMouseInputController?
+        val oldGamepad: GfnGamepadInputController?
         val channels: List<DataChannel>
         synchronized(lock) {
             oldTrack = videoTrack
@@ -861,11 +939,13 @@ class GfnWebRtcEngine(
             oldPc = peerConnection
             oldSignaling = signaling
             oldInput = inputController
+            oldGamepad = gamepadController
             channels = dataChannels.toList()
             dataChannels.clear()
             inputDataChannel = null
             controlDataChannel = null
             inputController = null
+            gamepadController = null
             videoTrack = null
             peerConnection = null
             signaling = null
@@ -881,7 +961,10 @@ class GfnWebRtcEngine(
             oldTrack.removeSink(oldOutput)
             oldOutput.inputListener = null
         }
-        if (!inputAlreadyDrained) oldInput?.shutdownWithoutTransport()
+        if (!inputAlreadyDrained) {
+            oldInput?.shutdownWithoutTransport()
+            oldGamepad?.shutdownWithoutTransport()
+        }
         channels.forEach { channel -> runCatching { channel.close(); channel.dispose() } }
         oldSignaling?.disconnect()
         oldPc?.close()
@@ -914,16 +997,22 @@ class GfnWebRtcEngine(
         onComplete: () -> Unit = {},
     ) {
         generation.incrementAndGet()
-        val input = synchronized(lock) { inputController }
-        if (input == null) {
+        val (keyboard, gamepad) = inputControllers()
+        val drainCount = listOfNotNull(keyboard, gamepad).size
+        if (drainCount == 0) {
             disconnectInternal(emitClosed = emitClosed, inputAlreadyDrained = true)
             onComplete()
             return
         }
-        input.prepareForDisconnect(reason) {
-            disconnectInternal(emitClosed = emitClosed, inputAlreadyDrained = true)
-            onComplete()
+        val remaining = java.util.concurrent.atomic.AtomicInteger(drainCount)
+        val drained = {
+            if (remaining.decrementAndGet() == 0) {
+                disconnectInternal(emitClosed = emitClosed, inputAlreadyDrained = true)
+                onComplete()
+            }
         }
+        keyboard?.prepareForDisconnect(reason, drained)
+        gamepad?.prepareForDisconnect(reason, drained)
     }
 
     private fun fail(reason: String) {

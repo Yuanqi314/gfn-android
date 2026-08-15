@@ -145,6 +145,30 @@ data class InputDiagnostics(
     val lastReleaseReason: String? = null,
 )
 
+data class GamepadDiagnostics(
+    val connected: Boolean = false,
+    val active: Boolean = false,
+    val dataChannelOpen: Boolean = false,
+    val protocolReady: Boolean = false,
+    val protocolVersion: Int? = null,
+    val deviceId: Int? = null,
+    val deviceName: String? = null,
+    val buttons: Int = 0,
+    val leftTrigger: Int = 0,
+    val rightTrigger: Int = 0,
+    val leftStickX: Int = 0,
+    val leftStickY: Int = 0,
+    val rightStickX: Int = 0,
+    val rightStickY: Int = 0,
+    val generatedPackets: Long = 0,
+    val submittedPackets: Long = 0,
+    val acceptedPackets: Long = 0,
+    val rejectedPackets: Long = 0,
+    val droppedPackets: Long = 0,
+    val lastEvent: String? = null,
+    val lastReleaseReason: String? = null,
+)
+
 data class AudioDiagnostics(
     val remoteAudioTrackPresent: Boolean = false,
     val remoteAudioTrackEnabled: Boolean = false,
@@ -193,6 +217,7 @@ data class StreamDiagnostics(
     val audio: AudioDiagnostics = AudioDiagnostics(),
     val control: ControlDiagnostics = ControlDiagnostics(),
     val input: InputDiagnostics = InputDiagnostics(),
+    val gamepad: GamepadDiagnostics = GamepadDiagnostics(),
     val reconnect: ReconnectDiagnostics = ReconnectDiagnostics(),
 )
 

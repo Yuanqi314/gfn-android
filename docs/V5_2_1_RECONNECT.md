@@ -58,3 +58,15 @@ This proves both media and the newly created `input_channel_v1` path are usable.
 ## Surface/input lifecycle fix
 
 Transport teardown intentionally clears the old `GfnVideoSurfaceView.inputListener`. The Surface itself can remain mounted across reconnect. Therefore every new WebRTC generation re-installs the dynamic input listener after creating its new `GfnKeyboardMouseInputController`; the listener resolves the current controller at event time and cannot retain the old generation.
+
+## True-device update before v5.3
+
+Observed on Android device after v5.2.1 delivery:
+
+```text
+network disconnect/recovery keeps the same GFN Session ID  PASS
+first reconnect may remain black-screen                    KNOWN DEFECT
+second disconnect/reconnect can restore video              OBSERVED
+```
+
+The same-session lifecycle result is accepted as verified. The first-reconnect black-screen failure remains unresolved and is intentionally deferred; v5.3 Gamepad does not modify the reconnect video path in an attempt to mask it.

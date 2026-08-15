@@ -43,7 +43,7 @@ import dev.gfn.stream.StreamState
 import dev.gfn.webrtc.GfnVideoSurfaceView
 import kotlinx.coroutines.delay
 
-/** v5.1：全屏 H.264 画面 + 硬件键盘/相对鼠标。Back 打开本地薄 Overlay，Esc 继续发给远端。 */
+/** 全屏 H.264 画面 + 键盘/相对鼠标/单手柄输入。Back 打开本地 Overlay，Esc 继续发给远端。 */
 @Composable
 fun FullscreenStreamScreen(
     controller: GfnStreamingController,
@@ -176,6 +176,15 @@ fun FullscreenStreamScreen(
             ) {
                 Text("串流菜单", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("打开 Overlay 已执行 releaseAll；Esc 不被占用，仍发送给远端游戏。")
+                val gamepad = diagnostics.gamepad
+                Text(
+                    "Gamepad: ${gamepad.deviceName ?: "未连接"} · " +
+                        "active=${gamepad.active} protocol=${gamepad.protocolVersion ?: "-"} · " +
+                        "buttons=0x${gamepad.buttons.toString(16).padStart(4, '0')} " +
+                        "LT=${gamepad.leftTrigger} RT=${gamepad.rightTrigger} · " +
+                        "LX=${gamepad.leftStickX} LY=${gamepad.leftStickY} " +
+                        "RX=${gamepad.rightStickX} RY=${gamepad.rightStickY}",
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { setLocalOverlay(false) }) { Text("返回游戏") }
                     OutlinedButton(

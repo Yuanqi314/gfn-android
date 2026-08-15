@@ -1,14 +1,16 @@
 package dev.gfn.webrtc
 
 import android.content.Context
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 
 /**
- * H.264 SDR 视频输出 + v5.1 硬件键盘/鼠标输入面。
- * 只负责 Android event capture；GFN mapping/state/transport 由 GfnKeyboardMouseInputController 处理。
+ * H.264 SDR 视频输出 + Android 输入捕获面。
+ * 只负责分流 Android KeyEvent/MotionEvent；键鼠与 gamepad 的 GFN mapping/state/transport
+ * 分别由 GfnKeyboardMouseInputController / GfnGamepadInputController 处理。
  */
 class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
     interface InputListener {
@@ -16,6 +18,8 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
         fun onMouseMove(dx: Float, dy: Float)
         fun onMouseButton(down: Boolean, button: Int): Boolean
         fun onMouseWheel(verticalAxis: Float)
+        fun onGamepadKey(down: Boolean, event: KeyEvent): Boolean
+        fun onGamepadMotion(event: MotionEvent): Boolean
         fun onWindowFocusChanged(focused: Boolean)
         fun onPointerCaptureChanged(captured: Boolean)
     }
@@ -90,6 +94,10 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (!inputCaptureEnabled) return super.onKeyDown(keyCode, event)
+        if (isGamepadEvent(event.device, event.source)) {
+            val handled = inputListener?.onGamepadKey(true, event) == true
+            return handled || super.onKeyDown(keyCode, event)
+        }
         val trace = GfnInputForensics.traceForSurface(event)
         if (event.repeatCount > 0) {
             // 保持 v5.1 既有语义：held state 只由第一次 DOWN 维护，不发送重复远端 DOWN。
@@ -103,10 +111,22 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (!inputCaptureEnabled) return super.onKeyUp(keyCode, event)
+        if (isGamepadEvent(event.device, event.source)) {
+            val handled = inputListener?.onGamepadKey(false, event) == true
+            return handled || super.onKeyUp(keyCode, event)
+        }
         val trace = GfnInputForensics.traceForSurface(event)
         val handled = inputListener?.onKey(false, trace) == true
         GfnInputForensics.markSurfaceHandled(trace, handled)
         return handled || super.onKeyUp(keyCode, event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (inputCaptureEnabled && isGamepadEvent(event.device, event.source)) {
+            val handled = inputListener?.onGamepadMotion(event) == true
+            if (handled) return true
+        }
+        return super.onGenericMotionEvent(event)
     }
 
     override fun onCapturedPointerEvent(event: MotionEvent): Boolean {
@@ -151,6 +171,12 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
             }
         }
         return super.onCapturedPointerEvent(event)
+    }
+
+    private fun isGamepadEvent(device: InputDevice?, source: Int): Boolean {
+        val sources = device?.sources ?: source
+        return sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
     }
 
     fun releaseRenderer() {

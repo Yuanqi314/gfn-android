@@ -126,6 +126,15 @@ grep -Fq 'videoOutput?.let(::installVideoOutputCallbacksLocked)' stream-webrtc/s
 echo 'V521_RECONNECT_GUARDS=PASS'
 ./verify-reconnect.sh
 
+# v5.3 single-controller gamepad: independent type-12 controller on the reliable input channel.
+grep -Fq 'const val GAMEPAD: Int = 12' stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt || { echo 'ERROR: v5.3 type-12 gamepad encoder missing' >&2; exit 1; }
+grep -Fq 'class GfnGamepadInputController' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnGamepadInputController.kt || { echo 'ERROR: v5.3 gamepad controller missing' >&2; exit 1; }
+grep -Fq 'onGamepadMotion' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoSurfaceView.kt || { echo 'ERROR: Android gamepad motion route missing' >&2; exit 1; }
+grep -Fq 'gamepad?.onProtocolReady(version)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: gamepad protocol handshake route missing' >&2; exit 1; }
+grep -Fq 'a=ri.enablePartiallyReliableTransferGamepad:0' stream-signaling/src/main/kotlin/dev/gfn/signaling/GfnSignalingProtocol.kt || { echo 'ERROR: v5.3 reliable-only gamepad assumption changed' >&2; exit 1; }
+echo 'V530_GAMEPAD_GUARDS=PASS'
+./verify-gamepad.sh
+
 # v5.1.9 stable keyboard baseline: Set-1 is the sole production path; all C2/C3 probes are removed.
 test ! -e stream-webrtc/src/main/java/dev/gfn/webrtc/GfnKeyboardWireMode.kt || { echo 'ERROR: experiment-only GfnKeyboardWireMode.kt still exists' >&2; exit 1; }
 if grep -RqsE 'LOCK_KEYS_SYNC|lockKeysSync|GfnKeyboardWireMode|GfnKeyboardWirePolicy|setKeyboardWireMode|GfnCapsCompat|GfnLockState|C2_ISO|C3_OPENNOW' stream-input/src/main stream-webrtc/src/main app/src/main; then

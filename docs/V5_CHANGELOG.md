@@ -1,3 +1,17 @@
+# v5.3 — Single-Controller Gamepad
+
+- v5.2.1 真机确认网络恢复前后 Session ID 不变；第一次 reconnect 可能黑屏、第二次 reconnect 恢复的问题记录为 deferred known defect。
+- 新增独立 `GfnGamepadInputController`，不把 controller 状态塞入 keyboard/mouse controller。
+- `stream-input` 新增 GFN type-12 38-byte gamepad body encoder 与 XInput flags。
+- v3 当前走 reliable `[0x23][timestamp][0x21][size][body]`；由于 NVST 仍声明 `enablePartiallyReliableTransferGamepad=0`，本版不启用 PR wrapper。
+- Android 单手柄 slot 0：ABXY、D-Pad、LB/RB、LT/RT、Start/Back、L3/R3、双摇杆。
+- 摇杆采用 15% radial deadzone；Android Y 轴转为 XInput 方向；trigger 按设备 MotionRange 归一化到 0–255。
+- 设备 removal、Overlay/focus/lifecycle/transport teardown 都发送/维护 neutral state，避免远端卡键/卡轴。
+- `GfnVideoSurfaceView` 在键盘映射前识别 GAMEPAD/JOYSTICK event source，避免手柄按键误入 Windows keyboard path。
+- reconnect 的新 transport generation 会新建 gamepad controller 并重新扫描已连接 Android devices。
+- 新增 `GamepadDiagnostics`、Overlay 状态行、`verify-gamepad.sh`、v5.3 reference matrix/test guide。
+- 暂不实现 rumble/type13、多控制器、DualSense 专有功能、PR gamepad negotiation。
+
 # v5.1.9 — Keyboard Stable Baseline
 
 - 真机已确认 Cyberpunk 2077 的有效修复变量是新 Session `keyboardLayout=en-US`。

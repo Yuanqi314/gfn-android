@@ -6,7 +6,101 @@ rm -rf "$BUILD"
 mkdir -p "$BUILD"
 cat > "$BUILD/AndroidContext.kt" <<'KT'
 package android.content
-open class Context
+import android.hardware.input.InputManager
+open class Context {
+    open val applicationContext: Context get() = this
+    open fun getSystemService(name: String): Any = InputManager()
+    companion object { const val INPUT_SERVICE: String = "input" }
+}
+KT
+cat > "$BUILD/AndroidOs.kt" <<'KT'
+package android.os
+class Looper { companion object { fun getMainLooper(): Looper = Looper() } }
+class Handler(val looper: Looper)
+KT
+cat > "$BUILD/AndroidLog.kt" <<'KT'
+package android.util
+object Log { fun i(tag: String, msg: String): Int = 0 }
+KT
+cat > "$BUILD/AndroidInput.kt" <<'KT'
+package android.hardware.input
+import android.os.Handler
+import android.view.InputDevice
+class InputManager {
+    interface InputDeviceListener {
+        fun onInputDeviceAdded(deviceId: Int)
+        fun onInputDeviceRemoved(deviceId: Int)
+        fun onInputDeviceChanged(deviceId: Int)
+    }
+    val inputDeviceIds: IntArray get() = intArrayOf()
+    fun getInputDevice(id: Int): InputDevice? = null
+    fun registerInputDeviceListener(listener: InputDeviceListener, handler: Handler?) = Unit
+    fun unregisterInputDeviceListener(listener: InputDeviceListener) = Unit
+}
+KT
+cat > "$BUILD/AndroidView.kt" <<'KT'
+package android.view
+class InputDevice(
+    val id: Int = 0,
+    val name: String = "stub",
+    val sources: Int = 0,
+) {
+    class MotionRange(val min: Float = -1f, val max: Float = 1f)
+    fun getMotionRange(axis: Int): MotionRange? = null
+    companion object {
+        const val SOURCE_GAMEPAD = 0x00000401
+        const val SOURCE_JOYSTICK = 0x01000010
+    }
+}
+class KeyEvent(
+    val deviceId: Int = 0,
+    val device: InputDevice? = null,
+    val source: Int = 0,
+    val keyCode: Int = 0,
+) {
+    companion object {
+        const val KEYCODE_DPAD_UP = 19
+        const val KEYCODE_DPAD_DOWN = 20
+        const val KEYCODE_DPAD_LEFT = 21
+        const val KEYCODE_DPAD_RIGHT = 22
+        const val KEYCODE_BUTTON_A = 96
+        const val KEYCODE_BUTTON_B = 97
+        const val KEYCODE_BUTTON_X = 99
+        const val KEYCODE_BUTTON_Y = 100
+        const val KEYCODE_BUTTON_L1 = 102
+        const val KEYCODE_BUTTON_R1 = 103
+        const val KEYCODE_BUTTON_L2 = 104
+        const val KEYCODE_BUTTON_R2 = 105
+        const val KEYCODE_BUTTON_THUMBL = 106
+        const val KEYCODE_BUTTON_THUMBR = 107
+        const val KEYCODE_BUTTON_START = 108
+        const val KEYCODE_BUTTON_SELECT = 109
+        const val KEYCODE_BUTTON_MODE = 110
+    }
+}
+class MotionEvent(
+    val deviceId: Int = 0,
+    val device: InputDevice? = null,
+    val source: Int = 0,
+    val actionMasked: Int = ACTION_MOVE,
+) {
+    fun getAxisValue(axis: Int): Float = 0f
+    companion object {
+        const val ACTION_MOVE = 2
+        const val AXIS_X = 0
+        const val AXIS_Y = 1
+        const val AXIS_Z = 11
+        const val AXIS_RX = 12
+        const val AXIS_RY = 13
+        const val AXIS_RZ = 14
+        const val AXIS_HAT_X = 15
+        const val AXIS_HAT_Y = 16
+        const val AXIS_LTRIGGER = 17
+        const val AXIS_RTRIGGER = 18
+        const val AXIS_GAS = 22
+        const val AXIS_BRAKE = 23
+    }
+}
 KT
 cat > "$BUILD/JsonStub.kt" <<'KT'
 package org.json
@@ -91,6 +185,8 @@ open class GfnVideoSurfaceView {
         fun onMouseMove(dx: Float, dy: Float)
         fun onMouseButton(down: Boolean, button: Int): Boolean
         fun onMouseWheel(verticalAxis: Float)
+        fun onGamepadKey(down: Boolean, event: android.view.KeyEvent): Boolean
+        fun onGamepadMotion(event: android.view.MotionEvent): Boolean
         fun onWindowFocusChanged(focused: Boolean)
         fun onPointerCaptureChanged(captured: Boolean)
     }
@@ -193,15 +289,18 @@ open class PeerConnectionFactory {
 KT
 
 kotlinc -J-Dfile.encoding=UTF-8 \
-  "$BUILD/AndroidContext.kt" "$BUILD/JsonStub.kt" "$BUILD/LocalStubs.kt" "$BUILD/WebRtcStubs.kt" \
+  "$BUILD/AndroidContext.kt" "$BUILD/AndroidOs.kt" "$BUILD/AndroidLog.kt" "$BUILD/AndroidInput.kt" "$BUILD/AndroidView.kt" \
+  "$BUILD/JsonStub.kt" "$BUILD/LocalStubs.kt" "$BUILD/WebRtcStubs.kt" \
   "$ROOT/core-model/src/main/kotlin/dev/gfn/core/model/Models.kt" \
   "$ROOT/core-network/src/main/kotlin/dev/gfn/network/Json.kt" \
   "$ROOT/core-network/src/main/kotlin/dev/gfn/network/HttpTransport.kt" \
   "$ROOT/stream-core/src/main/kotlin/dev/gfn/stream/StreamingEngine.kt" \
   "$ROOT/stream-input/src/main/kotlin/dev/gfn/input/GfnInputProtocol.kt" \
   "$ROOT/stream-signaling/src/main/kotlin/dev/gfn/signaling/GfnSignalingProtocol.kt" \
+  "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnGamepadInputController.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt" \
   -d "$BUILD/check.jar" > "$BUILD/compile.log" 2>&1
 
 test -s "$BUILD/check.jar"
 echo 'V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS'
+echo 'V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS'

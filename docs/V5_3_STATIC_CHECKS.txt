@@ -1,0 +1,47 @@
+v5.3 Single-Controller Gamepad — static / targeted verification
+
+PASS: GFN input type 12 exists in the pure Kotlin encoder.
+PASS: type-12 raw body is exactly 38 bytes with LE type/length/index/bitmap/buttons/axes/timestamp.
+PASS: protocol-v3 reliable gamepad framing is [0x23][timestamp BE][0x21][size=38 BE][body], 50 bytes total.
+PASS: slot-0 normalized XInput bitmap is 0x0101.
+PASS: Android gamepad bridge is independent from GfnKeyboardMouseInputController.
+PASS: Android SOURCE_GAMEPAD / SOURCE_JOYSTICK key events route before keyboard mapping.
+PASS: Android joystick MotionEvent routes to GfnGamepadInputController.
+PASS: ABXY / D-Pad / LB-RB / Start-Back / L3-R3 / Guide bit mappings exist.
+PASS: LT/RT analog + digital fallback paths exist.
+PASS: left/right sticks use 15% radial deadzone and signed i16 normalization.
+PASS: Android Y axes are inverted before XInput wire encoding.
+PASS: device removal sends neutral state with bitmap 0x0000 when transport is available.
+PASS: input events received while Overlay/focus/lifecycle gate is inactive are not replayed after reactivation.
+PASS: changed snapshots plus 100 ms presence refresh policy exists.
+PASS: replaceable snapshots are skipped under >64 KiB DataChannel backpressure.
+PASS: current NVST still advertises a=ri.enablePartiallyReliableTransferGamepad:0.
+PASS: v5.3 does not introduce type13 haptics/rumble.
+PASS: reconnect engine creates a new gamepad controller generation and routes fresh input handshake state.
+PASS: keyboard mapper/controller/forensics remain byte-identical to v5.2.1 baseline.
+PASS: existing stable keyboard packet fixture still passes.
+PASS: verify-gamepad.sh / verify-reconnect-engine.sh / verify-reconnect.sh / verify-core.sh shell syntax.
+
+Targeted Kotlin verification:
+PASS: exact type-12 v2/v3 packet fixture.
+PASS: actual GfnGamepadInputController compile and behavior fixture with Android API-shaped stubs.
+PASS: actual GfnVideoSurfaceView gamepad-route API-shaped compile.
+PASS: actual GfnWebRtcEngine + actual GfnGamepadInputController API-shaped compile.
+PASS: stream-core pure Kotlin module compile.
+PASS: stream-input pure Kotlin module compile.
+PASS: v5.2 Stream Settings resolver/store/profile/controller regression suite.
+PASS: v5.2.1 same-session reconnect Session fixture and state-machine fixture reached PASS in current source.
+
+UI parse boundary:
+PASS: FullscreenStreamScreen.kt standalone kotlinc output contained zero syntax-error patterns.
+NOTE: unresolved Android/Compose references are expected without the Android/Compose classpath; this is not a full UI compile.
+
+Android Gradle build:
+NOT COMPLETED.
+./gradlew :app:compileDebugKotlin --offline --no-daemon --stacktrace attempts to obtain Gradle 9.5.0 and fails before project compilation because services.gradle.org cannot be resolved (curl status 6).
+
+True-device boundary:
+PENDING: v5.3 controller packet acceptance and game behavior.
+PENDING: physical controller model-specific Android mappings.
+PENDING: Guide/Home delivery, because Android/system firmware may consume it.
+DEFERRED: rumble/type13, multi-controller, partially reliable gamepad, DualSense-specific features.

@@ -1,4 +1,4 @@
-# 当前状态 · v5.2 Stream Settings Foundation
+# 当前状态 · v5.3 Single-Controller Gamepad
 
 ## 真机已确认
 
@@ -17,21 +17,27 @@ control_channel Session End                    ✅
 Keyboard / Mouse stable baseline               ✅
 Cyberpunk 2077 keyboardLayout=en-US fix        ✅
 CS2 keyboard regression                        ✅
+Stream settings snapshot                       ✅
+1920x1080@60 H.264 / 2ch / 100 Mbps            ✅ 当前环境
+same-session reconnect keeps Session ID        ✅
 ```
+
+## v5.2.1 Reconnect 已知缺陷
+
+真机已确认：断网后自动重连界面中的 Session 没有变化，same-session recovery 主约束成立。
+
+同时存在已知未修问题：
+
+```text
+第一次 reconnect → 可能持续黑屏
+再次断开 / reconnect → 可恢复画面
+```
+
+按当前开发决定，该缺陷先记录，不混入 v5.3 Gamepad。后续需要单独做 reconnect video-path 取证，不能用 gamepad 修改顺带“修”。
 
 ## Keyboard soft-freeze
 
-Cyberpunk 2077 最终真机裁决：
-
-```text
-Session keyboardLayout=zh-CN/auto-derived Chinese
-→ A-Z 进入远端 Windows completion/composition 路径
-
-新 Session keyboardLayout=en-US
-→ Caps OFF A-Z 恢复正常
-```
-
-v5.1.9 已回到 production keyboard semantics：
+生产语义保持：
 
 ```text
 Windows VK
@@ -40,64 +46,67 @@ Windows VK
 + ordered input_channel_v1
 ```
 
-并删除调查期的 scan=0 / type19 / Caps synthetic LSHIFT / Wire A-B。v5.2 对这些文件保持 byte-identical，Keyboard packet semantics 正式进入 soft-freeze。
+Cyberpunk 2077 的已验证修复继续是 Session `keyboardLayout=en-US`。没有新的可重复真机证据时，不修改 keyboard packet semantics。
 
-## v5.2 当前重点
+## v5.3 Gamepad
+
+当前实现：
+
+```text
+Android SOURCE_GAMEPAD / SOURCE_JOYSTICK
+        ↓
+GfnGamepadInputController
+        ↓
+单 controller slot 0
+XInput-style state
+        ↓
+GFN type12
+        ↓
+reliable input_channel_v1
+```
+
+第一阶段支持：
+
+```text
+ABXY
+D-Pad
+LB/RB
+LT/RT
+Start/Back
+L3/R3
+Left/Right Stick
+```
+
+协议与映射离线 fixture 已通过；真机 controller 行为尚待验证。
+
+当前明确不支持：
+
+```text
+multi-controller
+rumble / haptics / type13
+partially reliable gamepad transport
+DualSense touchpad / gyro / special reports
+```
+
+## Stream Settings snapshot
+
+已保持：
 
 ```text
 PersistentStreamSettings
         ↓ resolve once
-subscription entitlement
-+ current engine capability
-        ↓
 ResolvedLaunchProfile
-        ↓
-CREATE / persist / CLAIM / WebRTC
+        ↓ immutable for Session lifetime
+CREATE / persist / CLAIM / WebRTC / Reconnect
 ```
 
-当前公开设置：
+v5.3 不重新读取活动 Session 的 settings，也不修改已验证的 `keyboardLayout` snapshot 行为。
+
+## 后续顺序
+
+v5.3 真机通过后：
 
 ```text
-Keyboard Layout：Auto / en-US(default) / supported layouts
-Resolution：Auto / 1920x1080
-FPS：Auto / 60
-Max Bitrate：20 Mbps default，5–100 Mbps client guard
-Audio：Stereo 2ch
-```
-
-当前不公开：
-
-```text
-HEVC
-Main10
-HDR10
-5.1
-120 / 240 FPS
-```
-
-### 证据边界
-
-```text
-1080p60 H.264 SDR8 Stereo = 既有稳定真机路径
-20 Mbps                    = 稳定默认
-5–100 Mbps                 = client guard；非默认码率真机 A/B 待验证
-```
-
-## Legacy Resume
-
-v5.1.9 及更早的 persisted Session 没有完整 `ResolvedLaunchProfile`。
-
-v5.2 不根据当前 Settings 猜旧 Session 参数；旧记录必须 End/Cleanup 后创建新 Session。
-
-## 下一步
-
-v5.2 真机验证通过后：
-
-```text
-v5.2.1 Reconnect
-        ↓
-v5.3 Gamepad
-        ↓
 v5.4 Audio / 5.1
         ↓
 v6.0 HEVC Main SDR8
@@ -107,6 +116,8 @@ v6.1 Main10 SDR10
 v6.2 HDR10
 ```
 
+Reconnect 首次黑屏缺陷单独保留为 bug backlog，可在不污染上述功能版本的情况下另开修复分支。
+
 ## 构建边界
 
-离线 resolver / persistence / controller fixtures 与 targeted Kotlin compile 已通过；完整 Android Gradle build 当前在下载 Gradle 9.5.0 前即因容器 DNS 无法解析 `services.gradle.org` 而停止，因此不能声称 APK 全工程编译通过。
+纯 Kotlin packet/controller fixtures、keyboard regression 与 WebRTC engine API-shaped compile 可以在当前容器验证。完整 Android Gradle build 仍受 Gradle 9.5.0 未缓存且 `services.gradle.org` DNS 不可用限制；不能声称最终 APK 全工程编译通过。
