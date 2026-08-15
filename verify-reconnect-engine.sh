@@ -119,6 +119,8 @@ import org.webrtc.DataChannel
 import org.webrtc.PeerConnectionFactory
 
 object GfnWebRtcRuntime { fun factory(context: Context): PeerConnectionFactory = PeerConnectionFactory() }
+data class GfnAudioRouteSnapshot(val likelyMaxChannels: Int? = 2, val summary: String = "stub")
+object GfnAndroidAudioRouteProbe { fun detect(context: Context): GfnAudioRouteSnapshot = GfnAudioRouteSnapshot() }
 
 sealed interface GfnSignalingEvent {
     data object Connected : GfnSignalingEvent

@@ -38,7 +38,7 @@ v5.1.9 已完成 Cyberpunk 2077 + CS2 回归，Keyboard packet semantics 进入 
 | Resolution setting | Yes | Yes | Auto + 当前 1920x1080 | Resolver fixture；默认路径既有真机 |
 | FPS setting | Yes | Yes | Auto + 当前 60 FPS | Resolver fixture；默认路径既有真机 |
 | Max bitrate setting | Yes | Yes | 5–100 Mbps client guard, 20 Mbps default | 100 Mbps 当前真机环境通过；不外推为服务端全局上限 |
-| Audio mode setting | Yes | platform capability based | 当前仅 Stereo 2ch | Resolver fixture；Stereo 既有真机 |
+| Audio mode setting | Yes | stereo-focused | 2ch native + 6ch experimental request | v5.4 fixture；6ch true-device 未验证 |
 | Codec choice exposed | Yes | Yes | **No**，当前固定 H.264 | 保守冻结 |
 | Main10/HDR exposed | implementation-dependent | Yes | **No** | 后续版本单独取证 |
 | Immutable launch snapshot | settings copied into session flow | settings passed through session flow | `ResolvedLaunchProfile` | Resolver + persistence fixtures |
@@ -54,7 +54,7 @@ Current verified media path:
 1920x1080 @ 60 FPS
 H.264
 SDR8
-Stereo 2ch
+Stereo 2ch（v5.4 显式启用 ADM stereo；独立 L/R 尚待素材验证）
 20 Mbps default
 100 Mbps tested successfully on the current true-device/session environment
 ```
@@ -155,6 +155,35 @@ reliable input_channel_v1
 The `0x0101` bitmap is a **client-side normalized virtual-controller declaration** for slot 0; it does not claim the physical Android controller is actually an Xbox-branded device. Guide/Mode is mapped when Android delivers `KEYCODE_BUTTON_MODE`, but Android or the device firmware may consume it before the app; true-device behavior remains unverified until device testing.
 
 v5.3 intentionally does not enable type13 rumble/haptics or the partially-reliable gamepad channel. The current NVST answer still advertises `a=ri.enablePartiallyReliableTransferGamepad:0`, so PR gamepad transport remains a later isolated experiment rather than an assumed protocol requirement.
+
+
+## Audio — v5.4
+
+| Feature | CloudNow | OpenNOW | gfn-android v5.4 | Verified |
+|---|---|---|---|---|
+| Opus stereo Answer | adds `stereo=1` | adds `stereo=1` | adds `stereo=1` on first game-audio Opus fmtp | SDP fixture |
+| Android ADM stereo output config | custom Apple audio device | host/browser dependent | `JavaAudioDeviceModule.setUseStereoOutput(true)` | API-shaped compile; true-device L/R separation pending |
+| 6ch CloudMatch request | Yes | not used as native-5.1 witness here | existing `audioMode/surroundAudioInfo` with snapshot=6 | source + settings fixture |
+| multiopus Offer detection | Yes | no equivalent path found in current checked source | requires `multiopus/*/6` for 6ch mode | SDP fixture |
+| rejected multiopus answer repair | rebuilds game-audio section | no equivalent path found | rebuild first game-audio only; reuse Offer fmtp + Answer transport/BUNDLE | SDP fixture |
+| exact 5.1 channel mapping | Offer-driven | n/a | Offer-driven; fixture uses `0,4,1,2,3,5` | fixture only |
+| native physical 5.1 playout | custom multichannel audio device | not established | **No**; upstream Android Java ADM configured 2ch | explicit capability guard |
+| 6ch output label | native when route supports it | n/a | **experimental negotiation/2ch-ADM probe** | UI/static guard |
+
+### v5.4 evidence boundary
+
+The important distinction is deliberate:
+
+```text
+requested audio channels = {2, 6}
+native preserved output  = {2}
+```
+
+CloudNow demonstrates that multiopus negotiation and true multichannel device playout are separate engineering problems: it performs SDP repair **and** owns a custom multichannel audio device. gfn-android v5.4 implements the negotiation side but keeps upstream Android Java ADM, so a successful `multiopus/6` negotiation must not be reported as native 5.1.
+
+OpenNOW is useful as a second witness for Opus `stereo=1`/audio-bandwidth Answer behavior, but the checked current source did not provide an equivalent multiopus/native-5.1 implementation. Absence of a found implementation is not treated as protocol proof.
+
+---
 
 ## HEVC — v6.0 placeholder
 

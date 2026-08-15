@@ -1,3 +1,16 @@
+# v5.4 — Audio Foundation
+
+- v5.3 Gamepad 因当前无可用手柄，true-device validation 明确标记 SKIPPED；离线实现/fixture 结果保留，不当成失败。
+- `JavaAudioDeviceModule` 显式启用 `setUseStereoOutput(true)`，把旧“有声”路径升级为明确的 Android WebRTC 2ch stereo 配置。
+- SDP Answer 对第一 game-audio Opus fmtp 幂等补 `stereo=1`。
+- Stream capability 新增实验 `audioChannels=6`，但 `nativeAudioOutputChannels` 明确保留 `{2}`。
+- 6ch 新 Session 要求 Offer 中存在 `multiopus/*/6`；不存在时明确失败，不伪造服务端能力。
+- 对 libwebrtc createAnswer 拒绝 multiopus 的场景，新增 first-audio-only Answer reconstruction：复用 Offer exact rtpmap/fmtp/extmap 与 Answer bundle transport/BUNDLE。
+- 6ch audio bandwidth 使用 256 kbps；2ch 保持 128 kbps。
+- 新增 Audio diagnostics、best-effort Android route capability probe、`verify-audio.sh` 以及 v5.4 reference/test docs。
+- 不实现/不宣称 native 5.1；真正 6ch playout 需要后续 custom Android ADM/PCM pipeline。
+- Keyboard packet、Gamepad type12、same-session reconnect 主逻辑保持不变；第一次 reconnect 黑屏继续作为独立 backlog。
+
 # v5.3 — Single-Controller Gamepad
 
 - v5.2.1 真机确认网络恢复前后 Session ID 不变；第一次 reconnect 可能黑屏、第二次 reconnect 恢复的问题记录为 deferred known defect。

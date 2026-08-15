@@ -214,6 +214,24 @@ data class VideoMediaTarget(
     val port: Int?,
 )
 
+
+data class AudioCodecDescription(
+    val payloadType: Int,
+    val name: String,
+    val clockRate: Int?,
+    val channels: Int?,
+    val fmtp: String?,
+)
+
+data class AudioAnswerMungeResult(
+    val sdp: String,
+    val mode: String,
+    val selectedCodec: AudioCodecDescription?,
+    val opusStereoEnabled: Boolean,
+    val surroundAccepted: Boolean,
+    val limitation: String? = null,
+)
+
 data class IceCredentialsPresence(
     val ufrag: String,
     val password: String,
@@ -229,7 +247,7 @@ data class NvstSdpConfig(
     val partialReliableThresholdMs: Int = 300,
 )
 
-/** 仅处理 v5.0 H.264/SDR8 所需的最小 SDP 变换。 */
+/** v5.4: H.264/SDR8 视频基线 + Stereo/multiopus 音频 Answer 变换。 */
 object GfnSdpTools {
     fun summarize(sdp: String, isOffer: Boolean): SdpSummary {
         val lines = lines(sdp)
@@ -330,6 +348,258 @@ object GfnSdpTools {
         }
         return output.joinToString(separator)
     }
+
+    /** Return codecs declared by the first game-audio m-line only. */
+    fun firstAudioCodecs(sdp: String): List<AudioCodecDescription> {
+        val input = lines(sdp)
+        val rtp = linkedMapOf<Int, Triple<String, Int?, Int?>>()
+        val fmtp = linkedMapOf<Int, String>()
+        var inFirstAudio = false
+        var audioSeen = false
+        for (line in input) {
+            if (line.startsWith("m=audio") && !audioSeen) {
+                inFirstAudio = true
+                audioSeen = true
+                continue
+            }
+            if (line.startsWith("m=")) {
+                if (inFirstAudio) break
+                inFirstAudio = false
+            }
+            if (!inFirstAudio) continue
+            if (line.startsWith("a=rtpmap:")) {
+                val rest = line.removePrefix("a=rtpmap:")
+                val pt = rest.substringBefore(' ').toIntOrNull() ?: continue
+                val encoding = rest.substringAfter(' ', "")
+                val parts = encoding.split('/')
+                val name = parts.getOrNull(0)?.takeIf(String::isNotBlank) ?: continue
+                val clock = parts.getOrNull(1)?.toIntOrNull()
+                val channels = parts.getOrNull(2)?.toIntOrNull()
+                rtp[pt] = Triple(name, clock, channels)
+            } else if (line.startsWith("a=fmtp:")) {
+                val rest = line.removePrefix("a=fmtp:")
+                val pt = rest.substringBefore(' ').toIntOrNull() ?: continue
+                fmtp[pt] = rest.substringAfter(' ', "").trim()
+            }
+        }
+        return rtp.map { (pt, value) ->
+            AudioCodecDescription(
+                payloadType = pt,
+                name = value.first,
+                clockRate = value.second,
+                channels = value.third,
+                fmtp = fmtp[pt],
+            )
+        }
+    }
+
+    fun firstAudioCodec(sdp: String, preferredName: String? = null): AudioCodecDescription? {
+        val codecs = firstAudioCodecs(sdp)
+        return preferredName?.let { wanted ->
+            codecs.firstOrNull { it.name.equals(wanted, ignoreCase = true) }
+        } ?: codecs.firstOrNull()
+    }
+
+    /**
+     * v5.4 audio answer policy.
+     *
+     * 2ch: retain libwebrtc's answer and add `stereo=1` to the first Opus fmtp when present.
+     * 6ch: CloudNow-derived experimental path. libwebrtc ships a multiopus decoder but does not
+     * advertise it in the builtin decoder factory, so createAnswer can reject the game-audio m-line.
+     * Rebuild only that first audio section using the offer's exact multiopus rtpmap/fmtp and the
+     * answer bundle transport. Android Java ADM still exposes 1/2-channel playout, so this is a
+     * negotiation/2ch-ADM probe, not a claim of native 5.1 output.
+     */
+    fun mungeAudioAnswer(answer: String, offer: String, requestedChannels: Int): AudioAnswerMungeResult {
+        if (requestedChannels < 6) {
+            val stereo = ensureFirstAudioOpusStereo(answer)
+            val selected = firstAudioCodec(stereo, "opus") ?: firstAudioCodec(stereo)
+            return AudioAnswerMungeResult(
+                sdp = stereo,
+                mode = "STEREO_NATIVE",
+                selectedCodec = selected,
+                opusStereoEnabled = selected?.fmtp?.containsParameter("stereo", "1") == true,
+                surroundAccepted = false,
+            )
+        }
+
+        val multiopus = firstAudioCodec(offer, "multiopus")
+            ?: return AudioAnswerMungeResult(
+                sdp = answer,
+                mode = "SURROUND_UNAVAILABLE",
+                selectedCodec = firstAudioCodec(answer),
+                opusStereoEnabled = false,
+                surroundAccepted = false,
+                limitation = "GFN Offer 未包含 multiopus；不能验证 6ch 音频。",
+            )
+        if (multiopus.channels != 6) {
+            return AudioAnswerMungeResult(
+                sdp = answer,
+                mode = "SURROUND_UNAVAILABLE",
+                selectedCodec = firstAudioCodec(answer),
+                opusStereoEnabled = false,
+                surroundAccepted = false,
+                limitation = "GFN multiopus Offer 声道数=${multiopus.channels ?: -1}，v5.4 仅验证 6ch。",
+            )
+        }
+
+        val existing = firstAudioCodec(answer, "multiopus")
+        val acceptedAlready = existing?.payloadType == multiopus.payloadType && firstAudioPort(answer)?.let { it > 0 } == true
+        val munged = if (acceptedAlready) answer else rebuildFirstAudioForMultiopus(answer, offer, multiopus)
+        val selected = firstAudioCodec(munged, "multiopus")
+        val accepted = selected?.payloadType == multiopus.payloadType && firstAudioPort(munged)?.let { it > 0 } == true
+        return AudioAnswerMungeResult(
+            sdp = munged,
+            mode = if (accepted) "SURROUND_MULTI_OPUS_ADM_2CH_PROBE" else "SURROUND_UNAVAILABLE",
+            selectedCodec = selected ?: firstAudioCodec(munged),
+            opusStereoEnabled = false,
+            surroundAccepted = accepted,
+            limitation = if (accepted) {
+                "multiopus 6ch 已协商；Android upstream JavaAudioDeviceModule 仍只配置 2ch playout，6ch→2ch 的实际行为（下混或失败）必须由真机裁决。"
+            } else {
+                "无法在 Answer 中接受 GFN multiopus 6ch。"
+            },
+        )
+    }
+
+    private fun ensureFirstAudioOpusStereo(sdp: String): String {
+        val separator = separator(sdp)
+        val input = lines(sdp)
+        val opusPts = firstAudioCodecs(sdp)
+            .filter { it.name.equals("opus", ignoreCase = true) && (it.channels == null || it.channels == 2) }
+            .map { it.payloadType.toString() }
+            .toSet()
+        if (opusPts.isEmpty()) return sdp
+
+        var inFirstAudio = false
+        var audioSeen = false
+        var changed = false
+        val output = input.map { line ->
+            if (line.startsWith("m=audio") && !audioSeen) {
+                audioSeen = true
+                inFirstAudio = true
+                return@map line
+            }
+            if (line.startsWith("m=")) inFirstAudio = false
+            if (!inFirstAudio || !line.startsWith("a=fmtp:")) return@map line
+            val rest = line.removePrefix("a=fmtp:")
+            val pt = rest.substringBefore(' ')
+            if (pt !in opusPts || line.containsParameter("stereo", "1")) return@map line
+            changed = true
+            val stereoParameter = Regex("(?:^|[;\\s])stereo=[^;\\s]+", RegexOption.IGNORE_CASE)
+            if (stereoParameter.containsMatchIn(line)) {
+                line.replace(stereoParameter) { match ->
+                    val prefix = match.value.takeWhile { it == ';' || it.isWhitespace() }
+                    "${prefix}stereo=1"
+                }
+            } else {
+                "$line;stereo=1"
+            }
+        }
+        return if (changed) output.joinToString(separator) else sdp
+    }
+
+    private fun rebuildFirstAudioForMultiopus(
+        answer: String,
+        offer: String,
+        multiopus: AudioCodecDescription,
+    ): String {
+        val separator = separator(answer)
+        val answerLines = lines(answer)
+        val transport = mutableListOf<String>()
+        var inVideo = false
+        for (line in answerLines) {
+            if (line.startsWith("m=video")) {
+                inVideo = true
+                continue
+            }
+            if (line.startsWith("m=")) inVideo = false
+            if (!inVideo) continue
+            if (
+                line.startsWith("a=ice-ufrag:") ||
+                line.startsWith("a=ice-pwd:") ||
+                line.startsWith("a=ice-options:") ||
+                line.startsWith("a=fingerprint:") ||
+                line.startsWith("a=setup:")
+            ) {
+                transport += line
+            }
+        }
+        if (transport.isEmpty()) return answer
+
+        val offerAudio = firstMediaSection(offer, "audio")
+        val audioMid = offerAudio.firstOrNull { it.startsWith("a=mid:") }
+            ?.substringAfter("a=mid:")?.trim()?.takeIf(String::isNotBlank) ?: "0"
+        val extmaps = offerAudio.filter { it.startsWith("a=extmap:") }
+        val fmtp = multiopus.fmtp.orEmpty()
+        val section = buildList {
+            add("m=audio 9 UDP/TLS/RTP/SAVPF ${multiopus.payloadType}")
+            add("c=IN IP4 0.0.0.0")
+            add("a=rtcp:9 IN IP4 0.0.0.0")
+            addAll(transport)
+            add("a=mid:$audioMid")
+            addAll(extmaps)
+            add("a=recvonly")
+            add("a=rtcp-mux")
+            add("a=rtcp-rsize")
+            add("a=rtpmap:${multiopus.payloadType} ${multiopus.name}/${multiopus.clockRate ?: 48_000}/${multiopus.channels ?: 6}")
+            add("a=rtcp-fb:${multiopus.payloadType} transport-cc")
+            if (fmtp.isNotBlank()) add("a=fmtp:${multiopus.payloadType} $fmtp")
+        }
+
+        val output = mutableListOf<String>()
+        var skippingFirstAudio = false
+        var replaced = false
+        for (line in answerLines) {
+            if (line.startsWith("a=group:BUNDLE")) {
+                val mids = line.removePrefix("a=group:BUNDLE")
+                    .trim().split(Regex("\\s+")).filter(String::isNotBlank).toMutableList()
+                if (audioMid !in mids) mids.add(0, audioMid)
+                output += "a=group:BUNDLE ${mids.joinToString(" ")}"
+                continue
+            }
+            if (line.startsWith("m=audio") && !replaced) {
+                replaced = true
+                skippingFirstAudio = true
+                output += section
+                continue
+            }
+            if (skippingFirstAudio) {
+                if (!line.startsWith("m=")) continue
+                skippingFirstAudio = false
+            }
+            output += line
+        }
+        return if (replaced) output.joinToString(separator) else answer
+    }
+
+    private fun firstMediaSection(sdp: String, media: String): List<String> {
+        val result = mutableListOf<String>()
+        var inTarget = false
+        var seen = false
+        for (line in lines(sdp)) {
+            if (line.startsWith("m=$media") && !seen) {
+                inTarget = true
+                seen = true
+                result += line
+                continue
+            }
+            if (line.startsWith("m=")) {
+                if (inTarget) break
+                inTarget = false
+            }
+            if (inTarget) result += line
+        }
+        return result
+    }
+
+    private fun firstAudioPort(sdp: String): Int? =
+        firstMediaSection(sdp, "audio").firstOrNull()
+            ?.split(Regex("\\s+"))?.getOrNull(1)?.toIntOrNull()
+
+    private fun String.containsParameter(name: String, value: String): Boolean =
+        Regex("(?:^|[;\\s])${Regex.escape(name)}=${Regex.escape(value)}(?:$|[;\\s])", RegexOption.IGNORE_CASE)
+            .containsMatchIn(this)
 
     fun injectBandwidth(sdp: String, videoKbps: Int, audioKbps: Int = 128): String {
         val separator = separator(sdp)

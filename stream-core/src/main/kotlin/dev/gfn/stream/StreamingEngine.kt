@@ -29,6 +29,8 @@ data class StreamEngineCapabilities(
     val codecs: Set<VideoCodecPreference>,
     val colorModes: Set<RequestedColorMode>,
     val audioChannels: Set<Int>,
+    /** Output channel counts the current ADM can explicitly configure; physical routes may still downmix. */
+    val nativeAudioOutputChannels: Set<Int> = audioChannels,
 ) {
     fun rejectionReason(config: StreamConfig): String? = when {
         StreamResolution(config.width, config.height) !in resolutions ->
@@ -57,6 +59,24 @@ object StreamCapabilityProfiles {
         codecs = setOf(VideoCodecPreference.H264),
         colorModes = setOf(RequestedColorMode.CompatibilitySdr),
         audioChannels = setOf(2),
+        nativeAudioOutputChannels = setOf(2),
+    )
+
+    /**
+     * v5.4 keeps the proven H.264/SDR/1080p60 media path and adds two audio request modes:
+     *
+     * - 2ch: ADM stereo playout via JavaAudioDeviceModule stereo output.
+     * - 6ch: experimental GFN multiopus negotiation probe. Upstream Android Java ADM exposes only
+     *   mono/stereo playout, so decoded surround is not claimed as native 5.1 output in this profile.
+     */
+    val V54_ANDROID_WEBRTC = StreamEngineCapabilities(
+        resolutions = setOf(StreamResolution(1920, 1080)),
+        frameRates = setOf(60),
+        maxBitrateKbpsRange = 5_000..100_000,
+        codecs = setOf(VideoCodecPreference.H264),
+        colorModes = setOf(RequestedColorMode.CompatibilitySdr),
+        audioChannels = setOf(2, 6),
+        nativeAudioOutputChannels = setOf(2),
     )
 }
 
@@ -174,6 +194,20 @@ data class AudioDiagnostics(
     val remoteAudioTrackEnabled: Boolean = false,
     val firstRtpPacketReceived: Boolean = false,
     val requestedChannels: Int = 2,
+    val admConfiguredOutputChannels: Int = 2,
+    val admStereoOutputEnabled: Boolean = true,
+    val likelyRouteMaxChannels: Int? = null,
+    val likelyRouteSummary: String = "unknown",
+    val offerCodec: String? = null,
+    val offerChannels: Int? = null,
+    val answerCodec: String? = null,
+    val answerChannels: Int? = null,
+    val opusStereoEnabled: Boolean = false,
+    val surroundOfferPresent: Boolean = false,
+    val surroundNegotiationAccepted: Boolean = false,
+    val nativeSurroundOutput: Boolean = false,
+    val outputMode: String = "ADM_STEREO_2CH",
+    val limitation: String? = null,
     val androidUsage: String = "USAGE_GAME",
     val androidContentType: String = "CONTENT_TYPE_MUSIC",
     val volumeStream: String = "STREAM_MUSIC",

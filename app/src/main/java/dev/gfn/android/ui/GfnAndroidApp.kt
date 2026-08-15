@@ -259,7 +259,7 @@ private fun HomeScreen(
             Text("GFN Android Lab", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(6.dp))
             Text(
-                "独立 Android GFN 客户端 · v5.2.1 Same-Session Reconnect",
+                "独立 Android GFN 客户端 · v5.4 Audio Foundation",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -561,7 +561,7 @@ private fun GameDetailCard(
                 }.ifEmpty { listOf("标准 GFN") }.joinToString(" · "),
                 color = MaterialTheme.colorScheme.primary,
             )
-            Text("v5.2.1 保持 H.264 / SDR8 / 1080p60 / Stereo；Reconnect 复用同一 Session ID 与冻结 snapshot，HEVC/Main10/HDR 尚未启用。")
+            Text("v5.4 保持 H.264 / SDR8 / 1080p60；Stereo 现在显式启用 Android WebRTC ADM 2ch 输出配置，6ch 仅作为 multiopus 协商/接收实验，不宣称原生 5.1，也不预设一定能下混。")
             if (detail.variants.isEmpty()) {
                 Text("当前详情没有可启动 variant。", color = MaterialTheme.colorScheme.error)
             } else {
@@ -604,7 +604,7 @@ private fun SessionScreen(
     ) {
         item {
             Text("GFN 会话 / WebRTC", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
-            Text("v5.2.1 Reconnect 继续使用不可变 ResolvedLaunchProfile；键盘 packet 语义保持 v5.1.9 soft-freeze。")
+            Text("v5.4 Audio 继续使用不可变 ResolvedLaunchProfile；键盘 packet 语义保持 v5.1.9 soft-freeze，v5.3 Gamepad 真机验证因无手柄暂跳过。")
         }
 
         if (resumeRecord != null) {
@@ -943,14 +943,33 @@ private fun DiagnosticsScreen(
         item {
             DiagnosticSection(
                 "Audio",
-                listOf(
-                    "Remote audio track" to streamDiagnostics.audio.remoteAudioTrackPresent.asYesNo(),
-                    "Audio track enabled" to streamDiagnostics.audio.remoteAudioTrackEnabled.asYesNo(),
-                    "First audio RTP" to streamDiagnostics.audio.firstRtpPacketReceived.asYesNo(),
-                    "Android audio usage" to streamDiagnostics.audio.androidUsage,
-                    "Android content type" to streamDiagnostics.audio.androidContentType,
-                    "Volume stream" to streamDiagnostics.audio.volumeStream,
-                ),
+                buildList {
+                    add("Remote audio track" to streamDiagnostics.audio.remoteAudioTrackPresent.asYesNo())
+                    add("Audio track enabled" to streamDiagnostics.audio.remoteAudioTrackEnabled.asYesNo())
+                    add("First audio RTP" to streamDiagnostics.audio.firstRtpPacketReceived.asYesNo())
+                    add("Requested channels" to "${streamDiagnostics.audio.requestedChannels}ch")
+                    add("ADM output" to "${streamDiagnostics.audio.admConfiguredOutputChannels}ch")
+                    add("ADM stereo enabled" to streamDiagnostics.audio.admStereoOutputEnabled.asYesNo())
+                    add("Likely route max" to (streamDiagnostics.audio.likelyRouteMaxChannels?.let { "${it}ch" } ?: "unknown"))
+                    add("Likely route" to streamDiagnostics.audio.likelyRouteSummary)
+                    add("Offer audio" to listOfNotNull(
+                        streamDiagnostics.audio.offerCodec,
+                        streamDiagnostics.audio.offerChannels?.let { "${it}ch" },
+                    ).joinToString("/").ifBlank { "-" })
+                    add("Answer audio" to listOfNotNull(
+                        streamDiagnostics.audio.answerCodec,
+                        streamDiagnostics.audio.answerChannels?.let { "${it}ch" },
+                    ).joinToString("/").ifBlank { "-" })
+                    add("Opus stereo=1" to streamDiagnostics.audio.opusStereoEnabled.asYesNo())
+                    add("6ch offer" to streamDiagnostics.audio.surroundOfferPresent.asYesNo())
+                    add("6ch negotiated" to streamDiagnostics.audio.surroundNegotiationAccepted.asYesNo())
+                    add("Native 5.1 output" to streamDiagnostics.audio.nativeSurroundOutput.asYesNo())
+                    add("Output mode" to streamDiagnostics.audio.outputMode)
+                    streamDiagnostics.audio.limitation?.let { add("Limitation" to it) }
+                    add("Android audio usage" to streamDiagnostics.audio.androidUsage)
+                    add("Android content type" to streamDiagnostics.audio.androidContentType)
+                    add("Volume stream" to streamDiagnostics.audio.volumeStream)
+                },
             )
         }
         item {
@@ -1201,7 +1220,17 @@ private fun SettingsScreen(
                         }
                     }
 
-                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 SDR8 · Stereo")
+                    Text("当前 engine capability：1920×1080 · 60 FPS · H.264 SDR8 · ADM Stereo 2ch")
+                    Text(
+                        "5.1/6ch 为实验性 multiopus negotiation/receive probe；当前 upstream Android Java ADM 仍配置 2ch，实际 6→2 行为待真机，不等于原生 5.1。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (settings.audioChannels >= 6) {
+                        Text(
+                            "已选择实验 6ch：下一新 Session 若 Offer 不含 multiopus/6 会明确停止连接；若协商成功，本版继续观察 2ch ADM 下的实际结果，不预设一定能正常下混。",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Text("账号 entitlement：$entitlementSummary", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (activeOrResumable) {
                         Text(
@@ -1233,8 +1262,9 @@ private fun SettingsScreen(
                     Text("Session：${sessionStateLabel(sessionState)}")
                     Text("Keyboard：v5.1.9 soft-freeze · en-US Cyberpunk / CS2 真机通过")
                     Text("v5.2.1：同 Session RESUME/Claim → 新 Signaling / PeerConnection / DataChannel")
-                    Text("当前仍只开放：H.264 SDR8 · 1080p60 · Stereo；HEVC/Main10/HDR/5.1/120 FPS 未伪装为可用。")
-                    Text("后续：v5.3 Gamepad → v5.4 Audio → v6 HEVC")
+                    Text("v5.3 Gamepad：已实现/离线验证；因当前无可用手柄，真机验证按决定跳过。")
+                    Text("v5.4 Audio：2ch 原生 Stereo；6ch 仅开放 multiopus 协商/2ch-ADM 实验，Native 5.1 仍未实现。")
+                    Text("仍未开放：HEVC / Main10 / HDR / 120 FPS。下一主线：v6.0 HEVC Main SDR。")
                 }
             }
         }

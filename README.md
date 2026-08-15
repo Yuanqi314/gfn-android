@@ -1,8 +1,53 @@
-# GFN Android Lab · v5.3 Single-Controller Gamepad
+# GFN Android Lab · v5.4 Audio Foundation
 
 这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已确认：**CloudMatch / Claim → GFN WSS → SDP → ICE → H.264 RTP → Decode → Surface 画面**成立；v5.1 已加入全屏键鼠与 `releaseAll(reason)` 状态机。v5.1.1 根据最新真机日志与实测问题，只修复当前层的 5 项可定位问题，不重写已经成功的媒体协议链。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
+
+## v5.4 本轮新增
+
+v5.3 Gamepad 已实现并完成离线 packet/controller 验证；由于当前没有可用手柄，真机验证按开发决定标记为 **SKIPPED（非失败）**，不阻塞下一里程碑。
+
+v5.4 聚焦 Audio：
+
+```text
+2ch
+CloudMatch audioChannels=2
+→ Opus Answer stereo=1
+→ JavaAudioDeviceModule.setUseStereoOutput(true)
+→ ADM stereo playout
+
+6ch experimental
+CloudMatch audioChannels=6
+→ require GFN multiopus/48000/6 Offer
+→ repair rejected game-audio Answer when necessary
+→ negotiate/receive probe
+→ current Android Java ADM still 2ch local output
+```
+
+因此本版 UI 明确区分：
+
+```text
+Stereo 2ch                         ADM output configuration
+5.1 Surround 6ch                  experimental negotiation/2ch-ADM probe
+Native 5.1                        NOT IMPLEMENTED
+```
+
+新增 `GfnAndroidAudioRouteProbe` 只记录 Android public audio APIs 暴露的候选输出能力，字段统一标记 `likelyRoute*`，不把它伪装成 libwebrtc 最终实际 route。
+
+参考链：CloudNow 提供 multiopus Answer repair + 自定义 multichannel audio-device witness；OpenNOW 提供 Opus `stereo=1`/audio bandwidth witness；upstream Android WebRTC 的 Java ADM 能力边界用于阻止我们误报 native 5.1。
+
+验证入口：
+
+```text
+./verify-audio.sh
+./verify-stream-settings.sh
+./verify-reconnect-engine.sh
+./verify-keyboard-stable.sh
+./verify-gamepad.sh
+```
+
+完整 Android Gradle build 仍取决于本地是否已有 Gradle 9.5.0；当前受限环境无法从 `services.gradle.org` 下载，因此不能把 API-shaped compile 写成完整 APK build PASS。
 
 ## v5.3 本轮新增
 

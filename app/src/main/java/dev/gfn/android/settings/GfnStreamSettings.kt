@@ -60,7 +60,7 @@ object GfnStreamSettingsCatalog {
     const val DEFAULT_AUDIO_CHANNELS = 2
     const val BITRATE_STEP_KBPS = 5_000
 
-    private val capabilities = StreamCapabilityProfiles.V52_ANDROID_WEBRTC
+    private val capabilities = StreamCapabilityProfiles.V54_ANDROID_WEBRTC
 
     val resolutionChoices: List<StreamResolutionChoice> = buildList {
         add(StreamResolutionChoice(RESOLUTION_AUTO, "自动（按账号能力）", automatic = true))
@@ -85,8 +85,17 @@ object GfnStreamSettingsCatalog {
 
     val audioChoices: List<StreamAudioChoice> =
         capabilities.audioChannels.sorted().map { channels ->
-            StreamAudioChoice(channels, if (channels == 2) "Stereo · 2ch" else "$channels channels")
+            StreamAudioChoice(
+                channels = channels,
+                label = when (channels) {
+                    2 -> "Stereo · 2ch（ADM stereo）"
+                    6 -> "5.1 / 6ch（实验：multiopus；ADM 仍 2ch）"
+                    else -> "$channels channels"
+                },
+            )
         }
+
+    val nativeAudioOutputChannels: Set<Int> = capabilities.nativeAudioOutputChannels
 
     val bitrateRangeKbps: IntRange = capabilities.maxBitrateKbpsRange
 
@@ -116,7 +125,7 @@ object GfnStreamSettingsCatalog {
 }
 
 object GfnStreamSettingsResolver {
-    private val capabilities = StreamCapabilityProfiles.V52_ANDROID_WEBRTC
+    private val capabilities = StreamCapabilityProfiles.V54_ANDROID_WEBRTC
 
     fun resolve(
         persistent: PersistentStreamSettings,
@@ -141,7 +150,7 @@ object GfnStreamSettingsResolver {
         ) {
             throw StreamProfileResolutionException(
                 "账号 entitlement 未包含 ${resolution.width}x${resolution.height}@$fps；" +
-                    "v5.2 当前 Android WebRTC 引擎只开放已验证的 1080p60。",
+                    "v5.4 当前 Android WebRTC 引擎只开放已验证的 1080p60。",
             )
         }
 

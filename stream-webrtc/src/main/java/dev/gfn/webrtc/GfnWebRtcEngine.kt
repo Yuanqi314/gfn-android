@@ -37,7 +37,7 @@ import org.webrtc.SessionDescription
 import org.json.JSONObject
 import org.webrtc.VideoTrack
 
-/** v5.0: Claimed Session -> GFN WSS -> SDP -> ICE -> H.264 -> SurfaceViewRenderer。 */
+/** v5.4: Claimed Session -> GFN WSS -> SDP -> ICE -> H.264 + audio -> SurfaceViewRenderer。 */
 class GfnWebRtcEngine(
     context: Context,
     private val listener: Listener,
@@ -103,6 +103,7 @@ class GfnWebRtcEngine(
                 return
             }
         val currentGeneration = generation.incrementAndGet()
+        val audioRoute = GfnAndroidAudioRouteProbe.detect(appContext)
         synchronized(lock) {
             this.session = session
             this.config = config
@@ -123,7 +124,24 @@ class GfnWebRtcEngine(
                     effectiveIceServers = session.iceServers.size,
                     fallbackActive = false,
                 ),
-                audio = AudioDiagnostics(requestedChannels = config.audioChannels),
+                audio = AudioDiagnostics(
+                    requestedChannels = config.audioChannels,
+                    admConfiguredOutputChannels = 2,
+                    admStereoOutputEnabled = true,
+                    likelyRouteMaxChannels = audioRoute.likelyMaxChannels,
+                    likelyRouteSummary = audioRoute.summary,
+                    nativeSurroundOutput = false,
+                    outputMode = if (config.audioChannels >= 6) {
+                        "SURROUND_MULTI_OPUS_ADM_2CH_PROBE"
+                    } else {
+                        "ADM_STEREO_2CH"
+                    },
+                    limitation = if (config.audioChannels >= 6) {
+                        "请求 6ch 仅用于 multiopus 协商/接收探针；当前 upstream Android Java ADM 仅配置 2ch，6ch 输入最终是下混还是失败尚待真机验证。"
+                    } else {
+                        null
+                    },
+                ),
             )
             state = StreamState.OpeningSignaling
         }
@@ -265,7 +283,7 @@ class GfnWebRtcEngine(
     private fun validate(session: SessionInfo, config: StreamConfig): String? = when {
         !session.isReadyStatus -> "v5 只接受已 Ready/Claimed 的 Session（status=${session.status}）。"
         session.signalingUrl.isNullOrBlank() -> "Claimed Session 缺少 signalingUrl。"
-        else -> StreamCapabilityProfiles.V52_ANDROID_WEBRTC.rejectionReason(config)
+        else -> StreamCapabilityProfiles.V54_ANDROID_WEBRTC.rejectionReason(config)
     }
 
     fun unbindVideoOutput(output: GfnVideoSurfaceView) {
@@ -321,6 +339,17 @@ class GfnWebRtcEngine(
         if (generation.get() != eventGeneration) return
         val currentSession = synchronized(lock) { session } ?: return
         val offerSummary = GfnSdpTools.summarize(offerSdp, isOffer = true)
+        val requestedAudioName = if (config.audioChannels >= 6) "multiopus" else "opus"
+        val requestedOfferAudio = GfnSdpTools.firstAudioCodec(offerSdp, requestedAudioName)
+        val multiopusOffer = GfnSdpTools.firstAudioCodec(offerSdp, "multiopus")
+        val surroundOfferPresent = multiopusOffer?.channels == 6
+        updateAudio { current ->
+            current.copy(
+                offerCodec = requestedOfferAudio?.name ?: GfnSdpTools.firstAudioCodec(offerSdp)?.name,
+                offerChannels = requestedOfferAudio?.channels ?: GfnSdpTools.firstAudioCodec(offerSdp)?.channels,
+                surroundOfferPresent = surroundOfferPresent,
+            )
+        }
         updateDiagnostics {
             it.copy(
                 offer = SdpDiagnostics(
@@ -334,12 +363,16 @@ class GfnWebRtcEngine(
             )
         }
         if (offerSummary.h264PayloadTypes.isEmpty()) {
-            fail("GFN Offer 未包含 H.264 payload type；v5.0 不允许回退 HEVC/AV1。")
+            fail("GFN Offer 未包含 H.264 payload type；v5.4 不允许回退 HEVC/AV1。")
+            return
+        }
+        if (config.audioChannels >= 6 && !surroundOfferPresent) {
+            fail("已请求 5.1/6ch，但 GFN Offer 未包含 multiopus/6；停止本次实验性 surround 连接。")
             return
         }
         synchronized(lock) {
             if (peerConnection != null) {
-                fail("v5.0 收到重复 Offer；当前版本不做 renegotiation。")
+                fail("v5.4 收到重复 Offer；当前版本不做 renegotiation。")
                 return
             }
         }
@@ -730,8 +763,47 @@ class GfnWebRtcEngine(
                 override fun onCreateSuccess(description: SessionDescription) {
                     if (generation.get() != eventGeneration) return
                     val h264Answer = GfnSdpTools.preferH264InAnswer(description.description)
-                    val bounded = GfnSdpTools.injectBandwidth(h264Answer, config.maxBitrateKbps)
+                    val audioMunge = GfnSdpTools.mungeAudioAnswer(
+                        answer = h264Answer,
+                        offer = offerSdp,
+                        requestedChannels = config.audioChannels,
+                    )
+                    if (config.audioChannels >= 6 && !audioMunge.surroundAccepted) {
+                        updateAudio { current ->
+                            current.copy(
+                                answerCodec = audioMunge.selectedCodec?.name,
+                                answerChannels = audioMunge.selectedCodec?.channels,
+                                opusStereoEnabled = audioMunge.opusStereoEnabled,
+                                surroundNegotiationAccepted = false,
+                                outputMode = audioMunge.mode,
+                                limitation = audioMunge.limitation,
+                            )
+                        }
+                        fail(audioMunge.limitation ?: "无法在 Answer 中接受 GFN multiopus 6ch。")
+                        return
+                    }
+                    val audioKbps = if (config.audioChannels >= 6) 256 else 128
+                    val bounded = GfnSdpTools.injectBandwidth(
+                        audioMunge.sdp,
+                        config.maxBitrateKbps,
+                        audioKbps = audioKbps,
+                    )
                     val answerSummary = GfnSdpTools.summarize(bounded, isOffer = false)
+                    val answerAudio = GfnSdpTools.firstAudioCodec(
+                        bounded,
+                        if (config.audioChannels >= 6) "multiopus" else "opus",
+                    ) ?: GfnSdpTools.firstAudioCodec(bounded)
+                    updateAudio { current ->
+                        current.copy(
+                            answerCodec = answerAudio?.name,
+                            answerChannels = answerAudio?.channels,
+                            opusStereoEnabled = audioMunge.opusStereoEnabled,
+                            surroundNegotiationAccepted = audioMunge.surroundAccepted,
+                            nativeSurroundOutput = false,
+                            outputMode = audioMunge.mode,
+                            limitation = audioMunge.limitation ?: current.limitation,
+                        )
+                    }
                     if (answerSummary.h264PayloadTypes.isEmpty()) {
                         fail("生成的 Answer 未保留 H.264；停止连接。")
                         return

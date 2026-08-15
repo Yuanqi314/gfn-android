@@ -1,0 +1,21 @@
+V5.4 static verification summary
+
+PASS: versionCode=17 / versionName=0.5.4.0-dev
+PASS: JavaAudioDeviceModule builder explicitly calls setUseStereoOutput(true).
+PASS: Android route probe uses AudioAttributes USAGE_GAME / CONTENT_TYPE_MUSIC and labels result as likely/best-effort.
+PASS: capability requests audioChannels {2,6} while ADM-configured/nativeAudioOutputChannels stays {2}.
+PASS: CloudMatch already carries frozen audioChannels through CREATE/CLAIM/reconnect snapshot path.
+PASS: first game-audio SDP codec parser added.
+PASS: stereo answer adds/replaces stereo=1 idempotently.
+PASS: 6ch mode requires multiopus with channels=6; absence is an explicit failure, not an assumed fallback.
+PASS: multiopus reconstruction is scoped to first game-audio section and reuses offer rtpmap/fmtp/extmap plus answer bundle transport.
+PASS: 2ch bandwidth=128 kbps, experimental 6ch bandwidth=256 kbps.
+PASS: diagnostics do not claim native 5.1; 6ch->2ch behavior remains true-device unknown.
+PASS: keyboard core files byte-identical to v5.3 baseline.
+PASS: gamepad controller/protocol/surface files byte-identical to v5.3 baseline.
+PASS: GfnSessionController and GfnStreamingController byte-identical to v5.3 baseline.
+PASS: stream-signaling actual Kotlin compile via verify-audio fixture.
+PASS: stream-core/settings actual Kotlin compile via verify-audio fixture.
+PASS: GfnWebRtcRuntime + GfnAndroidAudioRouteProbe API-shaped compile.
+PASS: GfnWebRtcEngine API-shaped compile via verify-reconnect-engine.sh.
+LIMITATION: full Android Gradle build cannot start because Gradle 9.5.0 is not cached and services.gradle.org DNS is unavailable in this environment.

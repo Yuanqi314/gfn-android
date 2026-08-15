@@ -110,11 +110,14 @@ grep -Fq 'val launchProfile = record.launchProfile' app/src/main/java/dev/gfn/an
 grep -Fq 'engine.connect(session, profile.streamConfig)' app/src/main/java/dev/gfn/android/stream/GfnStreamingController.kt || { echo 'ERROR: WebRTC does not consume frozen StreamConfig snapshot' >&2; exit 1; }
 grep -Fq 'val owned = orchestrator.currentOwnedSession()' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: persisted legacy cleanup does not distinguish owned Session from restored record' >&2; exit 1; }
 grep -Fq 'val hasOwnedSession = orchestrator.currentOwnedSession() != null' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: local resume-record cleanup can clear an active launch profile' >&2; exit 1; }
-grep -Fq 'StreamCapabilityProfiles.V52_ANDROID_WEBRTC.rejectionReason(config)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: WebRTC engine capability validation drifted from resolver' >&2; exit 1; }
+grep -Fq 'StreamCapabilityProfiles.V54_ANDROID_WEBRTC.rejectionReason(config)' stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt || { echo 'ERROR: WebRTC engine capability validation drifted from resolver' >&2; exit 1; }
 CLOUDMATCH_LAYOUT_QUERIES=$(grep -Fc 'keyboardLayout=${enc(request.keyboardLayout)}' gfn-cloudmatch/src/main/kotlin/dev/gfn/cloudmatch/CloudMatchProtocol.kt)
 [ "$CLOUDMATCH_LAYOUT_QUERIES" -ge 2 ] || { echo 'ERROR: create/claim CloudMatch keyboardLayout queries are not both present' >&2; exit 1; }
 echo 'V520_STREAM_SETTINGS_SNAPSHOT_GUARDS=PASS'
 ./verify-stream-settings.sh
+
+# v5.4 audio: native stereo output plus explicit experimental multiopus/downmix probe.
+./verify-audio.sh
 
 # v5.2.1 same-session reconnect: reclaim existing Session, rebuild transport, keep frozen profile.
 grep -Fq 'fun recoverForStreamReconnect(' app/src/main/java/dev/gfn/android/session/GfnSessionController.kt || { echo 'ERROR: same-session reconnect session handler missing' >&2; exit 1; }

@@ -34,6 +34,9 @@ internal object GfnWebRtcRuntime {
         // STREAM_VOICE_CALL。显式使用 GAME/MUSIC 让系统按媒体播放策略选择扬声器/耳机/蓝牙。
         // 不强制指定 built-in speaker，避免覆盖用户真实连接的有线/蓝牙输出设备。
         val adm = JavaAudioDeviceModule.builder(context.applicationContext)
+            // Upstream Android Java ADM defaults to mono. v5.4 explicitly enables its supported
+            // stereo playout mode. This API does not expose a 6-channel output configuration.
+            .setUseStereoOutput(true)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_GAME)
