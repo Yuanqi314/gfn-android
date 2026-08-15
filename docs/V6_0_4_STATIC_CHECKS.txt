@@ -80,3 +80,22 @@ The repository wrapper requires Gradle 9.5.0. This container has no cached distr
 
 True-device v6.0.4 production result:
 NOT YET VERIFIED. A new Session must prove the original Tier1 Offer, explicit local Main/High capability, HEVC RAW/FINAL Answer, bound decoder creation, FIRST_FRAME Hevc, and sustained rendering without the experimental tier rewrite.
+
+CI nullability correction (GitHub Actions run 31863874419 / job 94961687002):
+- Affected commit: 9fbf3610f432b924a3765796d43659fa10a64048
+- :stream-webrtc:compileDebugKotlin failed because MediaCodecInfo.CodecCapabilities.videoCapabilities is MediaCodecInfo.VideoCapabilities? in Kotlin.
+- Compiler failures were at GfnHevcProductionCapability.kt lines 169, 176, 234, and 237.
+- probe(): VideoCapabilities? is now handled explicitly; null records a probe error, forces supports1080p60=false, and cannot become the selected production capability.
+- evaluateStream(): null VideoCapabilities now returns unsupported immediately with reason "video capabilities unavailable".
+- No !! non-null assertion is used.
+- verify-hevc-production.sh now models videoCapabilities as nullable and tests both probe-time and stream-evaluation null cases.
+
+Post-correction verification:
+V604_HEVC_VIDEO_CAPS_NULLABILITY_FIXTURE=PASS
+V604_HEVC_PRODUCTION_VERIFY=PASS
+V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
+V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
+
+Android Gradle/APK build after this correction:
+NOT CLAIMED PASS LOCALLY. The exact failing CI nullability condition is covered by a nullable Kotlin stub compile; the GitHub Actions build must be rerun against the corrected source for full Android build confirmation.
+

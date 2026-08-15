@@ -164,18 +164,25 @@ internal object GfnHevcDecoderCapabilityProbe {
                 .filter { it.tier == GfnHevcTier.Main }
                 .maxByOrNull { it.level.rank }
             val best = highestHigh ?: highestMain ?: return@forEach
-            val videoCaps = caps.videoCapabilities
-            val supports1080p60 = runCatching {
-                videoCaps.areSizeAndRateSupported(
-                    productionWidth,
-                    productionHeight,
-                    productionFps.toDouble(),
-                )
-            }.getOrDefault(false)
-            val bitrateRangeKbps = runCatching {
-                val range = videoCaps.bitrateRange
-                (range.lower / 1_000)..(range.upper / 1_000)
-            }.getOrNull()
+            val videoCaps: MediaCodecInfo.VideoCapabilities? = caps.videoCapabilities
+            if (videoCaps == null) {
+                errors += "${info.name}: HEVC videoCapabilities unavailable"
+            }
+            val supports1080p60 = videoCaps?.let { capabilities ->
+                runCatching {
+                    capabilities.areSizeAndRateSupported(
+                        productionWidth,
+                        productionHeight,
+                        productionFps.toDouble(),
+                    )
+                }.getOrDefault(false)
+            } ?: false
+            val bitrateRangeKbps = videoCaps?.let { capabilities ->
+                runCatching {
+                    val range = capabilities.bitrateRange
+                    (range.lower / 1_000)..(range.upper / 1_000)
+                }.getOrNull()
+            }
             candidates += GfnHevcDecoderCapability(
                 codecName = info.name,
                 profile = GfnHevcProfile.Main,
@@ -229,7 +236,14 @@ internal object GfnHevcDecoderCapabilityProbe {
                     reason = "${capability.codecName} capability query failed: ${error.message ?: error.javaClass.simpleName}",
                 )
             }
-        val videoCaps = caps.videoCapabilities
+        val videoCaps: MediaCodecInfo.VideoCapabilities = caps.videoCapabilities
+            ?: return GfnHevcStreamSupport(
+                supported = false,
+                sizeAndRateSupported = false,
+                bitrateSupported = false,
+                bitrateRangeKbps = null,
+                reason = "${capability.codecName} video capabilities unavailable",
+            )
         val sizeRateSupported = runCatching {
             videoCaps.areSizeAndRateSupported(width, height, fps.toDouble())
         }.getOrDefault(false)

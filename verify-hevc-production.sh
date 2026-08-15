@@ -63,7 +63,7 @@ class MediaCodecInfo(
 
     class CodecCapabilities(
         val profileLevels: Array<CodecProfileLevel>,
-        val videoCapabilities: VideoCapabilities,
+        val videoCapabilities: VideoCapabilities?,
     )
 
     class VideoCapabilities(
@@ -229,15 +229,20 @@ private fun decoder(
     hardware: Boolean = true,
     sizeRate: Boolean = true,
     bitrateUpper: Int = 200_000_000,
+    withVideoCapabilities: Boolean = true,
 ) = MediaCodecInfo(
     name = name,
     isHardwareAccelerated = hardware,
     caps = MediaCodecInfo.CodecCapabilities(
         profileLevels = arrayOf(profileLevel(level)),
-        videoCapabilities = MediaCodecInfo.VideoCapabilities(
-            MediaCodecInfo.Range(1_000, bitrateUpper),
-            sizeRate,
-        ),
+        videoCapabilities = if (withVideoCapabilities) {
+            MediaCodecInfo.VideoCapabilities(
+                MediaCodecInfo.Range(1_000, bitrateUpper),
+                sizeRate,
+            )
+        } else {
+            null
+        },
     ),
 )
 
@@ -292,6 +297,29 @@ fun main() {
     val support = GfnHevcDecoderCapabilityProbe.evaluateStream(capability, 1920, 1080, 60, 100_000)
     check(support.supported) { support }
 
+    MediaCodecRegistry.codecInfos = arrayOf(
+        decoder(
+            "bound.hevc",
+            MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel52,
+            withVideoCapabilities = false,
+        ),
+    )
+    val missingVideoCapsSupport = GfnHevcDecoderCapabilityProbe.evaluateStream(
+        capability,
+        1920,
+        1080,
+        60,
+        100_000,
+    )
+    check(!missingVideoCapsSupport.supported) { missingVideoCapsSupport }
+    check(missingVideoCapsSupport.reason.contains("video capabilities unavailable")) {
+        missingVideoCapsSupport.reason
+    }
+
+    MediaCodecRegistry.codecInfos = arrayOf(
+        decoder("bound.hevc", MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel52),
+    )
+
     val remotes = listOf(
         remote(107, "2", "1", "153"),
         remote(103, "1", "1", "153"),
@@ -321,6 +349,19 @@ fun main() {
     check(decision.codec == VideoCodecPreference.Hevc)
 
     MediaCodecRegistry.codecInfos = arrayOf(
+        decoder(
+            "null-video-cap.hevc",
+            MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel62,
+            withVideoCapabilities = false,
+        ),
+    )
+    val nullVideoCapsFactory = GfnHevcAwareVideoDecoderFactory(null)
+    check(nullVideoCapsFactory.productionCapability == null)
+    check(nullVideoCapsFactory.probeResult.errors.any { it.contains("videoCapabilities unavailable") }) {
+        nullVideoCapsFactory.probeResult.errors
+    }
+
+    MediaCodecRegistry.codecInfos = arrayOf(
         decoder("main-tier-only", MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62),
     )
     val noHighFactory = GfnHevcAwareVideoDecoderFactory(null)
@@ -328,6 +369,7 @@ fun main() {
     check(noHighFactory.getSupportedCodecs().none { it.name == "H265" })
 
     println("V604_HEVC_FACTORY_BINDING_FIXTURE=PASS")
+    println("V604_HEVC_VIDEO_CAPS_NULLABILITY_FIXTURE=PASS")
     println("V604_HEVC_COMPATIBILITY_FIXTURE=PASS")
     println("BOUND=${capability.codecName} ADVERTISED=${advertised.params} MATCHED=${compatibility.compatiblePayloadTypes}")
 }
