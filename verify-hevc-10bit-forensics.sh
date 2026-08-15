@@ -28,7 +28,8 @@ grep -Fq 'val bitDepthLuma = reader.readUnsignedExpGolomb() + 8' "$BITSTREAM" ||
 grep -Fq 'val bitDepthChroma = reader.readUnsignedExpGolomb() + 8' "$BITSTREAM" || { echo 'ERROR: chroma bit-depth extraction missing' >&2; exit 1; }
 grep -Fq 'private val maxFrames: Int = 180' "$BITSTREAM" || { echo 'ERROR: SPS scan must be bounded' >&2; exit 1; }
 grep -Fq 'GfnHevcBitstreamProbeVideoDecoder(' "$FACTORY" || { echo 'ERROR: H265 decoder is not decorated by the read-only SPS probe' >&2; exit 1; }
-grep -Fq 'return delegate.decode(frame, info)' "$DIAG" || { echo 'ERROR: decoder decorator must forward the original EncodedImage' >&2; exit 1; }
+grep -Fq 'override fun decode(frame: EncodedImage, info: VideoDecoder.DecodeInfo?): VideoCodecStatus' "$DIAG" || { echo 'ERROR: M144 JNI passes null DecodeInfo; decorator override must accept nullable DecodeInfo' >&2; exit 1; }
+grep -Fq 'return delegate.decode(frame, info)' "$DIAG" || { echo 'ERROR: decoder decorator must forward the original EncodedImage and nullable DecodeInfo unchanged' >&2; exit 1; }
 grep -Fq 'override fun getImplementationName(): String = delegate.implementationName' "$DIAG" || { echo 'ERROR: decoder implementation identity must stay delegated' >&2; exit 1; }
 grep -Fq 'parseRequest(EglBase.CONFIG_PLAIN)' "$EGL" || { echo 'ERROR: pinned WebRTC CONFIG_PLAIN request is not inspected' >&2; exit 1; }
 grep -Fq 'EGL14.eglGetCurrentDisplay()' "$EGL" || { echo 'ERROR: runtime EGL current-display query missing' >&2; exit 1; }
@@ -294,8 +295,10 @@ private class Delegate : VideoDecoder {
     var seenFrame: EncodedImage? = null
     override fun initDecode(settings: VideoDecoder.Settings, decodeCallback: VideoDecoder.Callback) = VideoCodecStatus.OK
     override fun release() = VideoCodecStatus.OK
-    override fun decode(frame: EncodedImage, info: VideoDecoder.DecodeInfo): VideoCodecStatus {
+    var seenInfo: VideoDecoder.DecodeInfo? = VideoDecoder.DecodeInfo()
+    override fun decode(frame: EncodedImage, info: VideoDecoder.DecodeInfo?): VideoCodecStatus {
         seenFrame = frame
+        seenInfo = info
         return VideoCodecStatus.OK
     }
     override fun getImplementationName() = "delegate"
@@ -321,13 +324,15 @@ fun main() {
     val frame = EncodedImage(buffer)
     val beforePosition = buffer.position()
     val beforeLimit = buffer.limit()
-    check(wrapper.decode(frame, VideoDecoder.DecodeInfo()) == VideoCodecStatus.OK)
+    check(wrapper.decode(frame, null) == VideoCodecStatus.OK)
     check(delegate.seenFrame === frame)
+    check(delegate.seenInfo == null)
     check(buffer.position() == beforePosition && buffer.limit() == beforeLimit)
     check(wrapper.implementationName == "delegate")
 
     println("V611_EGL_API_SHAPED_COMPILE=PASS")
     println("V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS")
+    println("V611_DECODEINFO_NULL_JNI_FIXTURE=PASS")
     println("EGL_REQUEST=${request.red}/${request.green}/${request.blue} actual8=${eight.red}/${eight.green}/${eight.blue} actual10=${ten.red}/${ten.green}/${ten.blue}")
 }
 KT

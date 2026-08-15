@@ -1,178 +1,225 @@
-# Current v6.1.1 Main10 / SDR10 10-bit forensics
+# Current v6.1.0 Main10 / SDR10 capability + negotiation candidate
 
 ## v6.0.4 closeout — TRUE-DEVICE PRODUCTION PASS
 
-`45.log` closes HEVC Main / SDR8 production. The successful path used the original GFN Tier1 Offer, explicit real Android Main/High capability, exact decoder-component binding, RAW/FINAL H265, `fallback=false`, `video/hevc`, FIRST_FRAME and sustained ~60fps. The experimental Tier0 Offer rewrite is not part of production.
+`45.log` closes the HEVC Main / SDR8 production milestone. The successful chain used the original GFN Tier1 Offer and the real Android decoder capability; the experimental Tier0 rewrite was not present.
+
+```text
+Android MediaCodec probe
+Main / High Tier / Level 6.2
+c2.qti.hevc.decoder
+        ↓
+explicit local H265 advertisement
+profile-id=1 tier-flag=1 level-id=186
+        ↓
+original GFN Offer
+profile-id=1 tier-flag=1 level-id=153
+        ↓
+OFFER_HEVC_COMPATIBLE=true
+        ↓
+RAW_ANSWER H265 Main
+        ↓
+FINAL_ANSWER H265 Main
+        ↓
+fallback=false
+        ↓
+HEVC RTP
+        ↓
+bound c2.qti.hevc.decoder / video/hevc
+        ↓
+FIRST_FRAME effective=Hevc
+        ↓
+~60fps stable render
+```
+
+Closeout verdict:
 
 ```text
 HEVC Main / SDR8
 Production PASS
 ```
 
-v6.0.4 codec behavior is frozen.
+v6.0.4 codec behavior is now frozen. Future changes must not reintroduce generic-H265 promotion or `tier-flag=1 -> 0` Offer rewriting.
 
-## v6.1.0 closeout — TRUE-DEVICE PASS
+## v6.1.0 current scope
 
-`46.log` closes the Main10 capability/session/negotiation milestone:
+v6.1.0 starts the first half of Main10 work:
+
+```text
+HEVC Main10 capability
++ SDR10 Session request
++ profile-id=2 WebRTC advertisement
++ original GFN Main10 Offer compatibility
++ RAW/FINAL Answer Main10 lineage
++ strict no-H264 fallback
+```
+
+It does **not** claim 10-bit output/render fidelity. That is the v6.1.1 gate.
+
+### Frozen Session intent
+
+The next-Session settings snapshot now distinguishes:
+
+```text
+H264 + CompatibilitySdr   -> SDR8
+HEVC + CompatibilitySdr   -> HEVC Main / SDR8
+HEVC + PreferSdr10        -> HEVC Main10 / SDR10
+```
+
+`HEVC + PreferSdr10` is resolved once into `ResolvedLaunchProfile` and reused by CREATE / persistence / CLAIM / WebRTC / reconnect. H264 cannot retain `PreferSdr10`; normalization returns it to `CompatibilitySdr`.
+
+### Main10 capability probe
+
+Main and Main10 are independently probed from Android `MediaCodecInfo.CodecCapabilities.profileLevels`.
+
+```text
+Main   -> HEVCProfileMain
+Main10 -> HEVCProfileMain10
+```
+
+A Main capability never implies Main10. HDR-only profile constants are not used as substitutes for Main10.
+
+For either profile, production advertisement requires:
+
+```text
+hardware decoder
++ High Tier
++ normalized level >= 5.1
++ 1920x1080@60 support
++ usable VideoCapabilities
+```
+
+`videoCapabilities == null` remains fail-closed.
+
+### WebRTC advertisement and component binding
+
+`GfnHevcAwareVideoDecoderFactory` can now expose two independent H265 entries when the device really supports them:
+
+```text
+Main:
+profile-id=1;tier-flag=1;level-id=<real max>
+
+Main10:
+profile-id=2;tier-flag=1;level-id=<real max>
+```
+
+Each profile is bound to the exact MediaCodec component that proved the capability. No decoder name is hardcoded.
+
+### Main10 negotiation gate
+
+For `PreferSdr10`, the exact target is profile 2:
+
+```text
+Remote candidate
+profile-id=2
++ required tier
++ SRST tx-mode
++ recognized level
+        ↓
+Local bound Main10 capability
+same profile / tier
+remote level <= local max
+size/rate safe
+bitrate safe
+```
+
+Main PT and Main10 PT are never interchangeable. Dynamic Answer lineage is resolved against the exact profile from the original Offer.
+
+### Strict no-H264 fallback
+
+Main/SDR8 retains the v6.0.4 proven same-Session H264 fallback.
+
+Main10/SDR10 does not:
+
+```text
+requested=HEVC Main10 / SDR10
++ Main10 negotiation fails
+        ↓
+Session error
+```
+
+It must not silently become H264/SDR8, because that would turn a Main10 test into a false success.
+
+## CloudMatch / NVST v6.1.0
+
+For a fresh SDR10 Session:
+
+```text
+requestedStreamingFeatures.bitDepth = 1
+sdrHdrMode = 0
+clientDisplayHdrCapabilities = null
+chromaFormat = 1
+```
+
+NVST is generated from the same frozen snapshot:
+
+```text
+SDR8  -> bitDepth=8
+SDR10 -> bitDepth=10
+HDR    -> OFF
+```
+
+Reconnect/RESUME remains minimal and does not renegotiate the Session color request.
+
+## HDR boundary
+
+HDR activation remains disabled in v6.1.0:
+
+```text
+PreferHdr10 = rejected
+HDR Session request = OFF
+HDR display capability activation = OFF
+HDR metadata activation = OFF
+```
+
+Read-only HDR diagnostics may be added later, but HDR10 is a separate v6.2 milestone.
+
+## v6.1.0 true-device gate
+
+A true-device v6.1.0 negotiation PASS requires at least:
 
 ```text
 ResolvedLaunchProfile codec=Hevc color=PreferSdr10
-        ↓
-CloudMatch bitDepth=1 / sdrHdrMode=0 / hdr=false
-        ↓
-real c2.qti.hevc.decoder Main10 / High / Level 6.2 capability
-        ↓
-explicit local H265 profile-id=2 advertisement
-        ↓
-original GFN Main10 Offer profile-id=2 tier-flag=1 level-id=153
-        ↓
-targetProfile=2 compatibility=true
-        ↓
-RAW_ANSWER Main10 lineage
-        ↓
-FINAL_ANSWER Main10 lineage
-        ↓
+CloudMatch bitDepth=1 sdrHdrMode=0 hdr=false
+HEVC Main10 production advertisement enabled=true
+LOCAL_RECEIVER H265 profile-id=2
+original GFN Main10 Offer unchanged
+OFFER_HEVC_COMPATIBLE targetProfile=2 compatible=true
+setCodecPreferences applied
+RAW_ANSWER Main10 != empty
+FINAL_ANSWER Main10 != empty
 fallback=false
-        ↓
-NVST bitDepth=10 / hdr=false
-        ↓
-HEVC RTP / bound H265 decoder / FIRST_FRAME / ~60fps
+NVST bitDepth=10 hdr=false
+HEVC RTP
+bound H265 decoder created
 ```
 
-Verdict:
+`FIRST_FRAME` is useful evidence that media is flowing, but **does not by itself prove that libwebrtc preserved a 10-bit output path**.
+
+## v6.1.1 next gate
+
+Only after v6.1.0 negotiation is true-device proven do we close the second half:
 
 ```text
-v6.1.0 Main10 / SDR10
-Capability + Session request + Negotiation + Decode-to-frame
-TRUE-DEVICE PASS
+actual Main10 decoder
+10-bit decode evidence
+10-bit output evidence
+10-bit Surface/render evidence
+stable frames
 ```
 
-This does not prove 10-bit sample preservation through decoder output / texture / EGL / display.
-
-## v6.1.1 current scope — read-only fidelity forensics
-
-All negotiation behavior proven by v6.1.0 is frozen:
-
-```text
-CloudMatch                FREEZE
-ResolvedLaunchProfile     FREEZE
-Main10 capability probe   FREEZE
-SDP advertisement         FREEZE
-Offer compatibility       FREEZE
-setCodecPreferences       FREEZE
-RAW/FINAL Answer policy   FREEZE
-NVST bitDepth=10          FREEZE
-decoder component binding FREEZE
-```
-
-v6.1.1 adds only evidence collection around the media/render path.
-
-### Stage A — actual HEVC SPS bit depth
-
-`GfnHevcBitstreamProbeVideoDecoder` decorates the already selected Java H265 decoder. It inspects the synchronous `EncodedImage.buffer`, then forwards the exact same `EncodedImage` object to the delegate decoder.
-
-The parser supports:
-
-```text
-Annex-B 00 00 01
-Annex-B 00 00 00 01
-length-prefixed NAL (1/2/3/4-byte lengths)
-single NAL fallback
-```
-
-It searches SPS NAL type 33, removes emulation-prevention bytes, and parses the HEVC SPS prefix required for:
-
-```text
-general_profile_idc
-general_tier_flag
-general_level_idc
-chroma_format_idc
-coded/display width + height
-bit_depth_luma_minus8
-bit_depth_chroma_minus8
-```
-
-Expected Main10 evidence:
-
-```text
-GfnHevc10Bit phase=BITSTREAM_SPS
-profileIdc=2
-tier=1
-bitDepthLuma=10
-bitDepthChroma=10
-tenBit=true
-```
-
-The scan is bounded. `BITSTREAM_SPS_UNRESOLVED` means the observer did not find/parse SPS within its budget; it is not evidence that the stream is 8-bit.
-
-### Stage B — exact pinned WebRTC EGL target
-
-The project remains pinned to `io.github.webrtc-sdk:android:144.7559.09`, mapped to WebRTC source commit `b1800a61db8320af5c14456c13622d8b85b1ed39` for source closure.
-
-At that exact source, the two-argument `SurfaceViewRenderer.init(sharedContext, rendererEvents)` delegates to:
-
-```text
-EglBase.CONFIG_PLAIN
-```
-
-and `CONFIG_PLAIN` is built with:
-
-```text
-EGL_RED_SIZE   = 8
-EGL_GREEN_SIZE = 8
-EGL_BLUE_SIZE  = 8
-```
-
-v6.1.1 does not alter those attributes. `GfnEglConfigProbe` performs a one-shot read-only EGL14 query on the existing render thread and logs the current config ID plus R/G/B/A channel sizes.
-
-Expected diagnostics:
-
-```text
-GfnHevc10Bit phase=EGL_REQUEST source=WebRTC_M144_CONFIG_PLAIN red=8 green=8 blue=8 ...
-GfnHevc10Bit phase=EGL_CONFIG success=true configId=... red=... green=... blue=... alpha=... tenBitRgbTarget=...
-```
-
-The static request is known to be RGB888. The actual runtime selected config remains a true-device fact and is not assumed before the log is observed.
-
-## v6.1.1 decision tree
-
-```text
-SPS = 8-bit
--> Main10 negotiation PASS, actual stream is not proven 10-bit
--> inspect Session/server behavior; do not rewrite renderer
-
-SPS = 10-bit + EGL = 8/8/8
--> incoming elementary stream is 10-bit
--> default final EGL target is 8bpc
--> next candidate: custom 10-bit EGL/Surface target
-
-SPS = 10-bit + EGL >= 10bpc
--> do not rewrite renderer yet
--> continue source texture / buffer preservation proof
-
-SPS unresolved
--> inspect packaging/frame assembly/parser coverage
--> no bit-depth verdict
-```
-
-## Explicit non-goals in current v6.1.1 build
-
-```text
-RGB10A2 renderer activation      OFF
-P010 output request              OFF
-custom HardwareBuffer path       OFF
-direct MediaCodec -> Surface     OFF
-HDR Session request              OFF
-HDR metadata activation          OFF
-HDR display/output activation    OFF
-```
-
-`hdr-static-info=<buffer>` remains diagnostic data only and is not HDR PASS evidence.
-
-## PASS boundary
-
-Current Stage A/B implementation can prove actual encoded SPS bit depth and the selected EGL config. It must **not** be labeled full v6.1.1 10-bit render PASS until the downstream texture/buffer/output path also has evidence strong enough to exclude known 10→8 conversion.
+If the existing libwebrtc texture/render path cannot prove 10-bit preservation, `direct MediaCodec -> Surface` becomes a v6.1.1 implementation candidate rather than being mixed into v6.1.0.
 
 ## Independent backlog
 
-`EglRenderer: Dropping frame - No surface` remains a Surface lifecycle/fullscreen/recreation/sink-binding issue. It is independent from Main10 negotiation and from the Stage A SPS verdict, although it may intersect future renderer work.
+`EglRenderer: Dropping frame - No surface` remains a Surface/EGL lifecycle issue independent from codec negotiation. It does not block Main10 capability/SDP forensics, but may intersect the later 10-bit rendering work.
+
+## v6.1.1 true-device crash hotfix — DecodeInfo nullability
+
+`47.log` reached the validated Main10/SDR10 negotiation and decoder initialization path, then aborted on the
+first Java decoder `decode()` call because `GfnHevcBitstreamProbeVideoDecoder` incorrectly strengthened
+WebRTC's unannotated `DecodeInfo` platform type to non-null Kotlin. Pinned M144 native code deliberately passes
+a null `decode_info` local reference. The decorator now accepts `VideoDecoder.DecodeInfo?` and forwards it
+unchanged. Negotiation, decoder binding, SPS parsing, EGL probing, and HDR-off policy are otherwise frozen.
+
+True-device revalidation after this hotfix: PENDING.

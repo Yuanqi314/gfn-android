@@ -115,3 +115,27 @@ v6.1.0 Main10/SDR10 capability + Session request + negotiation + decode-to-frame
 v6.1.1 Stage A/B implementation = READY FOR TRUE-DEVICE FORENSICS.
 v6.1.1 full 10-bit decode/output/render fidelity = NOT YET VERIFIED.
 HDR10 = OFF / v6.2.
+
+47.log / tombstone_12 JNI nullability crash correction
+------------------------------------------------------
+Observed true-device exception before SIGABRT:
+java.lang.NullPointerException: Parameter specified as non-null is null:
+GfnHevcBitstreamProbeVideoDecoder.decode, parameter info
+
+Pinned M144 source contract:
+video_decoder_wrapper.cc constructs an empty ScopedJavaLocalRef<jobject> decode_info and passes it to Java_VideoDecoder_decode.
+Therefore DecodeInfo is nullable in the real JNI call path despite the unannotated Java interface.
+
+Correction:
+GfnHevcBitstreamProbeVideoDecoder.decode(frame, info: VideoDecoder.DecodeInfo?)
+The same nullable info is forwarded unchanged; no synthetic DecodeInfo is created.
+
+Post-fix:
+V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
+V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
+V604_HEVC_PRODUCTION_VERIFY=PASS
+V610_MAIN10_PRODUCTION_VERIFY=PASS
+V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
+V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
+V610_MAIN10_VERIFY=PASS
+V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS

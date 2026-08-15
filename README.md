@@ -1,100 +1,48 @@
-# GFN Android Lab · v6.1.1 HEVC Main10 / SDR10 10-bit Forensics
+# GFN Android Lab · v6.0.4 HEVC Main Production Capability
 
-这是一个独立 Android GeForce NOW 客户端实验工程。`45.log` 已关闭 v6.0.4 **HEVC Main / SDR8 Production PASS**；`46.log` 已关闭 v6.1.0 **HEVC Main10 / SDR10 capability + Session request + negotiation + decode-to-frame TRUE-DEVICE PASS**。
-
-v6.1.1 冻结已经通过的 CloudMatch / ResolvedLaunchProfile / Main10 capability / SDP / Answer / NVST / decoder-component binding，只新增两条只读取证链：
-
-```text
-Stage A
-WebRTC EncodedImage
-        ↓
-GfnHevcBitstreamProbe
-        ↓
-实际 HEVC SPS
-        ↓
-profile / tier / level / dimensions / bitDepthLuma / bitDepthChroma
-        ↓
-原 EncodedImage 原样交给既有 H265 decoder
-
-Stage B
-pinned WebRTC M144 SurfaceViewRenderer
-        ↓
-CONFIG_PLAIN 静态请求
-        ↓
-runtime EGL current config query
-        ↓
-R/G/B/A 实际 channel depth
-```
-
-这一版**不请求 RGB10A2/P010，不替换 renderer，不激活 HDR**。只有真机同时证明 `SPS=10-bit` 且当前 EGL target 为 8bpc，才进入下一阶段 custom 10-bit EGL；如果 SPS 本身不是 10-bit，则先回查 Session/服务端，不改 renderer。
+这是一个独立 Android GeForce NOW 客户端实验工程。v6.0.3 真机已经完成 HEVC Main / SDR8 的 negotiated + decoded + rendered 实验闭环；v6.0.4 的目标是删除 `tier-flag=1 -> 0` 实验 rewrite，依赖 Android 真实 HEVC High-Tier capability 与原始 GFN Tier1 Offer 自然协商。Main10/HDR/AV1 继续冻结。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## 已关闭里程碑
+## v6.0.4 本轮新增
 
 ```text
-v6.0.4  Main / SDR8 production                 TRUE-DEVICE PASS
-v6.1.0  Main10 / SDR10 capability+negotiation  TRUE-DEVICE PASS
+MediaCodecList / MediaCodecInfo.profileLevels
+        ↓
+explicit Main / High / normalized maxLevel
+        ↓
+size-rate / bitrate safety gate
+        ↓
+GfnHevcAwareVideoDecoderFactory
+        ↓
+explicit H265 profile-id=1;tier-flag=1;level-id=<real max>
+        ↓
+exact MediaCodec component binding
+        ↓
+original GFN Main / High-Tier Offer
+        ↓
+profile + tier + tx-mode + level intersection
+        ↓
+createAnswer
+        ↓
+HEVC or same-session H264 fallback
 ```
 
-## v6.1.1 当前取证边界
-
-已经实现：
-
-```text
-GfnHevcBitstreamProbe.kt
-GfnHevc10BitDiagnostics.kt
-GfnEglConfigProbe.kt
-
-Annex-B 3/4-byte start code
-length-prefixed 1/2/3/4-byte NAL length
-single-NAL fallback
-SPS NAL type 33
-EBSP -> RBSP
-profile_tier_level
-bit_depth_luma_minus8 / bit_depth_chroma_minus8
-coded/display dimensions
-bounded scan budget
-runtime EGLConfig R/G/B/A query
-```
-
-严格未启用：
-
-```text
-custom RGB10A2 renderer
-P010 output request
-custom SurfaceTexture/HardwareBuffer path
-direct MediaCodec -> Surface
-HDR Session / HDR output
-```
+生产路径不再修改 GFN 的 H265 `profile-id/tier-flag/level-id`。Android HEVC Main/High Tier level 常量通过显式映射转换成项目内部顺序模型，禁止直接用常量整数大小推导 level。
 
 验证入口：
 
 ```text
-sh ./verify-hevc.sh
 sh ./verify-hevc-production.sh
+sh ./verify-hevc.sh
 sh ./verify-hevc-answer-lineage.sh
-sh ./verify-main10.sh
-sh ./verify-hevc-10bit-forensics.sh
 sh ./verify-reconnect-engine.sh
-sh ./verify-stream-settings.sh
 sh ./verify-audio.sh
+sh ./verify-stream-settings.sh
 ```
 
-详细见：
+详细见 `docs/V6_0_4_HEVC_MAIN_PRODUCTION_CAPABILITY.md`、`docs/STATUS.md`、`docs/REFERENCE_MATRIX.md`。完整 Gradle/APK build 仍受本地 Gradle 9.5.0 是否可用影响；离线验证不能替代下一次真机 production PASS。
 
-```text
-docs/STATUS.md
-docs/V6_1_0_MAIN10_CAPABILITY_NEGOTIATION.md
-docs/V6_1_1_10BIT_FORENSICS.md
-docs/V6_1_1_WEBRTC_M144_EGL_CLOSURE.md
-docs/V6_1_1_TEST_GUIDE.md
-docs/REFERENCE_MATRIX.md
-```
-
-完整 Android Gradle/APK build 仍需 Android/Gradle 环境或 GitHub Actions 验证；离线 API-shaped compile 不替代真实 APK build。v6.1.1 的最终 `10-bit render PASS` 也必须由真机 Stage A/B/C 证据裁决。
-
----
 ## v6.0 历史基线
 
 v6.0 按 CloudNow + OpenNOW 双参考仓库交叉取证，只吸收两边共同支持且适合当前 Android 架构的最小 HEVC 语义：

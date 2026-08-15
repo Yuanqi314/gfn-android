@@ -90,7 +90,10 @@ internal class GfnHevcBitstreamProbeVideoDecoder(
 
     override fun release(): VideoCodecStatus = delegate.release()
 
-    override fun decode(frame: EncodedImage, info: VideoDecoder.DecodeInfo): VideoCodecStatus {
+    // Pinned WebRTC M144 JNI intentionally passes a null DecodeInfo local-ref into Java decode().
+    // The Java interface is unannotated, so Kotlin must preserve that platform-type nullability.
+    // Do not synthesize DecodeInfo: the decorator is evidence-only and must forward JNI semantics unchanged.
+    override fun decode(frame: EncodedImage, info: VideoDecoder.DecodeInfo?): VideoCodecStatus {
         probe.observe(frame.buffer)?.let { observation ->
             GfnHevc10BitDiagnostics.logBitstreamObservation(
                 decoderComponent = decoderComponent,
