@@ -261,3 +261,14 @@ The v6.0 true-device result selected HEVC but negotiated H264. v6.0.1 therefore 
 | Production | SDP rewrite changes the remote capability declaration | Diagnostic only; remove rewrite before production and advertise real local capability instead |
 
 The v6.0.2 verdict is intentionally deferred to true-device RAW_ANSWER evidence. Static checks can prove the treatment is single-field and correctly placed, but cannot prove that GFN/libwebrtc will negotiate HEVC on the device.
+
+## HEVC - v6.0.3 Answer lineage continuation
+
+| Layer | True-device evidence / rule | v6.0.3 decision |
+|---|---|---|
+| Tier A/B | 43.log: tier-only rewrite changed RAW_ANSWER from no H265 to H265 PT 103 | tier mismatch causal proof complete |
+| libwebrtc Answer | H265 PT 103 returned with `level-id=93` and no explicit profile/tier | do not classify by explicit profile-id alone |
+| Main safety | Rewritten Offer PT 103 is H265 profile-id=1; PT 107 is Main10 | only intersect Answer H265 with offered Main H265 PTs |
+| Dynamic PT | PT values are session-local | no hard-coded 103/107 in production logic |
+| Final validation | final Answer must retain a matched Main-lineage H265 PT | keep HEVC only when lineage remains non-empty |
+| Production | remote tier rewrite is still diagnostic-only | capability factory remains deferred until decode/render evidence |

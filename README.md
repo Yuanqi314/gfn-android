@@ -1,54 +1,8 @@
-# GFN Android Lab · v6.0.2 HEVC Main Tier-Flag A/B
+# GFN Android Lab · v6.0.1 HEVC Main Negotiation Compatibility
 
-这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已经确认 H.264/1080p60、键鼠、Session keyboard layout、stream settings、same-session reconnect 主链以及 experimental 6ch 音频播放可工作。v6.0.1 真机证据已经把 HEVC 回退定位到 `createAnswer()` 前后的 codec intersection：GFN 提供 H265 Main/Tier1，本地 WebRTC 只暴露 generic H265，RAW_ANSWER 最终没有 H265。v6.0.2 只新增 **HEVC Main `tier-flag=1→0` 单字段 A/B rewrite**，用于完成真机因果闭环；Main10/HDR/AV1、decoder factory 与 production capability advertisement 继续冻结。
+这是一个独立 Android GeForce NOW 客户端实验工程。当前真实 Android 设备已经确认 H.264/1080p60、键鼠、Session keyboard layout、stream settings、same-session reconnect 主链以及 experimental 6ch 音频播放可工作。v6.0 真机已证明 HEVC 请求会走到 Answer 阶段，但 raw negotiation 最终回退 H.264。v6.0.1 在同一 SDR8 边界上只新增 **pre-createAnswer H265 Main codec preference + 完整 Logcat 证据链**；Main10/HDR/AV1 继续冻结。
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
-
-## v6.0.2 本轮新增
-
-```text
-Original GFN Offer
-H265 Main profile-id=1;tier-flag=1;level-id=153
-        ↓ dynamic PT + fmtp parse, first video m-line only
-experimental tier-only rewrite
-profile-id=1;tier-flag=0;level-id=153
-        ↓ BEFORE setRemoteDescription
-setRemoteDescription
-        ↓
-setCodecPreferences
-        ↓
-createAnswer
-        ↓
-RAW_ANSWER = first causal checkpoint
-        ↓
-existing final Answer selection + H264 fallback
-```
-
-本版明确是 **diagnostic-only A/B**：不硬编码 PT，不修改 `level-id`，不修改 Main10/profile-id=2，不修改 H264/RTX/Audio/CloudMatch/NVST/decoder factory。若 RAW_ANSWER 因唯一的 tier 变化出现 H265 Main，则 negotiation 根因闭环成立；随后必须删除实验 rewrite，再进入真实 Android HEVC capability advertisement。
-
-Logcat：
-
-```text
-adb logcat -v time GfnHevcCompat:I '*:S'
-```
-
-新增关键阶段：
-
-```text
-OFFER_TIER_AB_REWRITE
-OFFER_TIER_AB / OFFER_TIER_AB_CODEC
-RAW_ANSWER / RAW_ANSWER_CODEC
-```
-
-验证入口：
-
-```text
-sh ./verify-hevc-compat.sh
-sh ./verify-hevc.sh
-sh ./verify-reconnect-engine.sh
-```
-
-详细见 `docs/V6_0_2_HEVC_TIER_FLAG_AB.md`、`docs/V6_0_2_REFERENCE_ADOPTION.md`、`docs/V6_0_2_TEST_GUIDE.md`、`docs/V6_0_2_STATIC_CHECKS.txt`。
 
 ## v6.0.1 本轮新增
 

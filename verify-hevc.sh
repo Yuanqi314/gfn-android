@@ -42,8 +42,8 @@ grep -Fq 'GfnVideoCodecNegotiationPolicy.selectForOffer' "$ENGINE" || {
 grep -Fq 'GfnVideoCodecNegotiationPolicy.selectAfterAnswer' "$ENGINE" || {
   echo 'ERROR: Answer codec policy is not wired' >&2; exit 1;
 }
-grep -Fq 'preferredHevcProfileId = 1' "$ENGINE" || {
-  echo 'ERROR: v6.0 HEVC path must explicitly require Main/profile-id=1' >&2; exit 1;
+grep -Fq 'matchingAnswerHevcMainPayloadTypes(offerSdp, rawAnswer)' "$ENGINE" || {
+  echo 'ERROR: v6.0 HEVC Answer path must bind H265 back to the offered Main payload' >&2; exit 1;
 }
 grep -Fq 'fun preferVideoCodecInAnswer' "$SIGNALING" || {
   echo 'ERROR: generic video codec Answer filter is missing' >&2; exit 1;

@@ -8,10 +8,11 @@ import dev.gfn.stream.VideoCodecPreference
 import org.webrtc.RtpCapabilities
 
 /**
- * v6.0.2 HEVC Main tier-only A/B evidence + pre-createAnswer preference planning.
+ * v6.0.3 HEVC Main tier-only A/B continuation + pre-createAnswer preference planning.
  *
- * Important boundary: dynamic SDP payload numbers are only diagnostics. Codec compatibility is
- * classified by codec name / fmtp parameters; PT equality is never used as a compatibility test.
+ * Important boundary: dynamic SDP payload numbers are never treated as globally stable codec
+ * identities. v6.0.3 may correlate an Answer H265 PT with the same H265 Main PT from its Offer,
+ * but only as session-local Offer/Answer lineage after codec names have been independently parsed.
  */
 internal data class GfnVideoCodecPreferencePlan(
     val orderedCapabilities: List<RtpCapabilities.CodecCapability>,
@@ -28,7 +29,7 @@ internal object GfnHevcCodecPreferencePlanner {
     private val auxiliaryCodecNames = setOf("RTX", "RED", "ULPFEC", "FLEXFEC-03")
 
     /**
-     * Order only the codecs needed by the v6.0.2 experiment:
+     * Order only the codecs needed by the v6.0.3 experiment:
      * explicit H265 Main -> generic H265 -> H264 fallback -> repair/RTX codecs.
      *
      * Explicit non-Main H265 (for example profile-id=2/Main10), AV1, VP8 and VP9 are excluded so
@@ -146,6 +147,21 @@ internal object GfnHevcCompatLog {
             "gen=$generation phase=OFFER_TIER_AB_REWRITE applied=${result.changed} " +
                 "from=${result.fromTierFlag} to=${result.toTierFlag} " +
                 "candidates=${result.candidatePayloadTypes} rewritten=${result.rewrittenPayloadTypes}",
+        )
+    }
+
+    fun answerHevcMainLineage(
+        generation: Long,
+        stage: String,
+        offerMainPayloadTypes: List<Int>,
+        answerHevcPayloadTypes: List<Int>,
+        matchedPayloadTypes: List<Int>,
+    ) {
+        Log.i(
+            TAG,
+            "gen=$generation phase=ANSWER_HEVC_MAIN_LINEAGE stage=$stage " +
+                "offerMain=$offerMainPayloadTypes answerHevc=$answerHevcPayloadTypes " +
+                "matched=$matchedPayloadTypes",
         )
     }
 

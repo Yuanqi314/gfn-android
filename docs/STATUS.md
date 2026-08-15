@@ -1,3 +1,9 @@
+# Current v6.0.3 HEVC diagnostic result
+
+True-device `43.log` proves the v6.0.2 tier-only A/B succeeded at the libwebrtc codec intersection: after `tier-flag=1 -> 0`, RAW_ANSWER contains H265 PT 103. The remaining H264 result came from the app's old explicit-profile Answer policy because libwebrtc emitted H265 with `level-id=93` but omitted `profile-id` and `tier-flag`.
+
+v6.0.3 keeps the diagnostic tier rewrite and adds session-local Offer/Answer HEVC Main lineage. It does not accept arbitrary generic H265 and does not enable Main10/HDR. The next true-device target is HEVC final Answer, HEVC RTP, `video/hevc` decoder creation, and first frame.
+
 # 当前状态 · v6.0.2 HEVC Main Tier-Flag A/B
 
 ## 真机已确认

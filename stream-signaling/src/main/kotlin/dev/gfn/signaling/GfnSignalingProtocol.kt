@@ -242,7 +242,7 @@ data class VideoRtxAssociation(
 )
 
 /**
- * Result of the v6.0.2 HEVC Main tier-only A/B rewrite.
+ * Result of the v6.0.3 HEVC Main tier-only A/B rewrite.
  *
  * Payload types are diagnostics scoped to the current first video m-line. The rewrite target is
  * discovered from codec name + fmtp, never from a hard-coded dynamic PT.
@@ -370,14 +370,43 @@ object GfnSdpTools {
         }
 
     /**
+     * Correlate an H265 payload in an Answer with an H265 Main payload from the same Offer/Answer
+     * exchange. Dynamic payload numbers are not treated as globally stable codec identities; they
+     * are used only as session-local lineage after both SDP sections have independently identified
+     * the payload as H265. This lets libwebrtc omit profile-id/tier-flag in its Answer without
+     * accidentally accepting the Offer's Main10 payload.
+     */
+    fun matchingAnswerHevcMainPayloadTypes(offer: String, answer: String): List<Int> {
+        val offerOrder = firstVideoPayloadOrder(offer).toSet()
+        val answerOrder = firstVideoPayloadOrder(answer)
+        val offeredMain = firstVideoCodecDetails(offer)
+            .asSequence()
+            .filter { it.payloadType in offerOrder }
+            .filter { it.normalizedName == "H265" && it.profileId == "1" }
+            .map { it.payloadType }
+            .toSet()
+        if (offeredMain.isEmpty()) return emptyList()
+
+        val answeredH265 = firstVideoCodecDetails(answer)
+            .asSequence()
+            .filter { it.payloadType in answerOrder }
+            .filter { it.normalizedName == "H265" }
+            .map { it.payloadType }
+            .toSet()
+        return answerOrder.filter { it in offeredMain && it in answeredH265 }.distinct()
+    }
+
+    /**
      * Converge the first video Answer section to one receive codec while retaining its RTX and
-     * repair payloads. The server Offer remains untouched. For v6.0 HEVC, profile-id=1 is required
-     * explicitly so Main10 is never pulled into the SDR8 experiment.
+     * repair payloads. The server Offer remains untouched. HEVC callers may constrain either an
+     * explicit profile-id or a session-local set of primary payloads previously matched to the
+     * Offer, so Main10 cannot be pulled into the SDR8 experiment.
      */
     fun preferVideoCodecInAnswer(
         sdp: String,
         codec: String,
         preferredHevcProfileId: Int? = null,
+        allowedPrimaryPayloadTypes: Set<Int>? = null,
     ): String {
         val separator = separator(sdp)
         val input = lines(sdp)
@@ -402,6 +431,11 @@ object GfnSdpTools {
         if (targetCodec == "H265" && preferredHevcProfileId != null) {
             primaryPts = primaryPts.filterTo(linkedSetOf()) { pt ->
                 fmtpByPt[pt]?.containsParameter("profile-id", preferredHevcProfileId.toString()) == true
+            }
+        }
+        if (allowedPrimaryPayloadTypes != null) {
+            primaryPts = primaryPts.filterTo(linkedSetOf()) { pt ->
+                pt.toIntOrNull()?.let(allowedPrimaryPayloadTypes::contains) == true
             }
         }
         if (primaryPts.isEmpty()) return sdp
@@ -760,7 +794,7 @@ object GfnSdpTools {
     }
 
     /**
-     * v6.0.2 diagnostic-only A/B: in the first video media section, find H265 Main candidates
+     * v6.0.3 diagnostic-only A/B: in the first video media section, find H265 Main candidates
      * by codec/fmtp and rewrite only tier-flag=1 to tier-flag=0. profile-id, level-id, tx-mode,
      * RTX apt, m-line payload order and every non-target media section remain byte-semantically
      * unchanged. The server's dynamic PT value is never assumed.

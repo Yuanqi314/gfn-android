@@ -1,0 +1,77 @@
+v6.0.3 HEVC Main Answer-lineage continuation - verification record
+
+True-device input: 43.log
+
+Observed evidence:
+  OFFER_TIER_AB_REWRITE applied=true from=1 to=0 candidates=[103] rewritten=[103]
+  OFFER_TIER_AB H265 pt=103 profile=1 tier=0 level=153
+  RAW_ANSWER h264=[101] hevc=[103] hevcMain=[]
+  RAW_ANSWER H265 pt=103 fmtp=level-id=93
+  old policy then selected H264 and FINAL_ANSWER removed H265
+
+Root-cause update:
+  v6.0.2 tier-only A/B succeeded at createAnswer codec intersection.
+  The remaining fallback was app-side Answer classification, not libwebrtc H265 rejection.
+
+v6.0.3 implementation boundary:
+  - keep diagnostic tier-flag 1 -> 0 rewrite
+  - parse offered H265 Main dynamically; no hard-coded PT
+  - parse Answer H265 dynamically
+  - accept only session-local Offer-Main / Answer-H265 PT lineage intersection
+  - Main10 is not accepted as Main
+  - unrelated generic H265 is not accepted
+  - H264 fallback remains when the lineage intersection is empty
+  - production MediaCodec capability advertisement is still deferred
+
+Executed checks:
+  sh verify-hevc.sh
+    V600_HEVC_VERIFY=PASS
+
+  sh verify-hevc-compat.sh
+    V602_TIER_AB_CALL_ORDER=PASS
+    V602_SINGLE_FIELD_SOURCE_GUARD=PASS
+    V602_HEVC_TIER_ONLY_SDP_FIXTURE=PASS
+    V602_HEVC_COMPAT_VERIFY=PASS
+
+  sh verify-hevc-answer-lineage.sh
+    V603_HEVC_LINEAGE_SOURCE_GUARD=PASS
+    V603_HEVC_ANSWER_LINEAGE_FIXTURE=PASS
+    MATCHED=[103]
+    V603_HEVC_ANSWER_LINEAGE_VERIFY=PASS
+
+  sh verify-reconnect-engine.sh
+    V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+    V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
+    V602_WEBRTC_ENGINE_HEVC_COMPAT_API_SHAPED_COMPILE=PASS
+
+  sh verify-stream-settings.sh
+    V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
+
+  sh verify-audio.sh
+    V540_AUDIO_VERIFY=PASS
+
+  git diff --check
+    PASS
+
+Production hard-coded PT audit:
+  no PT 103/107 hard-code found in stream-signaling, stream-webrtc, or app production logic.
+
+Environment limitation:
+  Full Android Gradle build is not claimed in this container. The repository wrapper requires
+  downloading Gradle and the environment has no external DNS/network access. API-shaped Kotlin
+  compilation and focused pure-SDP fixtures are used for executable offline verification.
+
+Known baseline issue unrelated to HEVC:
+  The baseline repository tracks GfnKeyboardWireMode.kt while its keyboard-stable verifier expects
+  that file to be absent. This pre-existing keyboard guard conflict is not changed by v6.0.3.
+
+Next true-device PASS chain:
+  ANSWER_HEVC_MAIN_LINEAGE stage=RAW_ANSWER matched=[dynamic-main-pt]
+  DECISION stage=RAW_ANSWER effective=Hevc fallback=false
+  FINAL_ANSWER hevc=[dynamic-main-pt]
+  ANSWER_HEVC_MAIN_LINEAGE stage=FINAL_ANSWER matched=[dynamic-main-pt]
+  DECISION stage=FINAL_ANSWER effective=Hevc fallback=false
+  FIRST_VIDEO_RTP effective=Hevc
+  AndroidVideoDecoder type=H265
+  MediaCodec mime=video/hevc
+  FIRST_FRAME effective=Hevc

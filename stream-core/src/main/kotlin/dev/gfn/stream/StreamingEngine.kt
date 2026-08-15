@@ -128,6 +128,7 @@ data class SdpDiagnostics(
     val h264PayloadTypes: List<Int> = emptyList(),
     val hevcPayloadTypes: List<Int> = emptyList(),
     val hevcMainPayloadTypes: List<Int> = emptyList(),
+    val hevcMainMatchedPayloadTypes: List<Int> = emptyList(),
     val iceUfragPresent: Boolean = false,
     val icePasswordPresent: Boolean = false,
     val dtlsFingerprintPresent: Boolean = false,
