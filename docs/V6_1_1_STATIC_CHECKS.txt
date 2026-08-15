@@ -1,36 +1,69 @@
-GFN Android v6.1.1 - Stage C0 RGB10A2 capability static verification
-Current repository reference: GitHub 2fbb17946dfb2de93340af2504e5efd291380507 (fix 10bit)
+GFN Android v6.1.1 - Stage C0 TRUE-DEVICE PASS + reconnect black-screen repair static verification
+Repository reference: GitHub 2fbb17946dfb2de93340af2504e5efd291380507 (fix 10bit)
 Version: 0.6.1.1-dev / code 24
 
-True-device evidence already closed before this build:
+True-device evidence closed before / during this repair:
 - v6.0.4 Main/SDR8 production = PASS (45.log)
 - v6.1.0 Main10/SDR10 capability + negotiation + decode-to-frame = PASS (46.log)
 - v6.1.1 DecodeInfo JNI-null hotfix = PASS (50.log)
-- v6.1.1 Stage A actual SPS = Main10 / 4:2:0 / luma10 / chroma10 = PASS (50.log)
-- v6.1.1 Stage B default M144 final EGL target = R8 G8 B8 A0 = PROVEN (50.log)
+- v6.1.1 Stage A actual SPS Main10 / 4:2:0 / luma10 / chroma10 = PASS (50.log)
+- v6.1.1 Stage B default M144 final EGL target R8 G8 B8 A0 = PROVEN (50.log)
+- v6.1.1 Stage C0 exact fixed RGB10A2 window capability = PASS (51.log)
+  configId=65 R10/G10/B10/A2 nativeVisualId=43 nativeVisualMatchesSurface=true explicitFloat=false
 
-Stage C0 implementation boundary:
-- Read-only eglChooseConfig/eglGetConfigAttrib on the existing current EGLDisplay.
-- Exact two-pass candidate enumeration; >4096 candidate count is Unresolved, not Unsupported.
-- Candidate evidence includes config id, R/G/B/A, renderable/surface bits, native visual id.
-- EGL_COLOR_COMPONENT_TYPE_EXT is read when the driver advertises the pixel-format-float extension.
-- Explicit floating-point candidates are not classified as fixed/non-float RGB10A2.
-- Result states are Supported / Unsupported / Unresolved.
-- Dormant C1 R10G10B10A2 contract exists but is not connected to the production renderer.
-- No SurfaceHolder.setFormat(RGBA_1010102) activation in C0.
-- No eglCreateContext / eglCreateWindowSurface / eglMakeCurrent / EGL state mutation in the C0 probe.
+51.log reconnect root cause:
+- line 804: logical FirstFrame while ICE already DISCONNECTED.
+- lines 807-813: 7s grace starts, then old code immediately logs transient recovery while ICE/PC are still DISCONNECTED.
+- same false recovery repeats at lines 1472-1482.
+- after PC/ICE later report CONNECTED, decoder media subsequently falls to input/output/render 0/0/0 (lines 925/947/969).
+- EglRenderer later reports only 5 rendered frames in ~4s / 1.2fps (line 1027).
+- Therefore the persistent black screen is media starvation after a false reconnect recovery decision, not a Stage C0 EGL capability-probe failure.
+
+Reconnect repair boundary:
+- GRACE transport health requires logical Connected/FirstFrame + ICE CONNECTED/COMPLETED + PC CONNECTED.
+- A stale logical FirstFrame/Connected value cannot cancel grace while ICE/PC are disconnected.
+- On true transport restoration, a fresh recovery-media window is started.
+- Recovery media gate requires sustained fresh VideoSink frames in a 2s rolling window, >= requested FPS frames, last frame age <=1000ms.
+- Recovery media gate also requires one generation-scoped frame that reached the existing renderer path via zero-scale one-shot frame listener.
+- Render witness is tokenized so stale callbacks from an invalidated recovery window are ignored.
+- If 7s grace expires without verified media, existing same-session reclaim/rebuild starts.
+- Same Session ID + frozen ResolvedLaunchProfile + bounded retry architecture remains unchanged.
+- No replacement CloudMatch Session is created by reconnect.
+- C1 custom RGB10A2 renderer remains OFF while reconnect repair awaits true-device verification.
 - HDR remains OFF.
 
-Dedicated v6.1.1 Stage C0 verifier:
+Reconnect deterministic fixtures:
+V521_SESSION_SAME_ID_RECLAIM=PASS
+CREATE_COUNT=1
+CLAIM_COUNT=2
+SETTINGS_RESOLVE_COUNT=1
+V521_STREAM_RECONNECT_STATE_MACHINE=PASS
+- stale FirstFrame + ICE DISCONNECTED remains Reconnecting; grace not canceled.
+- transport + incoming frames without render witness does not recover.
+- transport + sustained incoming frames + render witness can recover without reclaim.
+- sparse/stalled media causes grace expiry and same-session rebuild.
+- hard failure on rebuilt transport still consumes bounded retry.
+- rebuilt transport success still requires FIRST_FRAME + input protocolReady.
+V521_VIDEO_RECOVERY_LIVENESS_TRACKER=PASS
+- generation token rejects stale render callback.
+- nanoTime-style subtraction validated across synthetic Long wrap.
+- timestamp storage bound = 2048.
+V521_RECONNECT_STATIC_GUARDS=PASS
+
+WebRTC Engine API-shaped compile:
+V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
+V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
+V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
+V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
+
+v6.1.1 HEVC / Stage C0 regression:
 V611_HEVC_10BIT_SOURCE_GUARDS=PASS
 V611_HEVC_SPS_PARSER_FIXTURE=PASS
-SPS profile=2 tier=1 level=153 coded=1920x1088 display=1920x1080 bitDepth=10/10
 V611_EGL_API_SHAPED_COMPILE=PASS
 V611_STAGE_C0_RGB10A2_CONTRACT_FIXTURE=PASS
 V611_STAGE_C0_CAPABILITY_PROBE_FIXTURE=PASS
 V611_DECODER_DECORATOR_NON_INTRUSIVE_FIXTURE=PASS
 V611_DECODEINFO_NULL_JNI_FIXTURE=PASS
-EGL_REQUEST=8/8/8 actual8=8/8/8 actual10=10/10/10
 V611_HEVC_10BIT_FORENSICS_VERIFY=PASS
 V611_SURFACE_EGL_HOOK_API_SHAPED_COMPILE=PASS
 
@@ -44,9 +77,6 @@ V610_MAIN10_FACTORY_BINDING_FIXTURE=PASS
 V610_GENERIC_H265_COMPONENT_AMBIGUITY_GUARD=PASS
 V610_MAIN10_COMPATIBILITY_FIXTURE=PASS
 V610_MAIN10_STRICT_NO_H264_FALLBACK=PASS
-MAIN=main.hevc:{profile-id=1, tier-flag=1, level-id=156}
-MAIN10=main10.hevc:{profile-id=2, tier-flag=1, level-id=186}
-MATCHED_MAIN=[103] MATCHED_MAIN10=[107]
 V604_HEVC_PRODUCTION_VERIFY=PASS
 V610_MAIN10_PRODUCTION_VERIFY=PASS
 
@@ -55,54 +85,46 @@ V604_HEVC_LINEAGE_SOURCE_GUARD=PASS
 V610_MAIN10_LINEAGE_SOURCE_GUARD=PASS
 V604_HEVC_ANSWER_LINEAGE_FIXTURE=PASS
 V610_MAIN10_ANSWER_LINEAGE_FIXTURE=PASS
-MATCHED_MAIN=[103] MATCHED_MAIN10=[107]
 V604_HEVC_ANSWER_LINEAGE_VERIFY=PASS
 V610_MAIN10_ANSWER_LINEAGE_VERIFY=PASS
 
 Main10 cross-layer regression:
 V610_MAIN10_CROSS_LAYER_SOURCE_GUARDS=PASS
 V610_MAIN10_SETTINGS_SNAPSHOT_FIXTURE=PASS
-PROFILE=1920x1080@60 20Mbps codec=Hevc color=PreferSdr10 audio=2ch keyboard=en-US language=en_US
 V610_MAIN10_CLOUDMATCH_SDR10_FIXTURE=PASS
 V610_HDR_SESSION_ACTIVATION_OFF=PASS
 V610_MAIN10_VERIFY=PASS
 
-WebRTC Engine API-shaped compile:
-V521_WEBRTC_ENGINE_API_SHAPED_COMPILE=PASS
-V530_WEBRTC_ENGINE_GAMEPAD_API_SHAPED_COMPILE=PASS
-V604_WEBRTC_ENGINE_HEVC_PRODUCTION_API_SHAPED_COMPILE=PASS
-V610_WEBRTC_ENGINE_MAIN10_API_SHAPED_COMPILE=PASS
-
-Audio regression:
-V540_AUDIO_SNAPSHOT_CHAIN=PASS
-V540_AUDIO_STATIC_GUARDS=PASS
-V540_AUDIO_SDP_FIXTURE=PASS
-V540_AUDIO_SETTINGS_FIXTURE=PASS
-V540_AUDIO_RUNTIME_API_SHAPED_COMPILE=PASS
-V540_AUDIO_VERIFY=PASS
-
-Legacy v6.0 HEVC regression:
-V600_HEVC_STATIC_GUARDS=PASS
-V600_HEVC_SDP_FIXTURE=PASS
-V600_HEVC_POLICY_FIXTURE=PASS
-V600_HEVC_SETTINGS_FIXTURE=PASS
-V600_HEVC_STORE_FIXTURE=PASS
+Legacy HEVC / Audio / Settings regression:
 V600_HEVC_VERIFY=PASS
+V540_AUDIO_VERIFY=PASS
+V520_STREAM_SETTINGS_RESOLVER=PASS
+V520_STREAM_SETTINGS_STORE=PASS
+V520_SESSION_PROFILE_PERSISTENCE=PASS
+V520_STREAM_SETTINGS_CONTROLLER_COMPILE=PASS
+V520_STREAM_SETTINGS_SNAPSHOT_STATIC_GUARDS=PASS
 
-Stream Settings regression note:
-- The existing verify-stream-settings.sh process still exhibits the pre-existing long-running/process-handling behavior in this environment.
-- Prior run on the same production source reached resolver/store/session-profile PASS before timeout.
-- The production controller was separately compiled with the script's exact stubs and passed.
-- Stage C0 does not modify Stream Settings source.
-- Therefore the Stage C0 result does not claim a fresh normal completion of verify-stream-settings.sh.
+Aggregate reconnect verifier note:
+- New reconnect state-machine fixture, liveness tracker fixture and reconnect static guards all PASS.
+- verify-reconnect-engine.sh separately reaches all final PASS markers.
+- The aggregate verify-reconnect.sh still has an unrelated historical keyboard baseline conflict by default:
+  verify-keyboard-stable.sh passes V519_KEYBOARD_STABLE_PACKET_FIXTURE, then fails because it requires
+  GfnKeyboardWireMode.kt to be absent although the existing baseline contains that file.
+- This repair does not delete or alter keyboard behavior merely to fabricate a green aggregate result.
+- The aggregate script also supports GFN_SKIP_UNRELATED_KEYBOARD_BASELINE=1 to expose reconnect-only checks;
+  in this execution environment the long combined invocation timed out after V521_RECONNECT_STATIC_GUARDS=PASS,
+  while verify-reconnect-engine.sh passed separately.
 
 Final source audit:
-C1_SURFACE_FORMAT_ACTIVATION=OFF
-C1_CUSTOM_EGL_ACTIVATION=OFF
-HDR activation path=OFF; the only PreferHdr10 production-source hit is the explicit validation rejection.
-RUNTIME_TIER_REWRITE_DECODER_PT_HARDCODE=NONE
 SHELL_SYNTAX=PASS
 TRAILING_WHITESPACE_COUNT=0
+RECONNECT_BLACK_SCREEN_SOURCE_GUARDS=PASS
+C1_SURFACE_FORMAT_ACTIVATION=OFF
+C1_CUSTOM_EGL_ACTIVATION=OFF
+RUNTIME_TIER_REWRITE=NONE
+HARDCODED_HEVC_PT=NONE
+HARDCODED_HEVC_DECODER=NONE
+HDR activation remains OFF; PreferHdr10 is still rejected by validation.
 
 Android Gradle build attempt:
 sh ./gradlew :app:compileDebugKotlin --no-daemon
@@ -110,25 +132,18 @@ GRADLE_EXIT=6
 BLOCKED BEFORE COMPILATION: curl could not resolve services.gradle.org while downloading Gradle 9.5.0.
 Full Android/Kotlin Gradle compile is NOT claimed PASS.
 
-Known unrelated baseline verifier inconsistency:
-verify-keyboard-stable.sh historically passes its packet fixture and then exits because it requires
-GfnKeyboardWireMode.kt to be absent even though the exact baseline already contains that file.
-Stage C0 does not touch that file; it is not removed to fabricate a green aggregate verifier.
-
 Next true-device gate:
-GfnHevc10Bit phase=EGL10_CAPABILITY
-- status=Supported + exact red=10 green=10 blue=10 alpha=2 + explicitFloat=false -> C1 becomes eligible.
-- status=Unsupported -> do not activate C1.
-- status=Unresolved -> fix evidence collection; do not infer lack of RGB10A2 support.
+1. Stage C0 must remain Supported exact R10/G10/B10/A2; production renderer must remain RGB888 in this build.
+2. On ICE/PC DISCONNECTED, grace must NOT immediately self-cancel from stale FirstFrame/Connected state.
+3. If transport reconnects and media is healthy:
+   - transport restored; awaiting fresh video
+   - grace media gate healthy=true ... rendered=true
+   - transient recovery verified with fresh video
+4. If transport reconnects but media remains stalled:
+   - grace media gate healthy=false
+   - grace expired without verified media; rebuilding same Session
+   - CLAIM_OK sameSession=true frozenProfile=true
+   - FIRST_FRAME + protocolReady + STABLE
+5. Only after reconnect repair TRUE-DEVICE PASS should Stage C1 custom RGB10A2 renderer be activated.
 
 C1 / C2 remain NOT TRUE-DEVICE VERIFIED in this package.
-
-GitHub 2fbb179 baseline blob cross-check for existing files changed by this patch:
-README.md = ba8c1cf38a427f2d06b315eb6e73fef80a878809
-REFERENCE_MATRIX.md = 15e1c414a3284f483bf6d42ae62b4b64d7776706
-STATUS.md = 2c8a41dbdaa1e44ad4e5f415e6f87fdd5fd689b0
-V6_1_1_10BIT_FORENSICS.md = 0a00cb075cc958b70c7fee006f487775a18bdf49
-V6_1_1_TEST_GUIDE.md = 147b381d069154cb7676f396fb5606d3640f2b58
-GfnVideoSurfaceView.kt = 0a29ee91513cf6de79358dfaf26891f098ae5299
-verify-hevc-10bit-forensics.sh = cfaeba89188d3c4dff8a2cc40e966c2f897b5de6
-All listed local baseline blobs match GitHub commit 2fbb17946dfb2de93340af2504e5efd291380507.

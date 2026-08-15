@@ -65,7 +65,26 @@ Unresolved
 
 No `eglCreateContext`, `eglCreateWindowSurface`, `eglMakeCurrent`, `eglDestroy*`, `holder.setFormat()` or renderer re-init occurs in C0.
 
-## 3. C1 contract is present but inactive
+## 3. Stage C0 TRUE-DEVICE PASS (`51.log`)
+
+The tested device returned:
+
+```text
+phase=EGL10_CAPABILITY
+status=Supported
+supported=true
+configId=65
+red=10 green=10 blue=10 alpha=2
+nativeVisualId=43
+nativeVisualMatchesSurface=true
+explicitFloat=false
+```
+
+The same run still used the existing RGB888 production renderer and reached FIRST_FRAME. Stage C0 is therefore closed as TRUE-DEVICE PASS.
+
+`51.log` later exposed an independent reconnect black-screen bug: stale `FirstFrame/Connected` state canceled the DISCONNECTED grace before ICE/PC or media were actually healthy. C1 activation is temporarily paused until that reconnect fix is true-device verified; this preserves the C1 render-target A/B as a single controlled variable.
+
+## 4. C1 contract is present but inactive
 
 `GfnEgl10BitConfig` defines the future RGB10A2 render-target contract:
 
@@ -78,19 +97,9 @@ The production view does not use these attributes yet. This is deliberate: true-
 
 The Android native-window format must not be guessed from the Java constant alone. Stage C0 therefore records `EGL_NATIVE_VISUAL_ID` as independent evidence and preserves `UNKNOWN` when it cannot be resolved.
 
-## 4. C1 activation rule — keep the first experiment single-variable
+## 5. C1 activation rule — keep the first experiment single-variable
 
-Only after a true-device log contains:
-
-```text
-phase=EGL10_CAPABILITY
-status=Supported
-supported=true
-red=10 green=10 blue=10 alpha=2
-explicitFloat=false
-```
-
-may C1 activate the custom `SurfaceViewRenderer.init(..., configAttributes, GlRectDrawer())` overload with the R10G10B10A2 attributes.
+The RGB10A2 capability prerequisite is now satisfied by `51.log`. C1 may activate only after the reconnect black-screen repair is also true-device verified; then it may activate the custom `SurfaceViewRenderer.init(..., configAttributes, GlRectDrawer())` overload with the R10G10B10A2 attributes.
 
 The first C1 experiment should change **only the renderer EGLConfig** while leaving the existing decoder EGL context, decoder SurfaceTexture path, PeerConnection factory and Surface lifecycle unchanged.
 
@@ -104,7 +113,7 @@ is not treated as an unconditional prerequisite in the first C1 build. Android E
 
 This refinement avoids changing both the EGLConfig and Java Surface format in the same first C1 A/B.
 
-## 5. C1 PASS gate
+## 6. C1 PASS gate
 
 Requested configuration is not sufficient. True-device runtime evidence must show:
 
@@ -134,7 +143,7 @@ HDR=false
 
 If custom EGL activation fails or runtime still selects RGB888, C1 fails closed. It may retain the known RGB888 path for visibility during experimentation, but diagnostics must not call that a 10-bit render PASS.
 
-## 6. Stage C1 is not full fidelity PASS
+## 7. Stage C1 is not full fidelity PASS
 
 If C1 succeeds:
 
@@ -146,10 +155,10 @@ source texture fidelity  UNKNOWN
 
 Stage C2 must then inspect the producer/BufferQueue/GraphicBuffer/SurfaceTexture side. Do not infer source precision from `COLOR_FormatSurface`.
 
-## 7. Direct MediaCodec -> Surface remains gated
+## 8. Direct MediaCodec -> Surface remains gated
 
 Do not switch architecture in C0/C1. Direct output is considered only if the existing WebRTC texture path is proven to have already lost precision or cannot expose equivalent preservation evidence.
 
-## 8. HDR boundary
+## 9. HDR boundary
 
 HDR remains OFF. RGB10A2 here is an SDR10 precision experiment, not HDR10 activation.

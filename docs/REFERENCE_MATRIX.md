@@ -112,11 +112,12 @@ True-device result recorded before v5.3:
 
 ```text
 network loss -> reconnect keeps the same Session ID        VERIFIED
-first reconnect attempt can remain black-screen            KNOWN DEFECT
-second disconnect/reconnect can restore video              OBSERVED
+first reconnect black-screen root cause                     ROOT-CAUSED (`51.log`: stale logical state cancels DISCONNECTED grace)
+source repair: transport + fresh-media recovery gate        OFFLINE PASS / TRUE-DEVICE PENDING
+second disconnect/reconnect can restore video               OBSERVED (pre-fix)
 ```
 
-Per current development scope, the first-reconnect black-screen defect is explicitly deferred and is not mixed into v5.3 Gamepad changes.
+The historical defect was not mixed into v5.3 Gamepad. It is now repaired separately in v6.1.1 after `51.log` provided the missing root-cause evidence.
 
 ## Gamepad — v5.3
 
@@ -319,7 +320,8 @@ original GFN Tier1 Offer
 | Runtime default EGL | `50.log:682,1096,1456` | R8 G8 B8 A0 | TRUE-DEVICE PROVEN |
 | DecodeInfo JNI contract | pinned M144 native wrapper + `50.log` no recurrence | nullable and forwarded unchanged | TRUE-DEVICE PASS |
 | Decoder output | `COLOR_FormatSurface` | Surface mode only; no P010/8-bit inference | bounded evidence |
-| RGB10A2 capability | Stage C0 two-pass `eglChooseConfig` on current display | Supported/Unsupported/Unresolved; exact fixed/non-float 10/10/10/2 WINDOW+GLES2 required | NEXT TRUE-DEVICE GATE |
+| RGB10A2 capability | Stage C0 two-pass `eglChooseConfig` on current display | exact fixed/non-float 10/10/10/2 WINDOW+GLES2 | TRUE-DEVICE PASS (`51.log`, configId=65) |
+| reconnect media recovery | stale logical state vs ICE/PC + media liveness | require logical+ICE+PC health, sustained fresh frames and render-path witness before grace recovery | OFFLINE PASS; TRUE-DEVICE PENDING |
 | Android native-window format | EGL native visual + `PixelFormat.RGBA_1010102` witness | dormant evidence; explicit `holder.setFormat` stays separately gated | NOT ACTIVE |
 | Custom EGL target | R10 G10 B10 A2 | activate only after C0 supported=true | NOT ACTIVE |
 | Source texture/buffer fidelity | BufferQueue / GraphicBuffer / SurfaceTexture | Stage C2 | NOT YET PROVEN |

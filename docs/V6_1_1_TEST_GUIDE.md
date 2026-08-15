@@ -147,3 +147,69 @@ SIGABRT
 ## 8. Surface lifecycle
 
 `Dropping frame - No surface` remains a separate backlog. Do not mix lifecycle changes into the C0/C1 bit-depth experiment unless it prevents the capability/runtime evidence from being collected.
+
+## 9. `51.log` Stage C0 closeout and reconnect regression
+
+`51.log` has already closed Stage C0 on the tested device:
+
+```text
+phase=EGL10_CAPABILITY
+status=Supported
+supported=true
+configId=65
+red=10 green=10 blue=10 alpha=2
+nativeVisualId=43
+nativeVisualMatchesSurface=true
+explicitFloat=false
+```
+
+C1 remains inactive in the reconnect-fix build. The next true-device run must first verify the reconnect repair because `51.log` exposed a deterministic stale-state recovery bug.
+
+### Expected transient-disconnect behavior after the fix
+
+When ICE/PC temporarily disconnect:
+
+```text
+GfnReconnect: grace source=... delayMs=7000
+```
+
+There must **not** be an immediate:
+
+```text
+transient recovery verified with fresh video
+```
+
+while either diagnostic still reports DISCONNECTED.
+
+When transport becomes genuinely healthy, expect:
+
+```text
+GfnReconnect: transport restored; awaiting fresh video source=...
+```
+
+The recovery may be accepted only after the media gate logs sufficient recent frame activity and a render witness:
+
+```text
+GfnReconnect: grace media gate healthy=true ... rendered=true ...
+GfnReconnect: transient recovery verified with fresh video source=...
+```
+
+If ICE/PC reconnect but media remains black/stalled, expect the grace timer to remain active and then:
+
+```text
+GfnReconnect: grace media gate healthy=false ...
+GfnReconnect: grace expired without verified media; rebuilding same Session ...
+GfnReconnect: ATTEMPT 1/3 ...
+GfnReconnect: CLAIM_OK sameSession=true frozenProfile=true ...
+```
+
+The rebuilt transport must again satisfy the existing strong success gate:
+
+```text
+FIRST_FRAME
+input protocolReady=true
+GfnReconnect: SUCCESS ... firstFrame=true inputHandshake=true
+GfnReconnect: STABLE ...
+```
+
+No reconnect path may create a replacement CloudMatch Session or change the frozen launch profile.

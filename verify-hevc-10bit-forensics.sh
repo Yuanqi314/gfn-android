@@ -458,6 +458,9 @@ JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/EglRenderer.java" <<'JAVA'
 package org.webrtc; public class EglRenderer { public interface FrameListener { void onFrame(Object frame); } }
 JAVA
+cat > "$SURFACE_BUILD/java/org/webrtc/VideoFrame.java" <<'JAVA'
+package org.webrtc; public class VideoFrame {}
+JAVA
 cat > "$SURFACE_BUILD/java/org/webrtc/RendererCommon.java" <<'JAVA'
 package org.webrtc;
 public class RendererCommon {
@@ -483,6 +486,7 @@ public class SurfaceViewRenderer {
   public void onWindowFocusChanged(boolean focused) {} public void onPointerCaptureChange(boolean captured) {}
   public boolean onKeyDown(int keyCode, KeyEvent event){return false;} public boolean onKeyUp(int keyCode, KeyEvent event){return false;}
   public boolean onGenericMotionEvent(MotionEvent event){return false;} public boolean onCapturedPointerEvent(MotionEvent event){return false;}
+  public void onFrame(VideoFrame frame) {}
   public void release() {}
 }
 JAVA

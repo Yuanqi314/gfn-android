@@ -70,6 +70,8 @@ class GfnWebRtcEngine(
     private val hevcMain10AdvertisementReason: String = GfnWebRtcRuntime.hevcMain10AdvertisementReason(appContext)
     private val lock = Any()
     private val generation = AtomicLong(0)
+    private val videoFrameLivenessTracker = GfnVideoFrameLivenessTracker()
+    private var activeRecoveryRenderWitnessToken: Long? = null
 
     @Volatile
     override var state: StreamState = StreamState.Idle
@@ -122,6 +124,8 @@ class GfnWebRtcEngine(
                 return
             }
         val currentGeneration = generation.incrementAndGet()
+        videoFrameLivenessTracker.reset()
+        synchronized(lock) { activeRecoveryRenderWitnessToken = null }
         val requestedHevcProfile = targetHevcProfile(config)
         GfnHevcCompatLog.sessionStart(
             generation = currentGeneration,
@@ -280,6 +284,7 @@ class GfnWebRtcEngine(
             videoOutput?.let { previous ->
                 videoTrack?.removeSink(previous)
                 previous.inputListener = null
+                previous.onFrameActivity = null
             }
             videoOutput = output
             if (output != null) {
@@ -294,6 +299,10 @@ class GfnWebRtcEngine(
     private fun installVideoOutputCallbacksLocked(output: GfnVideoSurfaceView) {
         output.onFirstFrame = ::onFirstFrameRendered
         output.onResolutionChanged = ::onResolutionChanged
+        output.onFrameActivity = videoFrameLivenessTracker::recordFrame
+        activeRecoveryRenderWitnessToken?.let { token ->
+            armRecoveryRenderedFrameWitnessLocked(output, token)
+        }
         output.inputListener = object : GfnVideoSurfaceView.InputListener {
             override fun onKey(down: Boolean, trace: GfnInputForensics.KeyTrace): Boolean =
                 synchronized(lock) { inputController }?.onKey(down, trace) == true
@@ -358,6 +367,45 @@ class GfnWebRtcEngine(
         gamepad?.onStreamConnected(connected)
     }
 
+    /**
+     * Starts a fresh recovery-media window and arms one render-path witness on the currently bound
+     * output. If the SurfaceView is recreated while the window is active, bindVideoOutput() rearms
+     * the same generation token on the replacement view.
+     */
+    fun beginVideoRecoveryLiveness() {
+        val token = videoFrameLivenessTracker.reset()
+        synchronized(lock) {
+            activeRecoveryRenderWitnessToken = token
+            videoOutput?.let { output -> armRecoveryRenderedFrameWitnessLocked(output, token) }
+        }
+    }
+
+    /** Invalidates stale frame/render witnesses without arming a new one. */
+    fun invalidateVideoRecoveryLiveness() {
+        videoFrameLivenessTracker.reset()
+        synchronized(lock) { activeRecoveryRenderWitnessToken = null }
+    }
+
+    fun videoFrameLiveness(windowMs: Long): GfnVideoFrameLivenessSnapshot =
+        videoFrameLivenessTracker.snapshot(windowMs)
+
+    /** lock must be held. */
+    private fun armRecoveryRenderedFrameWitnessLocked(output: GfnVideoSurfaceView, token: Long) {
+        output.armRenderedFrameWitness {
+            val currentOutputAndToken = synchronized(lock) {
+                videoOutput === output && activeRecoveryRenderWitnessToken == token
+            }
+            if (!currentOutputAndToken) return@armRenderedFrameWitness
+            if (videoFrameLivenessTracker.recordRenderedFrame(token)) {
+                synchronized(lock) {
+                    if (activeRecoveryRenderWitnessToken == token) {
+                        activeRecoveryRenderWitnessToken = null
+                    }
+                }
+            }
+        }
+    }
+
     private fun validate(session: SessionInfo, config: StreamConfig): String? = when {
         !session.isReadyStatus -> "v5 只接受已 Ready/Claimed 的 Session（status=${session.status}）。"
         session.signalingUrl.isNullOrBlank() -> "Claimed Session 缺少 signalingUrl。"
@@ -373,6 +421,7 @@ class GfnWebRtcEngine(
             if (videoOutput !== output) return
             videoTrack?.removeSink(output)
             output.inputListener = null
+            output.onFrameActivity = null
             videoOutput = null
         }
     }
@@ -1483,10 +1532,13 @@ class GfnWebRtcEngine(
             partialReliableThresholdMs = 300
             effectiveVideoCodec = VideoCodecPreference.H264
             videoCodecFallbackReason = null
+            activeRecoveryRenderWitnessToken = null
         }
+        videoFrameLivenessTracker.reset()
         if (oldTrack != null && oldOutput != null) runCatching {
             oldTrack.removeSink(oldOutput)
             oldOutput.inputListener = null
+            oldOutput.onFrameActivity = null
         }
         if (!inputAlreadyDrained) {
             oldInput?.shutdownWithoutTransport()

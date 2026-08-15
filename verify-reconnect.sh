@@ -304,6 +304,7 @@ package dev.gfn.webrtc
 
 import android.content.Context
 import dev.gfn.core.model.SessionInfo
+import dev.gfn.stream.IceDiagnostics
 import dev.gfn.stream.InputDiagnostics
 import dev.gfn.stream.StreamConfig
 import dev.gfn.stream.StreamDiagnostics
@@ -311,6 +312,14 @@ import dev.gfn.stream.StreamState
 import dev.gfn.stream.VideoDiagnostics
 
 class GfnVideoSurfaceView
+
+data class GfnVideoFrameLivenessSnapshot(
+    val windowMs: Long,
+    val framesInWindow: Int,
+    val lastFrameAgeMs: Long?,
+    val renderedFrameSeen: Boolean,
+    val lastRenderedFrameAgeMs: Long?,
+)
 
 class GfnWebRtcEngine(context: Context, private val listener: Listener) {
     interface Listener {
@@ -321,6 +330,12 @@ class GfnWebRtcEngine(context: Context, private val listener: Listener) {
     }
 
     var diagnostics: StreamDiagnostics = StreamDiagnostics()
+    var currentState: StreamState = StreamState.Idle
+    val state: StreamState get() = currentState
+    var livenessFrames: Int = 0
+    var livenessLastAgeMs: Long? = null
+    var renderedFrameSeen: Boolean = false
+    var renderedFrameLastAgeMs: Long? = null
     val connectSessionIds = mutableListOf<String>()
     val connectConfigs = mutableListOf<StreamConfig>()
     var prepareReconnectCount = 0
@@ -331,10 +346,15 @@ class GfnWebRtcEngine(context: Context, private val listener: Listener) {
     fun connect(session: SessionInfo, config: StreamConfig) {
         connectSessionIds += session.sessionId
         connectConfigs += config
-        listener.onUpdated(StreamState.OpeningSignaling, diagnostics)
+        currentState = StreamState.OpeningSignaling
+        listener.onUpdated(currentState, diagnostics)
     }
 
-    fun disconnect() { disconnectCount += 1; listener.onUpdated(StreamState.Closed, diagnostics) }
+    fun disconnect() {
+        disconnectCount += 1
+        currentState = StreamState.Closed
+        listener.onUpdated(currentState, diagnostics)
+    }
     fun prepareForSessionEnd(onDrained: () -> Unit) { onDrained() }
     fun prepareForReconnect(onDrained: () -> Unit) { prepareReconnectCount += 1; onDrained() }
     fun onActivityResumed() = Unit
@@ -345,20 +365,79 @@ class GfnWebRtcEngine(context: Context, private val listener: Listener) {
     fun bindVideoOutput(view: GfnVideoSurfaceView?) = Unit
     fun unbindVideoOutput(view: GfnVideoSurfaceView) = Unit
 
+    fun triggerDisconnected(sessionId: String, source: String) {
+        diagnostics = diagnostics.copy(
+            ice = diagnostics.ice.copy(
+                iceConnectionState = "DISCONNECTED",
+                peerConnectionState = if (source.startsWith("pc.")) "DISCONNECTED" else diagnostics.ice.peerConnectionState,
+            ),
+        )
+        listener.onUpdated(currentState, diagnostics)
+        listener.onTransportNeedsReconnect(sessionId, source, false)
+    }
+
     fun triggerReconnect(sessionId: String, source: String, immediate: Boolean) {
         listener.onTransportNeedsReconnect(sessionId, source, immediate)
     }
 
     fun emitConnected() {
-        listener.onUpdated(StreamState.Connected, diagnostics)
+        diagnostics = diagnostics.copy(
+            ice = diagnostics.ice.copy(iceConnectionState = "CONNECTED", peerConnectionState = "CONNECTED"),
+        )
+        currentState = StreamState.Connected
+        listener.onUpdated(currentState, diagnostics)
+    }
+
+    fun emitSteadyFirstFrame() {
+        diagnostics = diagnostics.copy(
+            ice = IceDiagnostics(iceConnectionState = "CONNECTED", peerConnectionState = "CONNECTED"),
+            video = VideoDiagnostics(firstFrameRendered = true),
+            input = InputDiagnostics(protocolReady = true, protocolVersion = 3, dataChannelOpen = true),
+        )
+        currentState = StreamState.FirstFrame
+        listener.onUpdated(currentState, diagnostics)
     }
 
     fun emitRecoveredReady() {
         diagnostics = diagnostics.copy(
+            ice = diagnostics.ice.copy(iceConnectionState = "CONNECTED", peerConnectionState = "CONNECTED"),
             video = VideoDiagnostics(firstFrameRendered = true),
             input = InputDiagnostics(protocolReady = true, protocolVersion = 3, dataChannelOpen = true),
         )
-        listener.onUpdated(StreamState.FirstFrame, diagnostics)
+        currentState = StreamState.FirstFrame
+        listener.onUpdated(currentState, diagnostics)
+    }
+
+    fun beginVideoRecoveryLiveness() {
+        livenessFrames = 0
+        livenessLastAgeMs = null
+        renderedFrameSeen = false
+        renderedFrameLastAgeMs = null
+    }
+
+    fun invalidateVideoRecoveryLiveness() {
+        beginVideoRecoveryLiveness()
+    }
+
+    fun videoFrameLiveness(windowMs: Long): GfnVideoFrameLivenessSnapshot =
+        GfnVideoFrameLivenessSnapshot(
+            windowMs,
+            livenessFrames,
+            livenessLastAgeMs,
+            renderedFrameSeen,
+            renderedFrameLastAgeMs,
+        )
+
+    fun setVideoFrameLiveness(
+        frames: Int,
+        lastAgeMs: Long?,
+        rendered: Boolean,
+        renderedLastAgeMs: Long?,
+    ) {
+        livenessFrames = frames
+        livenessLastAgeMs = lastAgeMs
+        renderedFrameSeen = rendered
+        renderedFrameLastAgeMs = renderedLastAgeMs
     }
 
     companion object { lateinit var last: GfnWebRtcEngine }
@@ -406,17 +485,53 @@ fun main() {
     controller.connectClaimedSession(original, profile)
     check(engine.connectSessionIds == listOf("same-session"))
 
-    // Transient DISCONNECTED heals before the 7s grace: no CloudMatch reclaim.
-    engine.triggerReconnect("same-session", "ice.DISCONNECTED", immediate = false)
+    engine.emitSteadyFirstFrame()
+
+    // Regression for 51.log: StreamState may remain FirstFrame while ICE is already DISCONNECTED.
+    // A stale logical state must never cancel the grace timer immediately.
+    engine.triggerDisconnected("same-session", "ice.DISCONNECTED")
     check(controller.state.value is StreamState.Reconnecting)
+    check(controller.diagnostics.value.reconnect.active)
     check(Handler.delayedCount() == 1)
+
+    // A genuinely healthy transient recovery must prove transport health, sustained fresh input,
+    // and at least one fresh frame that reached the existing renderer path. Input alone is not
+    // enough because a missing Surface can still receive VideoSink frames while remaining black.
+    engine.emitConnected()
+    check(controller.state.value is StreamState.Reconnecting)
+    engine.setVideoFrameLiveness(
+        frames = profile.streamConfig.fps,
+        lastAgeMs = 10,
+        rendered = false,
+        renderedLastAgeMs = null,
+    )
+    engine.emitConnected()
+    check(controller.state.value is StreamState.Reconnecting)
+    engine.setVideoFrameLiveness(
+        frames = profile.streamConfig.fps,
+        lastAgeMs = 10,
+        rendered = true,
+        renderedLastAgeMs = 10,
+    )
     engine.emitConnected()
     check(controller.state.value is StreamState.Connected)
     check(recoveryCalls == 0)
     check(Handler.delayedCount() == 0)
 
-    // Hard failure: same-session reclaim + new WebRTC generation.
-    engine.triggerReconnect("same-session", "ice.FAILED", immediate = true)
+    // 51.log failure model: ICE/PC can report CONNECTED while video activity is sparse/stalled.
+    // The grace timer must rebuild the same Session instead of accepting a black-screen recovery.
+    engine.triggerDisconnected("same-session", "ice.DISCONNECTED")
+    check(controller.state.value is StreamState.Reconnecting)
+    engine.emitConnected()
+    engine.setVideoFrameLiveness(
+        frames = 5,
+        lastAgeMs = 100,
+        rendered = true,
+        renderedLastAgeMs = 100,
+    )
+    engine.emitConnected()
+    check(controller.state.value is StreamState.Reconnecting)
+    Handler.runAllDelayed()
     check(engine.prepareReconnectCount == 1)
     check(recoveryCalls == 1)
     check(lastRecoverySession == "same-session")
@@ -467,6 +582,58 @@ kotlinc -J-Dfile.encoding=UTF-8 -classpath "$COROUTINES_JAR" \
 kotlin -J-Dfile.encoding=UTF-8 -classpath "$COROUTINES_JAR:$BUILD/stream/check.jar" StreamReconnectFixtureKt
 
 # ---------------------------------------------------------------------------
+# Recovery liveness tracker: sustained-input window + generation-scoped rendered witness.
+# ---------------------------------------------------------------------------
+mkdir -p "$BUILD/liveness"
+cat > "$BUILD/liveness/LivenessFixture.kt" <<'KT'
+import dev.gfn.webrtc.GfnVideoFrameLivenessTracker
+
+fun main() {
+    var nowNs = Long.MAX_VALUE - 150_000_000L
+    val tracker = GfnVideoFrameLivenessTracker { nowNs }
+
+    val token1 = tracker.reset()
+    repeat(60) {
+        tracker.recordFrame()
+        nowNs += 10_000_000L
+    }
+    // The synthetic clock crosses Long.MAX_VALUE here. nanoTime-style subtraction must still
+    // classify these short intervals correctly despite the arbitrary/wrapping origin.
+    check(tracker.recordRenderedFrame(token1))
+    var snapshot = tracker.snapshot(2_000L)
+    check(snapshot.framesInWindow == 60)
+    check(snapshot.renderedFrameSeen)
+    check(snapshot.lastFrameAgeMs == 10L)
+    check(snapshot.lastRenderedFrameAgeMs == 0L)
+
+    val token2 = tracker.reset()
+    check(!tracker.recordRenderedFrame(token1)) { "stale render witness token was accepted" }
+    check(!tracker.snapshot(2_000L).renderedFrameSeen)
+    tracker.recordFrame()
+    check(tracker.recordRenderedFrame(token2))
+    snapshot = tracker.snapshot(2_000L)
+    check(snapshot.framesInWindow == 1)
+    check(snapshot.renderedFrameSeen)
+
+    // Long sessions remain memory-bounded: only the newest 2048 timestamps are retained.
+    tracker.reset()
+    repeat(2_100) {
+        tracker.recordFrame()
+        nowNs += 1_000_000L
+    }
+    snapshot = tracker.snapshot(Long.MAX_VALUE)
+    check(snapshot.framesInWindow == 2_048)
+
+    println("V521_VIDEO_RECOVERY_LIVENESS_TRACKER=PASS")
+}
+KT
+kotlinc -J-Dfile.encoding=UTF-8 \
+  "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoFrameLiveness.kt" \
+  "$BUILD/liveness/LivenessFixture.kt" \
+  -d "$BUILD/liveness/check.jar"
+kotlin -J-Dfile.encoding=UTF-8 -classpath "$BUILD/liveness/check.jar" LivenessFixtureKt
+
+# ---------------------------------------------------------------------------
 # Production architecture guards.
 # ---------------------------------------------------------------------------
 SESSION_SRC="$ROOT/app/src/main/java/dev/gfn/android/session/GfnSessionController.kt"
@@ -490,6 +657,16 @@ if grep -Fq 'GfnStreamSettingsController' "$STREAM_SRC"; then
     echo 'ERROR: live streaming reconnect must not read persistent settings' >&2
     exit 1
 fi
+
+# DISCONNECTED grace must not trust stale StreamState alone; it requires fresh media liveness.
+grep -Fq 'isTransportHealthy(state: StreamState, diagnostics: StreamDiagnostics)' "$STREAM_SRC"
+grep -Fq 'engine.beginVideoRecoveryLiveness()' "$STREAM_SRC"
+grep -Fq 'engine.invalidateVideoRecoveryLiveness()' "$STREAM_SRC"
+grep -Fq 'engine.videoFrameLiveness(GRACE_MEDIA_WINDOW_MS)' "$STREAM_SRC"
+grep -Fq 'grace expired without verified media; rebuilding same Session' "$STREAM_SRC"
+grep -Fq 'output.onFrameActivity = videoFrameLivenessTracker::recordFrame' "$ENGINE_SRC"
+grep -Fq 'output.armRenderedFrameWitness' "$ENGINE_SRC"
+grep -Fq 'liveness.renderedFrameSeen' "$STREAM_SRC"
 
 # Old transport is drained before rebuild, and a new DataChannel handshake path remains present.
 grep -Fq 'fun prepareForReconnect(onDrained: () -> Unit)' "$ENGINE_SRC"
@@ -528,7 +705,11 @@ if [ -f "$BASE_ZIP" ]; then
 else
     echo 'V530_KEYBOARD_CORE_SOFT_FREEZE_BYTE_IDENTICAL=SKIP_BASE_ZIP_NOT_ADJACENT'
 fi
-"$ROOT/verify-keyboard-stable.sh"
+if [ "${GFN_SKIP_UNRELATED_KEYBOARD_BASELINE:-0}" = "1" ]; then
+    echo 'V519_KEYBOARD_STABLE_STATIC=SKIP_PREEXISTING_BASELINE_CONFLICT'
+else
+    sh "$ROOT/verify-keyboard-stable.sh"
+fi
 
 echo 'V521_RECONNECT_STATIC_GUARDS=PASS'
-"$ROOT/verify-reconnect-engine.sh"
+sh "$ROOT/verify-reconnect-engine.sh"

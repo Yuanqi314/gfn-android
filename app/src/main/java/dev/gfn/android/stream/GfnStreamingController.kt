@@ -60,6 +60,7 @@ class GfnStreamingController(
     private var sameSessionIdVerified = false
     private var frozenProfileVerified = false
     private var pendingRecoveryRunnable: Runnable? = null
+    private var graceTransportHealthy = false
 
     fun connectClaimedSession(session: SessionInfo, profile: ResolvedLaunchProfile) {
         cancelReconnect(clearActive = false, resetAttempt = true)
@@ -133,13 +134,24 @@ class GfnStreamingController(
             return
         }
 
-        // A transient DISCONNECTED is allowed to self-heal during the grace window without any
-        // CloudMatch claim or transport teardown.
-        if (reconnectPhase == PHASE_GRACE && isTransportHealthy(state)) {
-            Log.i(RECONNECT_TAG, "transient recovery without reclaim source=$reconnectSource")
-            cancelReconnect(clearActive = false, resetAttempt = true)
-            publish(state, diagnostics)
-            return
+        // A DISCONNECTED grace period may self-heal only after both ICE/PC are healthy and
+        // fresh video activity proves the media path is actually flowing again. StreamState can
+        // remain FirstFrame/Connected while ICE/PC are DISCONNECTED, so state alone is not a
+        // recovery witness.
+        if (reconnectPhase == PHASE_GRACE) {
+            val transportHealthy = isTransportHealthy(state, diagnostics)
+            if (transportHealthy && !graceTransportHealthy) {
+                graceTransportHealthy = true
+                engine.beginVideoRecoveryLiveness()
+                Log.i(RECONNECT_TAG, "transport restored; awaiting fresh video source=$reconnectSource")
+            } else if (!transportHealthy && graceTransportHealthy) {
+                graceTransportHealthy = false
+                engine.invalidateVideoRecoveryLiveness()
+            }
+            if (transportHealthy && isGraceMediaHealthy(logDecision = false)) {
+                completeGraceRecovery(state, diagnostics)
+                return
+            }
         }
 
         // After a reclaimed Session is connected, v5.2.1 considers recovery complete only after
@@ -215,6 +227,8 @@ class GfnStreamingController(
         reconnectLastError = null
         sameSessionIdVerified = false
         frozenProfileVerified = false
+        graceTransportHealthy = false
+        engine.invalidateVideoRecoveryLiveness()
 
         if (immediate) {
             beginReconnectAttempt()
@@ -228,6 +242,14 @@ class GfnStreamingController(
             val runnable = Runnable {
                 pendingRecoveryRunnable = null
                 if (!reconnectActive || recoveryGeneration != generation || reconnectPhase != PHASE_GRACE) return@Runnable
+                if (isTransportHealthy(engine.state, engine.diagnostics) && isGraceMediaHealthy(logDecision = true)) {
+                    completeGraceRecovery(engine.state, engine.diagnostics)
+                    return@Runnable
+                }
+                Log.w(
+                    RECONNECT_TAG,
+                    "grace expired without verified media; rebuilding same Session source=$reconnectSource",
+                )
                 beginReconnectAttempt()
             }
             pendingRecoveryRunnable = runnable
@@ -254,6 +276,8 @@ class GfnStreamingController(
 
         reconnectAttempt += 1
         reconnectPhase = PHASE_TEARDOWN
+        graceTransportHealthy = false
+        engine.invalidateVideoRecoveryLiveness()
         sameSessionIdVerified = false
         frozenProfileVerified = false
         publish(StreamState.Reconnecting(reconnectAttempt, reconnectSource ?: "transport"), engine.diagnostics)
@@ -365,6 +389,8 @@ class GfnStreamingController(
         reconnectSource = null
         sameSessionIdVerified = false
         frozenProfileVerified = false
+        graceTransportHealthy = false
+        engine.invalidateVideoRecoveryLiveness()
         if (resetAttempt) reconnectAttempt = 0
         if (clearActive) {
             activeSessionId = null
@@ -380,8 +406,42 @@ class GfnStreamingController(
     private fun isCurrentRecovery(generation: Long): Boolean =
         reconnectActive && recoveryGeneration == generation
 
-    private fun isTransportHealthy(state: StreamState): Boolean =
-        state is StreamState.Connected || state is StreamState.FirstFrame
+    private fun isTransportHealthy(state: StreamState, diagnostics: StreamDiagnostics): Boolean {
+        val logicalHealthy = state is StreamState.Connected || state is StreamState.FirstFrame
+        val iceHealthy = diagnostics.ice.iceConnectionState == "CONNECTED" ||
+            diagnostics.ice.iceConnectionState == "COMPLETED"
+        val peerHealthy = diagnostics.ice.peerConnectionState == "CONNECTED"
+        return logicalHealthy && iceHealthy && peerHealthy
+    }
+
+    private fun isGraceMediaHealthy(logDecision: Boolean): Boolean {
+        if (!graceTransportHealthy) return false
+        val requestedFps = frozenProfile?.streamConfig?.fps?.coerceAtLeast(1) ?: return false
+        val liveness = engine.videoFrameLiveness(GRACE_MEDIA_WINDOW_MS)
+        val minFrames = requestedFps
+        val lastFrameAgeMs = liveness.lastFrameAgeMs
+        val lastRenderedFrameAgeMs = liveness.lastRenderedFrameAgeMs
+        val healthy = liveness.framesInWindow >= minFrames &&
+            lastFrameAgeMs != null &&
+            lastFrameAgeMs <= GRACE_MEDIA_MAX_LAST_FRAME_AGE_MS &&
+            liveness.renderedFrameSeen
+        if (logDecision || healthy) {
+            Log.i(
+                RECONNECT_TAG,
+                "grace media gate healthy=$healthy frames=${liveness.framesInWindow}/$minFrames " +
+                    "windowMs=${liveness.windowMs} lastFrameAgeMs=${lastFrameAgeMs ?: -1} " +
+                    "rendered=${liveness.renderedFrameSeen} " +
+                    "lastRenderedFrameAgeMs=${lastRenderedFrameAgeMs ?: -1}",
+            )
+        }
+        return healthy
+    }
+
+    private fun completeGraceRecovery(state: StreamState, diagnostics: StreamDiagnostics) {
+        Log.i(RECONNECT_TAG, "transient recovery verified with fresh video source=$reconnectSource")
+        cancelReconnect(clearActive = false, resetAttempt = true)
+        publish(state, diagnostics)
+    }
 
     private fun publish(state: StreamState, engineDiagnostics: StreamDiagnostics) {
         _state.value = state
@@ -405,6 +465,8 @@ class GfnStreamingController(
         const val RECONNECT_TAG = "GfnReconnect"
         const val MAX_RECONNECT_ATTEMPTS = 3
         const val DISCONNECTED_GRACE_MS = 7_000L
+        const val GRACE_MEDIA_WINDOW_MS = 2_000L
+        const val GRACE_MEDIA_MAX_LAST_FRAME_AGE_MS = 1_000L
 
         const val PHASE_IDLE = "IDLE"
         const val PHASE_GRACE = "GRACE"

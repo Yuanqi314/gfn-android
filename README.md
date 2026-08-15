@@ -4,7 +4,7 @@
 
 > 仅使用用户自己的合法 GeForce NOW 账号；不修改订阅等级、账号 entitlement 或服务端授权。
 
-## v6.1.1 当前阶段：Stage C0
+## v6.1.1 当前阶段：Stage C0 PASS + reconnect black-screen repair
 
 ```text
 actual HEVC SPS = 10-bit
@@ -18,14 +18,16 @@ Supported / Unsupported / Unresolved
 下一构建才激活 Stage C1 custom EGL RGB10A2
 ```
 
-Stage C0 使用两遍 `eglChooseConfig` 完整枚举候选，并在 EGL 扩展可用时读取 color-component type，避免把浮点 config 误判为固定点 RGB10A2。当前 production View **不会**调用 `SurfaceHolder.setFormat(RGBA_1010102)`，也不会把 `SurfaceViewRenderer` 切换到 custom config；`GfnEgl10BitConfig` 仅作为 dormant C1 contract 存在。
+`51.log` 已真机关闭 Stage C0：设备返回 exact fixed/non-float RGB10A2 window config（configId=65，R10/G10/B10/A2，nativeVisualId=43）。同一日志随后暴露了与 C0 无关的旧 reconnect 黑屏缺陷：ICE/PC 已 DISCONNECTED 时，controller 因 stale `FirstFrame/Connected` 立即取消 7 秒 grace；随后即使连接状态回到 CONNECTED，decoder input 可降到 0 fps。
 
-Stage C1 的第一版也继续坚持单变量：先只切 custom EGL R10G10B10A2；显式 `SurfaceHolder.setFormat()` 只有在真机 native-window 证据要求时才作为下一变量加入。HDR 继续 OFF；direct `MediaCodec -> Surface` 仍是更后面的架构级 fallback。
+当前修复保持 Stage C1 **inactive**，先把 reconnect recovery gate 改成 `logical state + ICE/PC health + sustained fresh video + render-path witness`；如果 grace 到期仍无媒体，则进入既有 same-session reclaim/rebuild。修复真机 PASS 后才继续 C1 custom EGL，避免把网络恢复 bug 和 RGB10A2 renderer A/B 混在一起。HDR 继续 OFF。
 
 验证入口：
 
 ```text
 sh ./verify-hevc-10bit-forensics.sh
+sh ./verify-reconnect.sh
+sh ./verify-reconnect-engine.sh
 sh ./verify-hevc-production.sh
 sh ./verify-hevc-answer-lineage.sh
 sh ./verify-main10.sh
@@ -40,6 +42,7 @@ sh ./verify-hevc.sh
 docs/STATUS.md
 docs/V6_1_1_10BIT_FORENSICS.md
 docs/V6_1_1_STAGE_C_RGB10A2.md
+docs/V6_1_1_RECONNECT_BLACK_SCREEN_FIX.md
 docs/V6_1_1_TEST_GUIDE.md
 ```
 

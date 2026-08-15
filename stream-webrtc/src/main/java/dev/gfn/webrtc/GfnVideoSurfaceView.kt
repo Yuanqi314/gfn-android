@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
+import org.webrtc.VideoFrame
 
 /**
  * WebRTC 视频输出 + Android 输入捕获面。
@@ -26,6 +27,7 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
 
     var onFirstFrame: (() -> Unit)? = null
     var onResolutionChanged: ((width: Int, height: Int) -> Unit)? = null
+    var onFrameActivity: (() -> Unit)? = null
     var inputListener: InputListener? = null
         set(value) {
             field = value
@@ -33,6 +35,7 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
             value?.onPointerCaptureChanged(inputCaptureEnabled && hasPointerCapture())
         }
 
+    @Volatile
     private var released = false
     private var inputCaptureEnabled = false
 
@@ -73,6 +76,26 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
         isFocusableInTouchMode = true
         isClickable = true
         setOnClickListener { requestKeyboardMouseCapture() }
+    }
+
+    override fun onFrame(frame: VideoFrame) {
+        onFrameActivity?.invoke()
+        super.onFrame(frame)
+    }
+
+    /**
+     * Arms one generation-local, zero-scale witness on the existing M144 renderer. The callback is
+     * one-shot in EglRenderer and is reached only after the render thread has a usable EGL surface
+     * and progresses through its frame-render path. No bitmap is allocated at scale 0.
+     */
+    fun armRenderedFrameWitness(onRendered: () -> Unit) {
+        if (released) return
+        addFrameListener(
+            { _ ->
+                if (!released) onRendered()
+            },
+            0f,
+        )
     }
 
     fun setKeyboardMouseInputEnabled(enabled: Boolean) {
@@ -201,6 +224,7 @@ class GfnVideoSurfaceView(context: Context) : SurfaceViewRenderer(context) {
         inputListener = null
         onFirstFrame = null
         onResolutionChanged = null
+        onFrameActivity = null
         releaseKeyboardMouseCapture()
         release()
     }

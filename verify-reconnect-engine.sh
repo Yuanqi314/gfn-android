@@ -254,7 +254,9 @@ open class GfnVideoSurfaceView {
     }
     var onFirstFrame: (() -> Unit)? = null
     var onResolutionChanged: ((Int, Int) -> Unit)? = null
+    var onFrameActivity: (() -> Unit)? = null
     var inputListener: InputListener? = null
+    fun armRenderedFrameWitness(onRendered: () -> Unit) = Unit
 }
 KT
 cat > "$BUILD/WebRtcStubs.kt" <<'KT'
@@ -383,6 +385,7 @@ kotlinc -J-Dfile.encoding=UTF-8 \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnGamepadInputController.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoCodecNegotiationPolicy.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnHevcNegotiationCompat.kt" \
+  "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnVideoFrameLiveness.kt" \
   "$ROOT/stream-webrtc/src/main/java/dev/gfn/webrtc/GfnWebRtcEngine.kt" \
   -d "$BUILD/check.jar" > "$BUILD/compile.log" 2>&1
 

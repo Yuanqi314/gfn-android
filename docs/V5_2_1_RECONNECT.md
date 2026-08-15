@@ -38,7 +38,7 @@ FIRST FRAME + protocolReady
 
 ## Recovery policy
 
-`DISCONNECTED` receives a 7 second local grace window. If ICE/PC becomes healthy during the grace period, no CloudMatch request is made.
+`DISCONNECTED` receives a 7 second local grace window. A transient recovery is accepted only after logical stream state, ICE and PeerConnection are all healthy **and** fresh media activity is verified. If that combined gate succeeds during the grace period, no CloudMatch request is made.
 
 Hard `FAILED` skips the grace period. Reclaim/rebuild is bounded to three attempts. After a failed attempt, local retry delays are 1 second and then 3 seconds. These delays are **client policy**, not claimed NVIDIA protocol requirements.
 
@@ -69,4 +69,6 @@ first reconnect may remain black-screen                    KNOWN DEFECT
 second disconnect/reconnect can restore video              OBSERVED
 ```
 
-The same-session lifecycle result is accepted as verified. The first-reconnect black-screen failure remains unresolved and is intentionally deferred; v5.3 Gamepad does not modify the reconnect video path in an attempt to mask it.
+The same-session lifecycle result is accepted as verified. `51.log` in the later v6.1.1 cycle finally root-caused the first-reconnect black screen: stale logical `FirstFrame/Connected` state was accepted while ICE/PC were still `DISCONNECTED`, canceling the 7-second grace immediately. Even when ICE/PC later returned CONNECTED, media could fall to 0 input fps.
+
+The v6.1.1 repair keeps this v5.2.1 architecture but strengthens the grace success gate to require ICE/PC health plus sustained fresh video and a renderer-path witness. If media is not verified before grace expiry, the existing same-session reclaim/rebuild path is executed. See `V6_1_1_RECONNECT_BLACK_SCREEN_FIX.md`. True-device verification of that repair is pending.
